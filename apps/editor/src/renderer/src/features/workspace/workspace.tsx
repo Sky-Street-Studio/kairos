@@ -1,4 +1,4 @@
-import { FileCode2, Network, Settings2, UsersRound, X } from "lucide-react";
+import { Boxes, FileCode2, Network, Settings2, UsersRound, X } from "lucide-react";
 import { lazy, Suspense } from "react";
 
 import { cn } from "@/lib/utils";
@@ -10,11 +10,15 @@ import { SettingsView } from "../settings/settings-view";
 
 const EditorView = lazy(() => import("../editor/editor-view"));
 const StoryGraphView = lazy(() => import("../graph/story-graph"));
+const AssetsManager = lazy(() =>
+  import("../assets/assets-manager").then((module) => ({ default: module.AssetsManager })),
+);
 
 const VIEW_META = {
   graph: { title: "Story flow", icon: Network },
   characters: { title: "Characters", icon: UsersRound },
   settings: { title: "Settings", icon: Settings2 },
+  assets: { title: "Assets", icon: Boxes },
 } as const;
 
 function TabButton({ tab, active }: { tab: Tab; active: boolean }) {
@@ -106,6 +110,7 @@ export function Workspace() {
         </Suspense>
         {active?.kind === "characters" && <CharacterManager />}
         {active?.kind === "settings" && <SettingsView />}
+        {active?.kind === "assets" && <AssetsManager />}
         {!active && <EmptyWorkspace />}
       </div>
     </section>

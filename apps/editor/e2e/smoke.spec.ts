@@ -53,6 +53,12 @@ test("opens a project, shows the graph, reports diagnostics, stages assets and r
   expect(await readFile(join(project, "script/script.kai"), "utf8")).toContain("jump nowhere");
   if (shots) await page.screenshot({ path: join(shots, "diagnostics.png") });
 
+  await page.getByRole("button", { name: "Open asset manager" }).click();
+  await expect(page.getByRole("heading", { name: "Backgrounds" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sprites" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Music" })).toBeVisible();
+  await expect(page.getByTestId("managed-asset").filter({ hasText: "e happy" })).toBeVisible();
+
   const stage = page.getByTestId("preview-stage");
   const box = (await stage.boundingBox())!;
   await page

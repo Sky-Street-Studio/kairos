@@ -9,7 +9,7 @@ export interface FileBuffer {
   saved: string;
 }
 
-export type ViewKind = "graph" | "characters" | "settings";
+export type ViewKind = "graph" | "characters" | "settings" | "assets";
 
 export type Tab = { id: string; kind: "file"; path: string } | { id: ViewKind; kind: ViewKind };
 

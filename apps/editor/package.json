@@ -15,6 +15,7 @@
   "dependencies": {
     "@kairos/napi": "workspace:*",
     "node-pty": "^1.1.0",
+    "sharp": "^0.35.5",
     "smol-toml": "^1.9.1"
   },
   "devDependencies": {

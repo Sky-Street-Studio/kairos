@@ -47,7 +47,9 @@ export const createProjectSlice: SliceCreator<ProjectSlice> = (set, get, api) =>
       if (!snap) return;
       set((s) => {
         const buffers = { ...s.buffers };
-        for (const f of snap.scripts) buffers[f.path] ??= { ...f, saved: f.source };
+        for (const f of snap.scripts) {
+          if (!buffers[f.path] || !isDirty(buffers[f.path])) buffers[f.path] = { ...f, saved: f.source };
+        }
         return { project: withoutScripts(snap), buffers };
       });
       await get().analyze();
