@@ -83,6 +83,34 @@ describe("project assets", () => {
   });
 });
 
+describe("asset rename", () => {
+  it("keeps a flat sprite's character tag when only the attribute is typed", async () => {
+    const projectRoot = await project();
+    await writeFile(join(projectRoot, "assets/images/sprites/e/e happy.png"), "image");
+
+    await renameProjectAsset("assets/images/sprites/e/e happy.png", "joyful");
+
+    expect(await readFile(join(projectRoot, "assets/images/sprites/e/e joyful.png"), "utf8")).toBe("image");
+    expect(await readFile(join(projectRoot, "script/main.kai"), "utf8")).toContain("show e joyful\n");
+  });
+
+  it("updates title.toml images and escapes regex characters in names", async () => {
+    const projectRoot = await project();
+    await mkdir(join(projectRoot, "assets/images/ui"), { recursive: true });
+    await mkdir(join(projectRoot, "ui"), { recursive: true });
+    await writeFile(join(projectRoot, "assets/images/ui/logo (v1).png"), "image");
+    await writeFile(join(projectRoot, "ui/title.toml"), 'logo = "logo (v1)"\nbackground = "bg room"\n');
+    await writeFile(join(projectRoot, "script/main.kai"), "scene logo (v1)\nscene logo (v10)\n");
+
+    await renameProjectAsset("assets/images/ui/logo (v1).png", "logo");
+
+    const title = await readFile(join(projectRoot, "ui/title.toml"), "utf8");
+    expect(title).toContain('logo = "logo"');
+    expect(title).toContain('background = "bg room"');
+    expect(await readFile(join(projectRoot, "script/main.kai"), "utf8")).toBe("scene logo\nscene logo (v10)\n");
+  });
+});
+
 describe("loadProject translations", () => {
   it("includes only top-level TOML translations in the player snapshot", async () => {
     const root = await mkdtemp(join(tmpdir(), "kairos-project-"));

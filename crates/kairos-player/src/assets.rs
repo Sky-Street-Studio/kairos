@@ -16,6 +16,9 @@ pub enum Request {
         queue: bool,
         fadein: Option<f64>,
     },
+    /// Kept apart from [`Request::Audio`] so a late load can be dropped once the title has closed
+    /// without also dropping an in-game play of the same track.
+    TitleMusic(String),
     AudioMetadata,
     Font {
         dialogue: bool,
@@ -28,7 +31,7 @@ impl Request {
     pub fn candidates(&self, index: &AssetIndex) -> Vec<String> {
         match self {
             Request::Image(name) => index.image_candidates(&name.split(' ').map(String::from).collect::<Vec<_>>()),
-            Request::Audio { asset, .. } => index.audio_candidates(asset),
+            Request::Audio { asset, .. } | Request::TitleMusic(asset) => index.audio_candidates(asset),
             Request::AudioMetadata => vec!["audio/audio.toml".into()],
             Request::Font { path, .. } => vec![path.clone()],
         }
@@ -211,6 +214,7 @@ mod tests {
         let index = AssetIndex::new(["assets/audio/theme.ogg"]);
         assert_eq!(r.candidates(&index), ["audio/theme.ogg"]);
         assert_eq!(Request::AudioMetadata.candidates(&index), ["audio/audio.toml"]);
+        assert_eq!(Request::TitleMusic("theme".into()).candidates(&index), ["audio/theme.ogg"]);
     }
 
     #[test]

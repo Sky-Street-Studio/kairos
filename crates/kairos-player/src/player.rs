@@ -158,13 +158,7 @@ impl Player {
 
     fn play_title_music(&mut self) {
         if let Some(asset) = self.title.music.clone() {
-            self.assets.request(Request::Audio {
-                channel: "music".into(),
-                asset,
-                looped: true,
-                queue: false,
-                fadein: None,
-            });
+            self.assets.request(Request::TitleMusic(asset));
         }
     }
 
@@ -465,7 +459,9 @@ impl Player {
                     }
                 }
                 self.audio_metadata_ready = true;
-            } else if matches!(&loaded.request, Request::Audio { .. }) && !self.audio_metadata_ready {
+            } else if matches!(&loaded.request, Request::Audio { .. } | Request::TitleMusic(_))
+                && !self.audio_metadata_ready
+            {
                 self.pending_audio.push(loaded);
             } else {
                 self.receive_asset(loaded);
@@ -479,7 +475,7 @@ impl Player {
     }
 
     fn receive_asset(&mut self, loaded: Loaded) {
-        if matches!(&loaded.request, Request::Audio { .. }) {
+        if matches!(&loaded.request, Request::Audio { .. } | Request::TitleMusic(_)) {
             self.receive_audio(loaded);
             return;
         }
@@ -514,9 +510,14 @@ impl Player {
 
     fn receive_audio(&mut self, loaded: Loaded) {
         let resolved_path = loaded.resolved_path;
-        match (loaded.request, loaded.bytes) {
-            (Request::Audio { asset, .. }, Some(_))
-                if self.game.screen != Screen::Title && self.title.music.as_deref() == Some(asset.as_str()) => {}
+        let request = match loaded.request {
+            Request::TitleMusic(_) if self.game.screen != Screen::Title => return,
+            Request::TitleMusic(asset) => {
+                Request::Audio { channel: "music".into(), asset, looped: true, queue: false, fadein: None }
+            }
+            request => request,
+        };
+        match (request, loaded.bytes) {
             (Request::Audio { channel, asset, looped, queue, fadein }, Some(bytes)) => {
                 let loop_region = audio_loop(&self.audio_metadata, resolved_path.as_deref());
                 match Sound::decode(bytes) {

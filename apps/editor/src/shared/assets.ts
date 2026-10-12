@@ -5,7 +5,7 @@ export const AUDIO_EXTENSIONS = ["ogg", "mp3", "wav", "flac"];
 
 const extension = (path: string) => path.slice(path.lastIndexOf(".") + 1).toLowerCase();
 const stem = (path: string) => path.slice(path.lastIndexOf("/") + 1).replace(/\.[^.]+$/, "");
-const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+export const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 function categoryFor(
   path: string,

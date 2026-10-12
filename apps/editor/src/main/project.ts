@@ -5,7 +5,7 @@ import sharp from "sharp";
 
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 
-import { classifyAsset } from "@shared/assets";
+import { classifyAsset, escapeRegex } from "@shared/assets";
 import { addCharacter, insertJump, setCharacterLine } from "@shared/edits";
 import type {
   AssetEntry,
@@ -236,11 +236,14 @@ export async function renameProjectAsset(rel: string, newName: string): Promise<
   const safeName = newName.trim();
   if (!safeName || /[\\/]/.test(safeName)) throw new Error("Enter a file name without a folder path");
   const extension = extname(rel);
-  const targetRel = `${dirname(rel)}/${safeName.toLowerCase().endsWith(extension.toLowerCase()) ? safeName : `${safeName}${extension}`}`;
+  const asset = classifyAsset(rel);
+  const layerPart = /^assets\/images\/sprites\/[^/]+\/[^/]+\/[^/]+$/.test(rel);
+  const tag = asset.category === "sprite" && !layerPart ? asset.characterId : undefined;
+  const tagged = tag && !safeName.startsWith(`${tag} `) ? `${tag} ${safeName}` : safeName;
+  const targetRel = `${dirname(rel)}/${tagged.toLowerCase().endsWith(extension.toLowerCase()) ? tagged : `${tagged}${extension}`}`;
   const target = within(root, targetRel);
   if (target === source) return;
   if (await exists(target)) throw new Error(`${basename(target)} already exists`);
-  const asset = classifyAsset(rel);
   const oldName = basename(rel, extension);
   const nextName = basename(targetRel, extension);
   const scriptPaths = flatten(await walk(root, "script")).filter((path) => path.endsWith(".kai"));
@@ -265,10 +268,14 @@ export async function renameProjectAsset(rel: string, newName: string): Promise<
         }
         if (asset.kind !== "image" || !/^\s*(?:scene|show)\s+/.test(line)) return line;
         const characterId = asset.characterId ?? (oldName.includes(" ") ? oldName.split(/\s+/)[0] : undefined);
-        if (characterId && /^\s*show\s+/.test(line) && !new RegExp(`^\\s*show\\s+${characterId}\\b`).test(line))
+        if (
+          characterId &&
+          /^\s*show\s+/.test(line) &&
+          !new RegExp(`^\\s*show\\s+${escapeRegex(characterId)}(?=\\s|$)`).test(line)
+        )
           return line;
         if (asset.category === "background" && !/^\s*scene\s+/.test(line)) return line;
-        return line.replace(new RegExp(`\\b${oldName.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}\\b`, "g"), nextName);
+        return line.replace(new RegExp(`(?<=\\s)${escapeRegex(oldName)}(?=\\s|$)`, "g"), nextName);
       })
       .join("\n");
     if (nextText !== sourceText) await writeFile(scriptPath, nextText, "utf8");
@@ -283,6 +290,15 @@ export async function renameProjectAsset(rel: string, newName: string): Promise<
         metadata.default[group] = nextName;
         await writeFile(metadataPath, `${stringifyToml(metadata)}\n`, "utf8");
       }
+    }
+  }
+  if (asset.kind === "image") {
+    const titlePath = join(root, "ui/title.toml");
+    const title = parseToml(await readFile(titlePath, "utf8").catch(() => "")) as Record<string, unknown>;
+    const fields = (["background", "logo"] as const).filter((field) => title[field] === oldName);
+    if (fields.length) {
+      for (const field of fields) title[field] = nextName;
+      await writeFile(titlePath, `${stringifyToml(title)}\n`, "utf8");
     }
   }
   if (asset.kind === "audio") {
