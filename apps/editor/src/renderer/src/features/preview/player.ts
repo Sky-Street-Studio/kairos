@@ -1,4 +1,4 @@
-import { ASSET_SCHEME, type Manifest, type SourceFile } from "@shared/types";
+import { ASSET_SCHEME, type SourceFile } from "@shared/types";
 
 /** The surface `crates/kairos-player` exports when built with `wasm-bindgen --target web`. */
 export interface WebPlayer {
@@ -26,8 +26,13 @@ export function loadPlayerModule(url: string): Promise<PlayerModule> {
   return modulePromise;
 }
 
-export function projectJson(manifest: Manifest, scripts: SourceFile[]): string {
-  return JSON.stringify({ manifest, scripts, assetBaseUrl: `${ASSET_SCHEME}://project/` });
+export function projectJson(manifestSource: string, scripts: SourceFile[], uiTheme: string | null): string {
+  return JSON.stringify({
+    manifest: manifestSource,
+    scripts,
+    assetBaseUrl: `${ASSET_SCHEME}://project/`,
+    ...(uiTheme === null ? {} : { theme: uiTheme }),
+  });
 }
 
 export interface PlayerError {

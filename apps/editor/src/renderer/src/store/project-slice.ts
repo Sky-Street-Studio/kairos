@@ -1,7 +1,9 @@
 import { insertStatement } from "@shared/edits";
-import type { EditResult } from "@shared/types";
+import type { EditResult, ProjectSnapshot } from "@shared/types";
 
 import type { FileBuffer, ProjectSlice, SliceCreator } from "./types";
+
+const withoutScripts = ({ scripts: _scripts, ...rest }: ProjectSnapshot) => rest;
 
 export const isDirty = (b: FileBuffer | undefined) => !!b && b.source !== b.saved;
 
@@ -26,7 +28,7 @@ export const createProjectSlice: SliceCreator<ProjectSlice> = (set, get, api) =>
         const buffers = Object.fromEntries(snap.scripts.map((f) => [f.path, { ...f, saved: f.source }]));
         const first = snap.scripts[0]?.path;
         set({
-          project: { root: snap.root, manifest: snap.manifest, tree: snap.tree, assets: snap.assets },
+          project: withoutScripts(snap),
           buffers,
           tabs: [{ id: "graph", kind: "graph" }, ...(first ? [{ id: first, kind: "file" as const, path: first }] : [])],
           activeId: first ?? "graph",
@@ -46,7 +48,7 @@ export const createProjectSlice: SliceCreator<ProjectSlice> = (set, get, api) =>
       set((s) => {
         const buffers = { ...s.buffers };
         for (const f of snap.scripts) buffers[f.path] ??= { ...f, saved: f.source };
-        return { project: { root: snap.root, manifest: snap.manifest, tree: snap.tree, assets: snap.assets }, buffers };
+        return { project: withoutScripts(snap), buffers };
       });
       await get().analyze();
     },

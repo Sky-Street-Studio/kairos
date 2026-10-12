@@ -73,6 +73,10 @@ export interface TreeNode {
 export interface ProjectSnapshot {
   root: string;
   manifest: Manifest;
+  /** Raw `kairos.toml`, which the player parses itself. */
+  manifestSource: string;
+  /** Raw `ui/theme.toml`, if present. */
+  uiTheme: string | null;
   scripts: SourceFile[];
   tree: TreeNode[];
   assets: AssetEntry[];

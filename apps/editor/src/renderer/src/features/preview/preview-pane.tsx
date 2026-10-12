@@ -86,7 +86,7 @@ export function PreviewPane({ width }: { width: number }) {
       const scripts = Object.values(buffers)
         .map(({ path, source }) => ({ path, source }))
         .toSorted((a, b) => a.path.localeCompare(b.path));
-      player.load(projectJson(project.manifest, scripts));
+      player.load(projectJson(project.manifestSource, scripts, project.uiTheme));
       if (from) player.playFromLine(from.path, from.line);
       else player.start();
       setError(null);
@@ -110,7 +110,7 @@ export function PreviewPane({ width }: { width: number }) {
         if (disposed) return player.destroy();
         playerRef.current = player;
         const rect = canvas.getBoundingClientRect();
-        player.resize(Math.round(rect.width * devicePixelRatio), Math.round(rect.height * devicePixelRatio));
+        player.resize(Math.round(rect.width), Math.round(rect.height));
         run(lastPlay.current);
       } catch (e) {
         setError(parsePlayerError(e));
@@ -119,7 +119,7 @@ export function PreviewPane({ width }: { width: number }) {
     const observer = new ResizeObserver(([entry]) => {
       const box = entry?.contentRect;
       if (box && playerRef.current) {
-        playerRef.current.resize(Math.round(box.width * devicePixelRatio), Math.round(box.height * devicePixelRatio));
+        playerRef.current.resize(Math.round(box.width), Math.round(box.height));
       }
     });
     observer.observe(canvas);

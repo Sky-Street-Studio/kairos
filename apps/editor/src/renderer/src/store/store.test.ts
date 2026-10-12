@@ -16,6 +16,8 @@ function fakeApi() {
   const snapshot = (): ProjectSnapshot => ({
     root: "/p",
     manifest: { name: "P", start: "start" },
+    manifestSource: 'name = "P"\n',
+    uiTheme: null,
     scripts: [...disk].map(([path, source]) => ({ path, source })),
     tree: [],
     assets: [],

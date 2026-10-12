@@ -1,4 +1,4 @@
-import { cp, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { access, cp, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -7,17 +7,11 @@ import { _electron as electron, expect, test } from "@playwright/test";
 const editorDir = resolve(import.meta.dirname, "..");
 const example = resolve(editorDir, "../../examples/hello-kairos");
 const shots = process.env.KAIROS_SHOTS;
-const PIXEL_PNG = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
-  "base64",
-);
 
 test("opens a project, shows the graph, reports diagnostics, stages assets and runs a terminal", async () => {
   const work = await mkdtemp(join(tmpdir(), "kairos-e2e-"));
   const project = join(work, "hello-kairos");
   await cp(example, project, { recursive: true });
-  await mkdir(join(project, "assets/images"), { recursive: true });
-  await writeFile(join(project, "assets/images/e happy.png"), PIXEL_PNG);
 
   const app = await electron.launch({
     args: [editorDir, `--project=${project}`],
@@ -28,6 +22,18 @@ test("opens a project, shows the graph, reports diagnostics, stages assets and r
 
   await expect(page.getByText("Hello Kairos", { exact: true })).toBeVisible();
   await expect(page.getByTestId("diagnostic-count")).toHaveText("No problems");
+
+  const playerBuilt = await access(resolve(editorDir, "../../crates/kairos-player/pkg/kairos_player.js")).then(
+    () => true,
+    () => false,
+  );
+  if (playerBuilt) {
+    await expect(page.getByLabel("running")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole("complementary", { name: "Preview" }).getByRole("alert")).toHaveCount(0);
+    if (shots) await page.screenshot({ path: join(shots, "preview.png") });
+  } else {
+    await expect(page.getByTestId("player-missing")).toBeVisible();
+  }
 
   await page.getByRole("tab", { name: /Story flow/ }).click();
   await expect(page.getByTestId("graph-node")).toHaveCount(4);
@@ -49,7 +55,10 @@ test("opens a project, shows the graph, reports diagnostics, stages assets and r
 
   const stage = page.getByTestId("preview-stage");
   const box = (await stage.boundingBox())!;
-  await page.getByTestId("asset-thumb").dragTo(stage, { targetPosition: { x: box.width * 0.9, y: box.height / 2 } });
+  await page
+    .getByTestId("asset-thumb")
+    .filter({ hasText: "e happy" })
+    .dragTo(stage, { targetPosition: { x: box.width * 0.9, y: box.height / 2 } });
   await expect(page.locator(".monaco-editor .view-lines")).toContainText("show e happy at right");
 
   await page.keyboard.press(`${mod}+j`);

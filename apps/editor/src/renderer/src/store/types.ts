@@ -1,7 +1,7 @@
 import type { ThemeConfig } from "@kairos/theme";
 import type { StoreApi } from "zustand";
 
-import type { Analysis, AssetEntry, CharacterFields, KairosApi, LayoutPrefs, Manifest, TreeNode } from "@shared/types";
+import type { Analysis, CharacterFields, KairosApi, LayoutPrefs, ProjectSnapshot } from "@shared/types";
 
 export interface FileBuffer {
   path: string;
@@ -20,7 +20,7 @@ export interface Reveal {
 }
 
 export interface ProjectSlice {
-  project: { root: string; manifest: Manifest; tree: TreeNode[]; assets: AssetEntry[] } | null;
+  project: Omit<ProjectSnapshot, "scripts"> | null;
   buffers: Record<string, FileBuffer>;
   loading: boolean;
   openProject(root: string): Promise<void>;
