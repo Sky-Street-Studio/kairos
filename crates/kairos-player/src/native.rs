@@ -1,0 +1,156 @@
+use std::path::Path;
+use std::sync::Arc;
+use std::time::Instant;
+
+use kairos_project::Project;
+use kairos_render::Renderer;
+use winit::application::ApplicationHandler;
+use winit::dpi::LogicalSize;
+use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::keyboard::{Key as WinitKey, NamedKey};
+use winit::window::{Window, WindowId};
+
+use crate::assets::Assets;
+use crate::gpu::Gpu;
+use crate::player::{Button, Key, Player};
+use crate::saves::SaveStore;
+use crate::theme::Theme;
+
+/// Opens a window and plays the project until the window closes.
+pub fn run(project: Project) -> Result<(), Box<dyn std::error::Error>> {
+    let theme = load_theme(&project.root)?;
+    let event_loop = EventLoop::new()?;
+    let mut app = App { project, theme, running: None, error: None };
+    event_loop.run_app(&mut app)?;
+    match app.error {
+        Some(e) => Err(e.into()),
+        None => Ok(()),
+    }
+}
+
+/// Reads `ui/theme.toml`, or the default theme when the file does not exist.
+pub fn load_theme(root: &Path) -> Result<Theme, String> {
+    match std::fs::read_to_string(root.join("ui/theme.toml")) {
+        Ok(text) => Theme::parse(&text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Theme::default()),
+        Err(e) => Err(format!("ui/theme.toml: {e}")),
+    }
+}
+
+struct App {
+    project: Project,
+    theme: Theme,
+    running: Option<Running>,
+    error: Option<String>,
+}
+
+struct Running {
+    player: Player,
+    gpu: Gpu,
+    last: Instant,
+    window: Arc<Window>,
+}
+
+impl App {
+    fn open(&mut self, event_loop: &ActiveEventLoop) -> Result<Running, String> {
+        let size = self.project.manifest.window;
+        let attributes = Window::default_attributes()
+            .with_title(&self.project.manifest.name)
+            .with_inner_size(LogicalSize::new(size.width, size.height));
+        let window = Arc::new(event_loop.create_window(attributes).map_err(|e| e.to_string())?);
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle(Box::new(
+            event_loop.owned_display_handle(),
+        )));
+        let surface = instance.create_surface(window.clone()).map_err(|e| e.to_string())?;
+        let physical = window.inner_size();
+        let gpu = pollster::block_on(Gpu::new(&instance, surface, physical.width, physical.height))?;
+        let renderer = Renderer::new(
+            gpu.device.clone(),
+            gpu.queue.clone(),
+            gpu.view_format,
+            (size.width, size.height),
+            gpu.size(),
+        );
+        let assets = Assets::dir(self.project.assets_dir());
+        let saves = SaveStore::for_project(&self.project.manifest.name);
+        let mut player = Player::new(renderer, &self.project, self.theme.clone(), assets, saves, true)?;
+        player.start_audio();
+        player.start();
+        Ok(Running { player, gpu, last: Instant::now(), window })
+    }
+}
+
+impl ApplicationHandler for App {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.running.is_some() {
+            return;
+        }
+        match self.open(event_loop) {
+            Ok(running) => {
+                running.window.request_redraw();
+                self.running = Some(running);
+            }
+            Err(e) => {
+                self.error = Some(e);
+                event_loop.exit();
+            }
+        }
+    }
+
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
+        let Some(r) = &mut self.running else { return };
+        match event {
+            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::Resized(size) => {
+                r.gpu.resize(size.width, size.height);
+                r.player.resize(size.width, size.height);
+            }
+            WindowEvent::RedrawRequested => {
+                let now = Instant::now();
+                let dt = (now - r.last).as_secs_f32();
+                r.last = now;
+                let player = &mut r.player;
+                r.gpu.draw(|view| player.frame(dt, view));
+                if r.player.should_quit() {
+                    event_loop.exit();
+                    return;
+                }
+                r.window.request_redraw();
+            }
+            WindowEvent::CursorMoved { position, .. } => r.player.pointer_moved(position.x as f32, position.y as f32),
+            WindowEvent::MouseInput { state: ElementState::Pressed, button, .. } => match button {
+                MouseButton::Left => r.player.pointer_down(Button::Primary),
+                MouseButton::Right => r.player.pointer_down(Button::Secondary),
+                _ => {}
+            },
+            WindowEvent::MouseWheel { delta, .. } => {
+                let lines = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => y,
+                    MouseScrollDelta::PixelDelta(p) => (p.y / 40.0) as f32,
+                };
+                if lines.abs() >= 0.5 {
+                    r.player.wheel(lines);
+                }
+            }
+            WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
+                let key = match &event.logical_key {
+                    WinitKey::Named(NamedKey::Space | NamedKey::Enter) => Some(Key::Advance),
+                    WinitKey::Named(NamedKey::Escape) => Some(Key::Escape),
+                    WinitKey::Named(NamedKey::PageUp) => Some(Key::Back),
+                    WinitKey::Named(NamedKey::PageDown) => Some(Key::Forward),
+                    WinitKey::Named(NamedKey::Tab) => Some(Key::Skip),
+                    WinitKey::Character(c) => match c.as_str() {
+                        "a" | "A" => Some(Key::Auto),
+                        s => s.parse::<u8>().ok().map(Key::Digit),
+                    },
+                    _ => None,
+                };
+                if let Some(key) = key {
+                    r.player.key(key);
+                }
+            }
+            _ => {}
+        }
+    }
+}
