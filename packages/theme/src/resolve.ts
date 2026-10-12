@@ -38,7 +38,7 @@ export const NEUTRALS: Record<ResolvedAppearance, Neutrals> = {
 };
 
 /** Lightness and chroma windows that keep hue-only stops legible behind text in each appearance. */
-const BACKGROUND_FIT = { dark: [0.2, 0.36, 0.13], light: [0.86, 0.95, 0.075] } as const;
+const BACKGROUND_FIT = { dark: [0.25, 0.42, 0.15], light: [0.86, 0.95, 0.075] } as const;
 const ACCENT_FIT = { dark: [0.7, 0.86, 0.2], light: [0.42, 0.54, 0.2] } as const;
 
 export const THEME_VARIABLES = [
