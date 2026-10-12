@@ -80,6 +80,9 @@ The editor resolves assets with the same rule, so treat it as stable.
 - An image name is its file stem anywhere under `assets/images/`. `scene bg room` can load `assets/images/bg room.png` or `assets/images/bg/bg room.webp`; extensions are tried in `.png`, `.jpg`, `.jpeg`, `.webp` order within each directory. Duplicate image stems in different directories fail `kairos check`.
 - Audio names with `/` resolve under `assets/audio/` as written. A bare name searches recursively: `theme.ogg` matches that filename, while `theme` matches the stem using `.ogg`, `.mp3`, `.wav` and `.flac` order. Duplicate audio names in different directories fail `kairos check`.
 - A character with `assets/images/sprites/<id>/layers.toml` uses its layered sprite definition instead of a flat image. The file lists groups from back to front; `show e happy casual` selects those attribute layers, then group defaults or a group's only image. Unknown attributes fail `kairos check`.
+- `assets/audio/audio.toml` can define loop points by resolved path relative to `assets/audio/`. The intro before `loop_start` plays once; the loop region then repeats.
+- `[audio]` in `kairos.toml` can duck music while voice plays: `duck` multiplies music volume and defaults to `1.0` (off); `duck_fade` sets the transition time in seconds and defaults to `0.25`.
+- Playing a new music track with `fadein` crossfades the current music over the same duration.
 - A missing image draws a labelled placeholder. A missing sound is skipped with a warning.
 
 Backgrounds are scaled to cover the screen. Sprites are scaled to the screen height and stand on the bottom edge, at `left`, `center` (the default) or `right`. `fade` goes through black over 1 s, `dissolve` crossfades over 0.5 s, and `move` currently crossfades too.

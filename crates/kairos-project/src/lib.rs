@@ -17,6 +17,33 @@ pub struct Manifest {
     pub start: String,
     #[serde(default)]
     pub window: Window,
+    #[serde(default)]
+    pub audio: AudioSettings,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(default)]
+pub struct AudioSettings {
+    pub duck: f32,
+    pub duck_fade: f64,
+}
+
+impl Default for AudioSettings {
+    fn default() -> Self {
+        AudioSettings { duck: 1.0, duck_fade: 0.25 }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+pub struct AudioLoop {
+    pub loop_start: f64,
+    pub loop_end: Option<f64>,
+}
+
+pub type AudioMetadata = std::collections::HashMap<String, AudioLoop>;
+
+pub fn parse_audio_metadata(text: &str) -> Result<AudioMetadata, toml::de::Error> {
+    toml::from_str(text)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -44,6 +71,7 @@ pub struct Project {
     pub files: Vec<PathBuf>,
     /// Diagnostics paired with the file they came from.
     pub diagnostics: Vec<(PathBuf, Diagnostic)>,
+    pub audio_metadata: AudioMetadata,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -52,6 +80,8 @@ pub enum ProjectError {
     Io(PathBuf, std::io::Error),
     #[error("kairos.toml: {0}")]
     Manifest(#[from] toml::de::Error),
+    #[error("assets/audio/audio.toml: {0}")]
+    AudioMetadata(#[source] toml::de::Error),
 }
 
 impl Project {
@@ -68,6 +98,12 @@ impl Project {
         let sources = paths.into_iter().map(|p| Ok((read(&p)?, p))).collect::<Result<Vec<_>, ProjectError>>()?;
         let mut project = Project::from_sources(&manifest, sources.into_iter().map(|(text, path)| (path, text)))?;
         project.root = root.to_path_buf();
+        let metadata_path = root.join("assets/audio/audio.toml");
+        project.audio_metadata = match std::fs::read_to_string(&metadata_path) {
+            Ok(text) => parse_audio_metadata(&text).map_err(ProjectError::AudioMetadata)?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => AudioMetadata::new(),
+            Err(e) => return Err(ProjectError::Io(metadata_path, e)),
+        };
         Ok(project)
     }
 
@@ -90,7 +126,14 @@ impl Project {
         let (program, diags) = kairos_vm::compile(&parsed);
         diagnostics.extend(diags.into_iter().map(|(i, d)| (sources[i].0.clone(), d)));
         let files = sources.into_iter().map(|(p, _)| p).collect();
-        Ok(Project { root: PathBuf::new(), manifest, program: Arc::new(program), files, diagnostics })
+        Ok(Project {
+            root: PathBuf::new(),
+            manifest,
+            program: Arc::new(program),
+            files,
+            diagnostics,
+            audio_metadata: AudioMetadata::new(),
+        })
     }
 
     /// One `path:line: message` line per diagnostic.
@@ -174,8 +217,31 @@ mod tests {
     fn window_defaults_to_720p_and_reads_overrides() {
         let p = Project::from_sources("name = \"x\"", []).unwrap();
         assert_eq!(p.manifest.window, Window { width: 1280, height: 720 });
+        assert_eq!(p.manifest.audio.duck, 1.0);
+        assert_eq!(p.manifest.audio.duck_fade, 0.25);
         let p = Project::from_sources("name = \"x\"\n[window]\nwidth = 800", []).unwrap();
         assert_eq!(p.manifest.window, Window { width: 800, height: 720 });
+    }
+
+    #[test]
+    fn audio_metadata_is_keyed_by_audio_relative_path() {
+        let metadata = parse_audio_metadata("[\"music/theme.ogg\"]\nloop_start = 12.48\nloop_end = 96.0\n").unwrap();
+        assert_eq!(metadata.get("music/theme.ogg"), Some(&AudioLoop { loop_start: 12.48, loop_end: Some(96.0) }));
+        let metadata = parse_audio_metadata("[\"music/other.ogg\"]\nloop_start = 4.0\n").unwrap();
+        assert_eq!(metadata.get("music/other.ogg"), Some(&AudioLoop { loop_start: 4.0, loop_end: None }));
+    }
+
+    #[test]
+    fn project_loads_optional_audio_metadata_from_the_assets_directory() {
+        let root = std::env::temp_dir().join(format!("kairos-project-audio-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("script")).unwrap();
+        std::fs::create_dir_all(root.join("assets/audio")).unwrap();
+        std::fs::write(root.join("kairos.toml"), "name = \"test\"").unwrap();
+        std::fs::write(root.join("script/start.kai"), "label start:\n    return\n").unwrap();
+        std::fs::write(root.join("assets/audio/audio.toml"), "[\"music/theme.ogg\"]\nloop_start = 2.0\n").unwrap();
+        let project = Project::load(&root).unwrap();
+        assert_eq!(project.audio_metadata.get("music/theme.ogg"), Some(&AudioLoop { loop_start: 2.0, loop_end: None }));
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

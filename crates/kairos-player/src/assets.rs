@@ -16,6 +16,7 @@ pub enum Request {
         queue: bool,
         fadein: Option<f64>,
     },
+    AudioMetadata,
     Font {
         dialogue: bool,
         path: String,
@@ -28,6 +29,7 @@ impl Request {
         match self {
             Request::Image(name) => index.image_candidates(&name.split(' ').map(String::from).collect::<Vec<_>>()),
             Request::Audio { asset, .. } => index.audio_candidates(asset),
+            Request::AudioMetadata => vec!["audio/audio.toml".into()],
             Request::Font { path, .. } => vec![path.clone()],
         }
     }
@@ -36,6 +38,7 @@ impl Request {
 pub struct Loaded {
     pub request: Request,
     pub bytes: Option<Vec<u8>>,
+    pub resolved_path: Option<String>,
 }
 
 pub struct Assets {
@@ -67,20 +70,11 @@ impl Assets {
         match &self.source {
             #[cfg(not(target_arch = "wasm32"))]
             Source::Dir { root, index } => {
-                let bytes = read_request(root, index, &request);
-                self.ready.borrow_mut().push(Loaded { request, bytes });
+                let (resolved_path, bytes) = read_request(root, index, &request).unzip();
+                self.ready.borrow_mut().push(Loaded { request, bytes, resolved_path });
             }
             #[cfg(target_arch = "wasm32")]
-            Source::Url { base, index } => match &request {
-                Request::Image(name) => {
-                    fetch_image(base.clone(), index.clone(), name.clone(), request, self.ready.clone())
-                }
-                _ => {
-                    let paths = request.candidates(index);
-                    let urls = paths.iter().map(|path| format!("{base}{}", encode_path(path))).collect();
-                    fetch_first(urls, request, self.ready.clone());
-                }
-            },
+            Source::Url { base, index } => fetch_request(base.clone(), index.clone(), request, self.ready.clone()),
         }
     }
 
@@ -97,7 +91,7 @@ fn layered_paths(name: &str, index: &AssetIndex, text: &str) -> Result<Vec<Strin
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn read_request(root: &std::path::Path, index: &AssetIndex, request: &Request) -> Option<Vec<u8>> {
+fn read_request(root: &std::path::Path, index: &AssetIndex, request: &Request) -> Option<(String, Vec<u8>)> {
     if let Request::Image(name) = request {
         let mut words = name.split(' ');
         let tag = words.next().unwrap_or_default();
@@ -106,10 +100,13 @@ fn read_request(root: &std::path::Path, index: &AssetIndex, request: &Request) -
             let text = std::fs::read_to_string(root.join(&manifest)).ok()?;
             let paths = layered_paths(name, index, &text).ok()?;
             let images = paths.iter().map(|path| std::fs::read(root.join(path)).ok()).collect::<Option<Vec<_>>>()?;
-            return compose_images(images);
+            return Some((manifest, compose_images(images)?));
         }
     }
-    request.candidates(index).iter().find_map(|path| std::fs::read(root.join(path)).ok())
+    request
+        .candidates(index)
+        .into_iter()
+        .find_map(|path| std::fs::read(root.join(&path)).ok().map(|bytes| (path, bytes)))
 }
 
 fn compose_images(images: Vec<Vec<u8>>) -> Option<Vec<u8>> {
@@ -137,50 +134,41 @@ pub fn encode_path(path: &str) -> String {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn fetch_image(
+fn fetch_request(
     base: String,
     index: AssetIndex,
-    name: String,
     request: Request,
     ready: std::rc::Rc<std::cell::RefCell<Vec<Loaded>>>,
 ) {
     wasm_bindgen_futures::spawn_local(async move {
-        let mut words = name.split(' ');
-        let tag = words.next().unwrap_or_default();
-        let manifest = index.layer_manifest(tag);
-        let bytes = if index.contains(&manifest) {
-            match fetch_paths(&base, &[manifest]).await {
-                Some(text) => match String::from_utf8(text) {
-                    Ok(text) => match layered_paths(&name, &index, &text) {
-                        Ok(paths) => {
-                            let mut layers = Vec::with_capacity(paths.len());
-                            let mut missing = false;
-                            for path in paths {
-                                match fetch_paths(&base, &[path]).await {
-                                    Some(bytes) => layers.push(bytes),
-                                    None => {
-                                        missing = true;
-                                        break;
-                                    }
-                                }
-                            }
-                            (!missing).then(|| compose_images(layers)).flatten()
-                        }
-                        Err(_) => None,
-                    },
-                    Err(_) => None,
-                },
-                None => None,
-            }
-        } else {
-            fetch_paths(&base, &index.image_candidates(&name.split(' ').map(String::from).collect::<Vec<_>>())).await
+        let found = match &request {
+            Request::Image(name) => fetch_image(&base, &index, name).await,
+            _ => fetch_paths(&base, &request.candidates(&index)).await,
         };
-        ready.borrow_mut().push(Loaded { request, bytes });
+        let (resolved_path, bytes) = found.unzip();
+        ready.borrow_mut().push(Loaded { request, bytes, resolved_path });
     });
 }
 
 #[cfg(target_arch = "wasm32")]
-async fn fetch_paths(base: &str, paths: &[String]) -> Option<Vec<u8>> {
+async fn fetch_image(base: &str, index: &AssetIndex, name: &str) -> Option<(String, Vec<u8>)> {
+    let tag = name.split(' ').next().unwrap_or_default();
+    let manifest = index.layer_manifest(tag);
+    if !index.contains(&manifest) {
+        return fetch_paths(base, &index.image_candidates(&name.split(' ').map(String::from).collect::<Vec<_>>()))
+            .await;
+    }
+    let (_, text) = fetch_paths(base, std::slice::from_ref(&manifest)).await?;
+    let paths = layered_paths(name, index, &String::from_utf8(text).ok()?).ok()?;
+    let mut layers = Vec::with_capacity(paths.len());
+    for path in paths {
+        layers.push(fetch_paths(base, &[path]).await?.1);
+    }
+    Some((manifest, compose_images(layers)?))
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn fetch_paths(base: &str, paths: &[String]) -> Option<(String, Vec<u8>)> {
     use wasm_bindgen::JsCast;
     use wasm_bindgen_futures::JsFuture;
 
@@ -194,34 +182,10 @@ async fn fetch_paths(base: &str, paths: &[String]) -> Option<Vec<u8>> {
         }
         let Ok(buffer) = response.array_buffer() else { continue };
         if let Ok(buffer) = JsFuture::from(buffer).await {
-            return Some(js_sys::Uint8Array::new(&buffer).to_vec());
+            return Some((path.clone(), js_sys::Uint8Array::new(&buffer).to_vec()));
         }
     }
     None
-}
-
-#[cfg(target_arch = "wasm32")]
-fn fetch_first(urls: Vec<String>, request: Request, ready: std::rc::Rc<std::cell::RefCell<Vec<Loaded>>>) {
-    use wasm_bindgen::JsCast;
-    use wasm_bindgen_futures::JsFuture;
-
-    wasm_bindgen_futures::spawn_local(async move {
-        let mut found = None;
-        for url in urls {
-            let Some(window) = web_sys::window() else { break };
-            let Ok(response) = JsFuture::from(window.fetch_with_str(&url)).await else { continue };
-            let Ok(response) = response.dyn_into::<web_sys::Response>() else { continue };
-            if !response.ok() {
-                continue;
-            }
-            let Ok(buffer) = response.array_buffer() else { continue };
-            if let Ok(buffer) = JsFuture::from(buffer).await {
-                found = Some(js_sys::Uint8Array::new(&buffer).to_vec());
-                break;
-            }
-        }
-        ready.borrow_mut().push(Loaded { request, bytes: found });
-    });
 }
 
 #[cfg(test)]
@@ -246,6 +210,7 @@ mod tests {
         };
         let index = AssetIndex::new(["assets/audio/theme.ogg"]);
         assert_eq!(r.candidates(&index), ["audio/theme.ogg"]);
+        assert_eq!(Request::AudioMetadata.candidates(&index), ["audio/audio.toml"]);
     }
 
     #[test]
@@ -272,7 +237,9 @@ mod tests {
         });
         let loaded = assets.poll();
         assert_eq!(loaded[0].bytes.as_deref(), Some(&b"jpg"[..]));
+        assert_eq!(loaded[0].resolved_path.as_deref(), Some("images/backgrounds/bg room.jpg"));
         assert_eq!(loaded[1].bytes.as_deref(), Some(&b"ogg"[..]));
+        assert_eq!(loaded[1].resolved_path.as_deref(), Some("audio/music/theme.ogg"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 

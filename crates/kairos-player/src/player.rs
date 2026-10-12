@@ -3,11 +3,11 @@
 use std::collections::HashMap;
 
 use kairos_audio::{Audio, Bus, Sound};
-use kairos_project::Project;
+use kairos_project::{AudioLoop, AudioMetadata, Project, parse_audio_metadata};
 use kairos_render::{Fonts, Renderer, TransitionKind};
 use kairos_vm::Effect;
 
-use crate::assets::{Assets, Request};
+use crate::assets::{Assets, Loaded, Request};
 use crate::game::{Game, Screen, Shown, Signal};
 use crate::saves::SaveStore;
 use crate::theme::Theme;
@@ -40,6 +40,11 @@ pub struct Player {
     renderer: Renderer,
     audio: Audio,
     audio_started: bool,
+    duck: f32,
+    duck_fade: f64,
+    audio_metadata: AudioMetadata,
+    audio_metadata_ready: bool,
+    pending_audio: Vec<Loaded>,
     assets: Assets,
     images: HashMap<String, ImageInfo>,
     saves: SaveStore,
@@ -64,6 +69,11 @@ impl Player {
         can_quit: bool,
     ) -> Result<Player, String> {
         let game = Game::new(project.program.clone()).map_err(|e| e.to_string())?;
+        let mut assets = assets;
+        let audio_metadata_ready = !cfg!(target_arch = "wasm32");
+        if !audio_metadata_ready {
+            assets.request(Request::AudioMetadata);
+        }
         let mut player = Player {
             game,
             start_label: project.manifest.start.clone(),
@@ -74,6 +84,11 @@ impl Player {
             renderer,
             audio: Audio::silent(),
             audio_started: false,
+            duck: project.manifest.audio.duck,
+            duck_fade: project.manifest.audio.duck_fade,
+            audio_metadata: project.audio_metadata.clone(),
+            audio_metadata_ready,
+            pending_audio: Vec::new(),
             assets,
             images: HashMap::new(),
             saves,
@@ -272,6 +287,7 @@ impl Player {
         self.audio.set_volume(Bus::Music, s.music);
         self.audio.set_volume(Bus::Sound, s.sound);
         self.audio.set_volume(Bus::Voice, s.voice);
+        self.audio.set_ducking(self.duck, self.duck_fade);
     }
 
     fn handle_signals(&mut self) {
@@ -334,40 +350,91 @@ impl Player {
 
     fn receive_assets(&mut self) {
         for loaded in self.assets.poll() {
-            match (loaded.request, loaded.bytes) {
-                (Request::Image(name), Some(bytes)) => {
-                    let info = match decode_image(&bytes, self.renderer.max_texture_size()) {
-                        Ok(image) => {
-                            let size = image.dimensions();
-                            self.renderer.upload_image(&name, size, image.as_raw());
-                            ImageInfo::Ready(size.0, size.1)
-                        }
-                        Err(e) => {
-                            log(&format!("image `{name}`: {e}"));
-                            ImageInfo::Missing
-                        }
-                    };
-                    self.images.insert(name, info);
+            if matches!(&loaded.request, Request::AudioMetadata) {
+                if let Some(bytes) = loaded.bytes {
+                    match std::str::from_utf8(&bytes)
+                        .map_err(|e| e.to_string())
+                        .and_then(|text| parse_audio_metadata(text).map_err(|e| e.to_string()))
+                    {
+                        Ok(metadata) => self.audio_metadata = metadata,
+                        Err(e) => log(&format!("audio/audio.toml: {e}")),
+                    }
                 }
-                (Request::Image(name), None) => {
-                    log(&format!("image `{name}` not found under assets/images"));
-                    self.images.insert(name, ImageInfo::Missing);
-                }
-                (Request::Audio { channel, asset, looped, queue, fadein }, Some(bytes)) => match Sound::decode(bytes) {
-                    Ok(sound) if queue => self.audio.queue(&channel, &asset, sound, looped),
-                    Ok(sound) => self.audio.play(&channel, &asset, sound, looped, fadein),
-                    Err(e) => log(&format!("audio `{asset}`: {e}")),
-                },
-                (Request::Audio { asset, .. }, None) => log(&format!("audio `{asset}` not found under assets/audio")),
-                (Request::Font { dialogue, path }, Some(bytes)) => match self.fonts.load(bytes) {
-                    Some(family) if dialogue => self.dialogue_family = Some(family),
-                    Some(family) => self.interface_family = Some(family),
-                    None => log(&format!("font `{path}` could not be read")),
-                },
-                (Request::Font { path, .. }, None) => log(&format!("font `{path}` not found under assets")),
+                self.audio_metadata_ready = true;
+            } else if matches!(&loaded.request, Request::Audio { .. }) && !self.audio_metadata_ready {
+                self.pending_audio.push(loaded);
+            } else {
+                self.receive_asset(loaded);
+            }
+        }
+        if self.audio_metadata_ready {
+            for loaded in std::mem::take(&mut self.pending_audio) {
+                self.receive_audio(loaded);
             }
         }
     }
+
+    fn receive_asset(&mut self, loaded: Loaded) {
+        if matches!(&loaded.request, Request::Audio { .. }) {
+            self.receive_audio(loaded);
+            return;
+        }
+        match (loaded.request, loaded.bytes) {
+            (Request::Image(name), Some(bytes)) => {
+                let info = match decode_image(&bytes, self.renderer.max_texture_size()) {
+                    Ok(image) => {
+                        let size = image.dimensions();
+                        self.renderer.upload_image(&name, size, image.as_raw());
+                        ImageInfo::Ready(size.0, size.1)
+                    }
+                    Err(e) => {
+                        log(&format!("image `{name}`: {e}"));
+                        ImageInfo::Missing
+                    }
+                };
+                self.images.insert(name, info);
+            }
+            (Request::Image(name), None) => {
+                log(&format!("image `{name}` not found under assets/images"));
+                self.images.insert(name, ImageInfo::Missing);
+            }
+            (Request::Font { dialogue, path }, Some(bytes)) => match self.fonts.load(bytes) {
+                Some(family) if dialogue => self.dialogue_family = Some(family),
+                Some(family) => self.interface_family = Some(family),
+                None => log(&format!("font `{path}` could not be read")),
+            },
+            (Request::Font { path, .. }, None) => log(&format!("font `{path}` not found under assets")),
+            _ => {}
+        }
+    }
+
+    fn receive_audio(&mut self, loaded: Loaded) {
+        let resolved_path = loaded.resolved_path;
+        match (loaded.request, loaded.bytes) {
+            (Request::Audio { channel, asset, looped, queue, fadein }, Some(bytes)) => {
+                let loop_region = audio_loop(&self.audio_metadata, resolved_path.as_deref());
+                match Sound::decode(bytes) {
+                    Ok(mut sound) => {
+                        if let Some(region) = loop_region {
+                            sound = sound.with_loop_region(region.loop_start, region.loop_end);
+                        }
+                        if queue {
+                            self.audio.queue(&channel, &asset, sound, looped);
+                        } else {
+                            self.audio.play(&channel, &asset, sound, looped, fadein);
+                        }
+                    }
+                    Err(e) => log(&format!("audio `{asset}`: {e}")),
+                }
+            }
+            (Request::Audio { asset, .. }, None) => log(&format!("audio `{asset}` not found under assets/audio")),
+            _ => {}
+        }
+    }
+}
+
+fn audio_loop(metadata: &AudioMetadata, resolved_path: Option<&str>) -> Option<AudioLoop> {
+    resolved_path.and_then(|path| path.strip_prefix("audio/")).and_then(|path| metadata.get(path)).copied()
 }
 
 fn decode_image(bytes: &[u8], max: u32) -> Result<image::RgbaImage, image::ImageError> {
@@ -385,4 +452,21 @@ pub(crate) fn log(message: &str) {
     web_sys::console::warn_1(&message.into());
     #[cfg(not(target_arch = "wasm32"))]
     eprintln!("{message}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn loop_metadata_uses_the_resolved_audio_path_relative_to_audio() {
+        let metadata =
+            [("music/theme.ogg".to_string(), AudioLoop { loop_start: 2.0, loop_end: Some(8.0) })].into_iter().collect();
+        assert_eq!(
+            audio_loop(&metadata, Some("audio/music/theme.ogg")),
+            Some(AudioLoop { loop_start: 2.0, loop_end: Some(8.0) })
+        );
+        assert_eq!(audio_loop(&metadata, Some("audio/theme.ogg")), None);
+        assert_eq!(audio_loop(&metadata, None), None);
+    }
 }
