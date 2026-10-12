@@ -1,2 +1,6 @@
 name = "Hello Kairos"
 start = "start"
+
+[audio]
+duck = 0.5
+duck_fade = 0.25

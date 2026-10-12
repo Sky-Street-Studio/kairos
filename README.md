@@ -79,6 +79,9 @@ The editor resolves assets with the same rule, so treat it as stable.
 
 - An image is named by its words joined with spaces. `scene bg room` loads `assets/images/bg room.png`, trying `.png`, `.jpg`, `.jpeg` and `.webp` in that order. `show e happy` loads `assets/images/e happy.png` the same way.
 - Audio is `assets/audio/<asset>`. `play music "theme.ogg"` loads `assets/audio/theme.ogg`. A name without an extension tries `.ogg`, `.mp3`, `.wav` and `.flac`.
+- `assets/audio/audio.toml` can define loop points by resolved path relative to `assets/audio/`. The intro before `loop_start` plays once; the loop region then repeats.
+- `[audio]` in `kairos.toml` can duck music while voice plays: `duck` multiplies music volume and defaults to `1.0` (off); `duck_fade` sets the transition time in seconds and defaults to `0.25`.
+- Playing a new music track with `fadein` crossfades the current music over the same duration.
 - A missing image draws a labelled placeholder. A missing sound is skipped with a warning.
 
 Backgrounds are scaled to cover the screen. Sprites are scaled to the screen height and stand on the bottom edge, at `left`, `center` (the default) or `right`. `fade` goes through black over 1 s, `dissolve` crossfades over 0.5 s, and `move` currently crossfades too.

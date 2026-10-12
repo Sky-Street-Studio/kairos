@@ -14,6 +14,7 @@ pub enum Request {
         queue: bool,
         fadein: Option<f64>,
     },
+    AudioMetadata,
     Font {
         dialogue: bool,
         path: String,
@@ -26,6 +27,7 @@ impl Request {
         match self {
             Request::Image(name) => image_candidates(&name.split(' ').map(String::from).collect::<Vec<_>>()),
             Request::Audio { asset, .. } => audio_candidates(asset),
+            Request::AudioMetadata => vec!["audio/audio.toml".into()],
             Request::Font { path, .. } => vec![path.clone()],
         }
     }
@@ -34,6 +36,7 @@ impl Request {
 pub struct Loaded {
     pub request: Request,
     pub bytes: Option<Vec<u8>>,
+    pub resolved_path: Option<String>,
 }
 
 pub struct Assets {
@@ -65,12 +68,14 @@ impl Assets {
         match &self.source {
             #[cfg(not(target_arch = "wasm32"))]
             Source::Dir(dir) => {
-                let bytes = candidates.iter().find_map(|c| std::fs::read(dir.join(c)).ok());
-                self.ready.borrow_mut().push(Loaded { request, bytes });
+                let found =
+                    candidates.iter().find_map(|c| std::fs::read(dir.join(c)).ok().map(|bytes| (c.clone(), bytes)));
+                let (resolved_path, bytes) = found.map_or((None, None), |(path, bytes)| (Some(path), Some(bytes)));
+                self.ready.borrow_mut().push(Loaded { request, bytes, resolved_path });
             }
             #[cfg(target_arch = "wasm32")]
             Source::Url(base) => {
-                let urls = candidates.iter().map(|c| format!("{base}{}", encode_path(c))).collect();
+                let urls = candidates.iter().map(|c| (format!("{base}{}", encode_path(c)), c.clone())).collect();
                 fetch_first(urls, request, self.ready.clone());
             }
         }
@@ -94,13 +99,13 @@ pub fn encode_path(path: &str) -> String {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn fetch_first(urls: Vec<String>, request: Request, ready: std::rc::Rc<std::cell::RefCell<Vec<Loaded>>>) {
+fn fetch_first(urls: Vec<(String, String)>, request: Request, ready: std::rc::Rc<std::cell::RefCell<Vec<Loaded>>>) {
     use wasm_bindgen::JsCast;
     use wasm_bindgen_futures::JsFuture;
 
     wasm_bindgen_futures::spawn_local(async move {
         let mut found = None;
-        for url in urls {
+        for (url, path) in urls {
             let Some(window) = web_sys::window() else { break };
             let Ok(response) = JsFuture::from(window.fetch_with_str(&url)).await else { continue };
             let Ok(response) = response.dyn_into::<web_sys::Response>() else { continue };
@@ -109,11 +114,12 @@ fn fetch_first(urls: Vec<String>, request: Request, ready: std::rc::Rc<std::cell
             }
             let Ok(buffer) = response.array_buffer() else { continue };
             if let Ok(buffer) = JsFuture::from(buffer).await {
-                found = Some(js_sys::Uint8Array::new(&buffer).to_vec());
+                found = Some((path, js_sys::Uint8Array::new(&buffer).to_vec()));
                 break;
             }
         }
-        ready.borrow_mut().push(Loaded { request, bytes: found });
+        let (resolved_path, bytes) = found.map_or((None, None), |(path, bytes)| (Some(path), Some(bytes)));
+        ready.borrow_mut().push(Loaded { request, bytes, resolved_path });
     });
 }
 
@@ -138,6 +144,7 @@ mod tests {
             fadein: None,
         };
         assert_eq!(r.candidates(), ["audio/theme.ogg"]);
+        assert_eq!(Request::AudioMetadata.candidates(), ["audio/audio.toml"]);
     }
 
     #[test]
@@ -156,7 +163,9 @@ mod tests {
         assets.request(Request::Image("bg void".into()));
         let loaded = assets.poll();
         assert_eq!(loaded[0].bytes.as_deref(), Some(&b"jpg"[..]));
+        assert_eq!(loaded[0].resolved_path.as_deref(), Some("images/bg room.jpg"));
         assert_eq!(loaded[1].bytes, None);
+        assert_eq!(loaded[1].resolved_path, None);
         assert!(assets.poll().is_empty());
         std::fs::remove_dir_all(dir).unwrap();
     }
