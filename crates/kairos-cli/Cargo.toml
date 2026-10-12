@@ -1,0 +1,17 @@
+[package]
+name = "kairos-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "kairos"
+path = "src/main.rs"
+
+[dependencies]
+kairos-script.workspace = true
+kairos-vm.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+clap.workspace = true
+toml.workspace = true

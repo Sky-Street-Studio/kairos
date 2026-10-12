@@ -1,0 +1,23 @@
+[scene bg room with fade]
+[play music theme.ogg loop]
+[show e happy at center with dissolve]
+Eileen: Welcome to Kairos, Traveler.
+The room hums quietly.
+What would you like to know?
+  1) Tell me about the engine
+  2) Who else is here?
+  3) Nothing, thanks
+> Tell me about the engine
+[show e thinking]
+Eileen: Kairos runs your story in Rust, so rollback and saves just work.
+Eileen: You asked first. I like that.
+  1) Meet Kai
+  2) That's enough
+> Meet Kai
+[show k neutral at right]
+Kai: Hi. I'm Kai.
+[hide k]
+[stop music]
+Eileen: See you, Traveler. Curiosity: 1.
+(pause 0.5s)
+(end)

@@ -1,0 +1,236 @@
+---
+source: crates/kairos-script/tests/parse.rs
+expression: stmts
+---
+[
+    Stmt {
+        line: 2,
+        source: "character e \"Eileen\" color=\"#c8ffc8\"",
+        kind: Character {
+            id: "e",
+            name: "Eileen",
+            color: Some(
+                "#c8ffc8",
+            ),
+        },
+    },
+    Stmt {
+        line: 3,
+        source: "default score = 0",
+        kind: Default {
+            name: "score",
+            value: Lit(
+                Int(
+                    0,
+                ),
+            ),
+        },
+    },
+    Stmt {
+        line: 5,
+        source: "label start:",
+        kind: Label {
+            name: "start",
+            body: [
+                Stmt {
+                    line: 6,
+                    source: "scene bg room with fade",
+                    kind: Scene {
+                        image: Some(
+                            [
+                                "bg",
+                                "room",
+                            ],
+                        ),
+                        with: Some(
+                            "fade",
+                        ),
+                    },
+                },
+                Stmt {
+                    line: 7,
+                    source: "show e happy at center",
+                    kind: Show {
+                        image: [
+                            "e",
+                            "happy",
+                        ],
+                        at: Some(
+                            "center",
+                        ),
+                        with: None,
+                    },
+                },
+                Stmt {
+                    line: 8,
+                    source: "e \"Hi, [name].\"",
+                    kind: Say {
+                        speaker: Some(
+                            Character(
+                                "e",
+                            ),
+                        ),
+                        text: "Hi, [name].",
+                    },
+                },
+                Stmt {
+                    line: 9,
+                    source: "menu:",
+                    kind: Menu {
+                        caption: None,
+                        choices: [
+                            Choice {
+                                line: 10,
+                                source: "\"Ask\" if score >= 1 and not done:",
+                                text: "Ask",
+                                guard: Some(
+                                    Binary(
+                                        And,
+                                        Binary(
+                                            Ge,
+                                            Var(
+                                                "score",
+                                            ),
+                                            Lit(
+                                                Int(
+                                                    1,
+                                                ),
+                                            ),
+                                        ),
+                                        Unary(
+                                            Not,
+                                            Var(
+                                                "done",
+                                            ),
+                                        ),
+                                    ),
+                                ),
+                                body: [
+                                    Stmt {
+                                        line: 11,
+                                        source: "$ score += 2 * (1 + 1)",
+                                        kind: Assign {
+                                            name: "score",
+                                            op: Add,
+                                            value: Binary(
+                                                Mul,
+                                                Lit(
+                                                    Int(
+                                                        2,
+                                                    ),
+                                                ),
+                                                Binary(
+                                                    Add,
+                                                    Lit(
+                                                        Int(
+                                                            1,
+                                                        ),
+                                                    ),
+                                                    Lit(
+                                                        Int(
+                                                            1,
+                                                        ),
+                                                    ),
+                                                ),
+                                            ),
+                                        },
+                                    },
+                                ],
+                            },
+                            Choice {
+                                line: 12,
+                                source: "\"Leave\":",
+                                text: "Leave",
+                                guard: None,
+                                body: [
+                                    Stmt {
+                                        line: 13,
+                                        source: "return",
+                                        kind: Return,
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                },
+                Stmt {
+                    line: 14,
+                    source: "if score == 0:",
+                    kind: If(
+                        [
+                            Branch {
+                                cond: Some(
+                                    Binary(
+                                        Eq,
+                                        Var(
+                                            "score",
+                                        ),
+                                        Lit(
+                                            Int(
+                                                0,
+                                            ),
+                                        ),
+                                    ),
+                                ),
+                                body: [
+                                    Stmt {
+                                        line: 15,
+                                        source: "\"Nothing.\"",
+                                        kind: Say {
+                                            speaker: None,
+                                            text: "Nothing.",
+                                        },
+                                    },
+                                ],
+                            },
+                            Branch {
+                                cond: Some(
+                                    Binary(
+                                        Gt,
+                                        Var(
+                                            "score",
+                                        ),
+                                        Lit(
+                                            Int(
+                                                3,
+                                            ),
+                                        ),
+                                    ),
+                                ),
+                                body: [
+                                    Stmt {
+                                        line: 17,
+                                        source: "pause 1.5",
+                                        kind: Pause(
+                                            Some(
+                                                1.5,
+                                            ),
+                                        ),
+                                    },
+                                ],
+                            },
+                            Branch {
+                                cond: None,
+                                body: [
+                                    Stmt {
+                                        line: 19,
+                                        source: "play music \"a.ogg\" loop fadein 2",
+                                        kind: Play {
+                                            channel: "music",
+                                            asset: "a.ogg",
+                                            looped: true,
+                                            queue: false,
+                                            fadein: Some(
+                                                2.0,
+                                            ),
+                                        },
+                                    },
+                                ],
+                            },
+                        ],
+                    ),
+                },
+            ],
+        },
+    },
+]

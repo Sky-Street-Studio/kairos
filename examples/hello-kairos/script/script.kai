@@ -1,0 +1,52 @@
+character e "Eileen" color="#c8ffc8"
+character k "Kai"
+
+define player_name = "Traveler"
+default curious = 0
+default met_kai = False
+
+label start:
+    scene bg room with fade
+    play music "theme.ogg" loop
+    show e happy at center with dissolve
+    e "Welcome to Kairos, [player_name]."
+    "The room hums quietly."
+    menu:
+        e "What would you like to know?"
+        "Tell me about the engine":
+            $ curious += 1
+            jump about
+        "Who else is here?":
+            call meet_kai
+            jump about
+        "Nothing, thanks":
+            jump goodbye
+
+label about:
+    show e thinking
+    e "Kairos runs your story in Rust, so rollback and saves just work."
+    if curious > 0 and not met_kai:
+        e "You asked first. I like that."
+    elif met_kai:
+        e "Kai can tell you the rest."
+    else:
+        e "Ask me anything."
+    menu:
+        "Meet Kai" if not met_kai:
+            call meet_kai
+        "That's enough":
+            pass
+    jump goodbye
+
+label meet_kai:
+    show k neutral at right
+    k "Hi. I'm Kai."
+    $ met_kai = True
+    return
+
+label goodbye:
+    hide k
+    stop music fadeout 1.0
+    e "See you, [player_name]. Curiosity: [curious]."
+    pause 0.5
+    return
