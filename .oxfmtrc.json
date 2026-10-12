@@ -10,6 +10,7 @@
     "target/**",
     "crates/kairos-napi/index.js",
     "crates/kairos-napi/index.d.ts",
-    "**/*.md"
+    "**/*.md",
+    "**/*.toml"
   ]
 }
