@@ -6,7 +6,7 @@ members = ["crates/*"]
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-repository = "https://github.com/monumei/kairos"
+repository = "https://github.com/Sky-Street-Studio/kairos"
 
 [workspace.dependencies]
 kairos-script = { path = "crates/kairos-script" }
