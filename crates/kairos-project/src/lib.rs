@@ -111,6 +111,59 @@ impl Project {
     pub fn assets_dir(&self) -> PathBuf {
         self.root.join(assets::ASSETS_DIR)
     }
+
+    pub fn asset_index(&self) -> Result<assets::AssetIndex, ProjectError> {
+        let dir = self.assets_dir();
+        let paths = assets::collect_paths(&dir).map_err(|e| ProjectError::Io(dir, e))?;
+        Ok(assets::AssetIndex::new(paths))
+    }
+
+    pub fn asset_diagnostics(&self) -> Result<Vec<(PathBuf, String)>, ProjectError> {
+        let index = self.asset_index()?;
+        let mut diagnostics = Vec::new();
+        for (name, paths) in index.duplicate_images() {
+            diagnostics.push((
+                self.assets_dir().join(&paths[0]),
+                format!("duplicate image name `{name}`: {} and {}", paths[0], paths[1]),
+            ));
+        }
+        for (name, paths) in index.duplicate_audio() {
+            diagnostics.push((
+                self.assets_dir().join(&paths[0]),
+                format!("duplicate audio name `{name}`: {} and {}", paths[0], paths[1]),
+            ));
+        }
+        for (pc, instr) in self.program.instrs.iter().enumerate() {
+            let kairos_vm::Instr::Show { image, .. } = instr else { continue };
+            let Some(tag) = image.first() else { continue };
+            let manifest = index.layer_manifest(tag);
+            if !index.contains(&manifest) {
+                continue;
+            }
+            let path = self.assets_dir().join(&manifest);
+            let text = std::fs::read_to_string(&path).map_err(|e| ProjectError::Io(path.clone(), e))?;
+            let config: assets::LayerConfig = match toml::from_str(&text) {
+                Ok(config) => config,
+                Err(error) => {
+                    diagnostics.push((path, format!("invalid layered sprite config: {error}")));
+                    continue;
+                }
+            };
+            let script_path = self.files[self.program.files[pc]].clone();
+            for attr in image.iter().skip(1) {
+                if !config.has_attribute(tag, attr, &index) {
+                    diagnostics.push((
+                        script_path.clone(),
+                        format!(
+                            "line {}: unknown layered sprite attribute `{attr}` for `{tag}`",
+                            self.program.lines[pc]
+                        ),
+                    ));
+                }
+            }
+        }
+        Ok(diagnostics)
+    }
 }
 
 #[cfg(test)]
@@ -149,5 +202,30 @@ mod tests {
         assert_eq!((p.program.files[pc], p.program.lines[pc]), (1, 2));
         assert_eq!(p.pc_at(Path::new("script/a.kai"), 99), None);
         assert_eq!(p.pc_at(Path::new("script/zzz.kai"), 1), None);
+    }
+
+    #[test]
+    fn asset_diagnostics_report_duplicates_and_unknown_layer_attributes() {
+        let root = std::env::temp_dir().join(format!("kairos-project-assets-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("assets/images/other")).unwrap();
+        std::fs::create_dir_all(root.join("assets/images/sprites/e/face")).unwrap();
+        std::fs::create_dir_all(root.join("assets/audio/music")).unwrap();
+        std::fs::write(root.join("assets/images/bg room.png"), []).unwrap();
+        std::fs::write(root.join("assets/images/other/bg room.webp"), []).unwrap();
+        std::fs::write(root.join("assets/images/sprites/e/layers.toml"), "order = ['face']").unwrap();
+        std::fs::write(root.join("assets/images/sprites/e/face/happy.png"), []).unwrap();
+        std::fs::write(root.join("assets/audio/theme.ogg"), []).unwrap();
+        std::fs::write(root.join("assets/audio/music/theme.mp3"), []).unwrap();
+        let mut project = Project::from_sources(
+            "name = 'test'",
+            [(PathBuf::from("script/main.kai"), "character e \"E\"\nlabel start:\n    show e happy strange\n".into())],
+        )
+        .unwrap();
+        project.root = root.clone();
+        let messages: Vec<_> = project.asset_diagnostics().unwrap().into_iter().map(|(_, message)| message).collect();
+        assert!(messages.iter().any(|message| message.contains("duplicate image name `bg room`")));
+        assert!(messages.iter().any(|message| message.contains("duplicate audio name `theme`")));
+        assert!(messages.iter().any(|message| message.contains("unknown layered sprite attribute `strange`")));
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

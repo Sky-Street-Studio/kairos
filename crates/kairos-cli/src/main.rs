@@ -42,7 +42,14 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     for (file, d) in &project.diagnostics {
         eprintln!("{}:{}: {}", file.display(), d.line, d.message);
     }
-    if !project.diagnostics.is_empty() {
+    let mut has_errors = !project.diagnostics.is_empty();
+    if matches!(&cli.command, Command::Check { .. }) {
+        for (path, message) in project.asset_diagnostics()? {
+            eprintln!("{}: {message}", path.display());
+            has_errors = true;
+        }
+    }
+    if has_errors {
         return Ok(ExitCode::FAILURE);
     }
     match cli.command {
