@@ -26,11 +26,17 @@ export function loadPlayerModule(url: string): Promise<PlayerModule> {
   return modulePromise;
 }
 
-export function projectJson(manifestSource: string, scripts: SourceFile[], uiTheme: string | null): string {
+export function projectJson(
+  manifestSource: string,
+  scripts: SourceFile[],
+  uiTheme: string | null,
+  assets: string[],
+): string {
   return JSON.stringify({
     manifest: manifestSource,
     scripts,
     assetBaseUrl: `${ASSET_SCHEME}://project/`,
+    assets,
     ...(uiTheme === null ? {} : { theme: uiTheme }),
   });
 }

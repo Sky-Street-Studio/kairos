@@ -77,8 +77,9 @@ ui/theme.toml      optional game UI styling
 
 The editor resolves assets with the same rule, so treat it as stable.
 
-- An image is named by its words joined with spaces. `scene bg room` loads `assets/images/bg room.png`, trying `.png`, `.jpg`, `.jpeg` and `.webp` in that order. `show e happy` loads `assets/images/e happy.png` the same way.
-- Audio is `assets/audio/<asset>`. `play music "theme.ogg"` loads `assets/audio/theme.ogg`. A name without an extension tries `.ogg`, `.mp3`, `.wav` and `.flac`.
+- An image name is its file stem anywhere under `assets/images/`. `scene bg room` can load `assets/images/bg room.png` or `assets/images/bg/bg room.webp`; extensions are tried in `.png`, `.jpg`, `.jpeg`, `.webp` order within each directory. Duplicate image stems in different directories fail `kairos check`.
+- Audio names with `/` resolve under `assets/audio/` as written. A bare name searches recursively: `theme.ogg` matches that filename, while `theme` matches the stem using `.ogg`, `.mp3`, `.wav` and `.flac` order. Duplicate audio names in different directories fail `kairos check`.
+- A character with `assets/images/sprites/<id>/layers.toml` uses its layered sprite definition instead of a flat image. The file lists groups from back to front; `show e happy casual` selects those attribute layers, then group defaults or a group's only image. Unknown attributes fail `kairos check`.
 - A missing image draws a labelled placeholder. A missing sound is skipped with a warning.
 
 Backgrounds are scaled to cover the screen. Sprites are scaled to the screen height and stand on the bottom edge, at `left`, `center` (the default) or `right`. `fade` goes through black over 1 s, `dissolve` crossfades over 0.5 s, and `move` currently crossfades too.
@@ -127,6 +128,7 @@ player.load(JSON.stringify({
   manifest: kairosTomlText,
   scripts: [{ path: "script/a.kai", source }],
   assetBaseUrl: "kairos-asset://project/",   // points at the project's assets/ directory
+  assets: ["assets/images/bg room.png", "assets/audio/theme.ogg"], // paths relative to the project
   theme: themeTomlText,                       // optional, contents of ui/theme.toml
 }));                             // throws Error with "path:line: message" lines
 player.start();                  // or player.playFromLine("script/a.kai", 12)

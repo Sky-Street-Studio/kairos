@@ -23,6 +23,8 @@ struct ProjectJson {
     manifest: String,
     scripts: Vec<ScriptJson>,
     asset_base_url: String,
+    #[serde(default)]
+    assets: Vec<String>,
     /// Contents of `ui/theme.toml`, if the project has one.
     #[serde(default)]
     theme: Option<String>,
@@ -38,6 +40,7 @@ struct Loaded {
     project: Project,
     theme: Theme,
     asset_base_url: String,
+    assets: Vec<String>,
 }
 
 type Handler = Box<dyn Fn(&mut Inner, web_sys::Event)>;
@@ -124,7 +127,7 @@ impl WebPlayer {
         }
         let theme = Theme::parse(json.theme.as_deref().unwrap_or_default()).map_err(error)?;
         let mut inner = self.inner.borrow_mut();
-        inner.loaded = Some(Loaded { project, theme, asset_base_url: json.asset_base_url });
+        inner.loaded = Some(Loaded { project, theme, asset_base_url: json.asset_base_url, assets: json.assets });
         inner.build_player().map_err(error)
     }
 
@@ -194,7 +197,7 @@ impl Inner {
             (window.width, window.height),
             gpu.size(),
         );
-        let assets = Assets::url(loaded.asset_base_url.clone());
+        let assets = Assets::url(loaded.asset_base_url.clone(), loaded.assets.clone());
         let saves = SaveStore::for_project(&loaded.project.manifest.name);
         self.player = Some(Player::new(renderer, &loaded.project, loaded.theme.clone(), assets, saves, false)?);
         Ok(())
