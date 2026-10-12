@@ -20,6 +20,7 @@ function fakeApi() {
     uiTheme: null,
     uiTitle: null,
     scripts: [...disk].map(([path, source]) => ({ path, source })),
+    translations: [],
     tree: [],
     assets: [],
   });

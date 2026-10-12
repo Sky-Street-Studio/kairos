@@ -93,6 +93,7 @@ export function PreviewPane({ width }: { width: number }) {
           project.uiTheme,
           project.uiTitle,
           project.assets.map((asset) => asset.path),
+          project.translations,
         ),
       );
       if (from) player.playFromLine(from.path, from.line);

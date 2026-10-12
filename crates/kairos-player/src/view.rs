@@ -26,6 +26,7 @@ pub enum Action {
     Toggle(Mode),
     Rollback,
     Adjust(Setting, i8),
+    Language(i8),
     Restart,
     Start,
     Continue,
@@ -527,6 +528,17 @@ impl Builder<'_, '_> {
             self.button(layer, Rect::new(left + 568.0, y, 52.0, 52.0), "+", Action::Adjust(setting, 1), true);
             y += 72.0;
         }
+        let row = Rect::new(left, y, 300.0, 52.0);
+        layer.push(self.ui_text("Language", row, 26.0, theme.menu.text_color.0, TextAlign::Center));
+        self.button(layer, Rect::new(left + 320.0, y, 52.0, 52.0), "-", Action::Language(-1), true);
+        layer.push(self.ui_text(
+            self.input.game.language_label(),
+            Rect::new(left + 380.0, y, 180.0, 52.0),
+            24.0,
+            theme.menu.accent.0,
+            TextAlign::Center,
+        ));
+        self.button(layer, Rect::new(left + 568.0, y, 52.0, 52.0), "+", Action::Language(1), true);
     }
 
     fn notice(&mut self, notice: &str) -> Layer {
@@ -750,6 +762,17 @@ mod tests {
         };
         let (_, hotspots) = build(&input, &mut Fonts::new());
         assert!(!hotspots.iter().any(|h| h.action == Action::Continue));
+    }
+
+    #[test]
+    fn settings_lists_source_language_and_language_controls() {
+        let mut game = game();
+        game.screen = Screen::Settings;
+        let (frame, hotspots) = view(&game, (0.0, 0.0));
+        assert!(texts(&frame.ui[1]).contains(&"Language"));
+        assert!(texts(&frame.ui[1]).contains(&"Source"));
+        assert!(hotspots.iter().any(|hotspot| hotspot.action == Action::Language(-1)));
+        assert!(hotspots.iter().any(|hotspot| hotspot.action == Action::Language(1)));
     }
 
     #[test]

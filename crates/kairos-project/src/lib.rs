@@ -2,6 +2,7 @@
 
 pub mod assets;
 
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -9,6 +10,9 @@ use std::sync::Arc;
 use kairos_script::Diagnostic;
 use kairos_vm::Program;
 use serde::Deserialize;
+
+pub type Translations = BTreeMap<String, BTreeMap<String, String>>;
+pub type StaleTranslations = BTreeMap<String, Vec<String>>;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Manifest {
@@ -65,6 +69,8 @@ fn default_start() -> String {
 
 pub struct Project {
     pub root: PathBuf,
+    pub translations: Translations,
+    pub stale_translations: StaleTranslations,
     pub manifest: Manifest,
     pub program: Arc<Program>,
     /// Script paths in compile order; [`Program::files`] indexes into this list.
@@ -82,6 +88,8 @@ pub enum ProjectError {
     Manifest(#[from] toml::de::Error),
     #[error("assets/audio/audio.toml: {0}")]
     AudioMetadata(#[source] toml::de::Error),
+    #[error("{0}: {1}")]
+    Translations(PathBuf, toml::de::Error),
 }
 
 impl Project {
@@ -97,6 +105,7 @@ impl Project {
             .collect();
         let sources = paths.into_iter().map(|p| Ok((read(&p)?, p))).collect::<Result<Vec<_>, ProjectError>>()?;
         let mut project = Project::from_sources(&manifest, sources.into_iter().map(|(text, path)| (path, text)))?;
+        (project.translations, project.stale_translations) = read_translations(root)?;
         project.root = root.to_path_buf();
         let metadata_path = root.join("assets/audio/audio.toml");
         project.audio_metadata = match std::fs::read_to_string(&metadata_path) {
@@ -128,6 +137,8 @@ impl Project {
         let files = sources.into_iter().map(|(p, _)| p).collect();
         Ok(Project {
             root: PathBuf::new(),
+            translations: BTreeMap::new(),
+            stale_translations: BTreeMap::new(),
             manifest,
             program: Arc::new(program),
             files,
@@ -207,6 +218,91 @@ impl Project {
         }
         Ok(diagnostics)
     }
+    pub fn set_translation(&mut self, lang: &str, source: &str) -> Result<(), ProjectError> {
+        let path = PathBuf::from(format!("tl/{lang}.toml"));
+        let (active, stale) = parse_translation_file(&path, source)?;
+        self.translations.insert(lang.to_string(), active);
+        self.stale_translations.remove(lang);
+        if !stale.is_empty() {
+            self.stale_translations.insert(lang.to_string(), stale);
+        }
+        Ok(())
+    }
+
+    pub fn translation_entries(&self) -> Vec<(String, String)> {
+        let mut entries = Vec::new();
+        for (pc, instr) in self.program.instrs.iter().enumerate() {
+            let id = &self.program.ids[pc];
+            match instr {
+                kairos_vm::Instr::Say { speaker, text } => {
+                    entries.push((id.clone(), text.clone()));
+                    if let Some(kairos_script::Speaker::Character(character)) = speaker
+                        && let Some(definition) = self.program.characters.get(character)
+                    {
+                        entries.push((format!("{id}#name"), definition.name.clone()));
+                    }
+                }
+                kairos_vm::Instr::Menu { caption, choices } => {
+                    if let Some((_, text)) = caption {
+                        entries.push((format!("{id}#caption"), text.clone()));
+                    }
+                    entries.extend(
+                        choices
+                            .iter()
+                            .enumerate()
+                            .map(|(index, choice)| (format!("{id}#choice:{index}"), choice.text.clone())),
+                    );
+                }
+                _ => {}
+            }
+        }
+        entries
+    }
+}
+
+fn read_translations(root: &Path) -> Result<(Translations, StaleTranslations), ProjectError> {
+    let dir = root.join("tl");
+    let paths = match std::fs::read_dir(&dir) {
+        Ok(paths) => paths,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok((BTreeMap::new(), BTreeMap::new()));
+        }
+        Err(error) => return Err(ProjectError::Io(dir, error)),
+    };
+    let mut translations = BTreeMap::new();
+    let mut stale = BTreeMap::new();
+    for entry in paths {
+        let path = entry.map_err(|e| ProjectError::Io(dir.clone(), e))?.path();
+        if path.extension().is_none_or(|extension| extension != "toml") {
+            continue;
+        }
+        let lang = path.file_stem().and_then(|s| s.to_str()).unwrap_or_default().to_string();
+        let source = std::fs::read_to_string(&path).map_err(|e| ProjectError::Io(path.clone(), e))?;
+        let (active, stale_keys) = parse_translation_file(&path, &source)?;
+        translations.insert(lang.clone(), active);
+        if !stale_keys.is_empty() {
+            stale.insert(lang, stale_keys);
+        }
+    }
+    Ok((translations, stale))
+}
+
+fn parse_translation_file(path: &Path, source: &str) -> Result<(BTreeMap<String, String>, Vec<String>), ProjectError> {
+    let parsed: toml::Value = toml::from_str(source).map_err(|e| ProjectError::Translations(path.to_path_buf(), e))?;
+    let mut active = BTreeMap::new();
+    let mut stale = Vec::new();
+    if let Some(table) = parsed.as_table() {
+        for (key, value) in table {
+            if key == "stale" {
+                if let Some(entries) = value.as_table() {
+                    stale.extend(entries.keys().cloned());
+                }
+            } else if let Some(value) = value.as_str() {
+                active.insert(key.clone(), value.to_string());
+            }
+        }
+    }
+    Ok((active, stale))
 }
 
 #[cfg(test)]
@@ -253,6 +349,60 @@ mod tests {
         let p = Project::from_sources("name = \"x\"", sources).unwrap();
         assert_eq!(p.files, [PathBuf::from("script/a.kai"), PathBuf::from("script/b.kai")]);
         assert_eq!(p.diagnostics_report(), "script/b.kai:2: unknown label `nowhere`\n");
+    }
+
+    #[test]
+    fn translation_entries_use_statement_ids_and_choice_indexes() {
+        let project = Project::from_sources(
+            "name = \"x\"",
+            [(
+                PathBuf::from("script/a.kai"),
+                r#"character e "Eileen"
+label start:
+    e "Hello"
+    menu:
+        "One":
+            return
+"#
+                .into(),
+            )],
+        )
+        .unwrap();
+        let entries = project.translation_entries();
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].1, "Hello");
+        assert_eq!(entries[1].0, format!("{}#name", entries[0].0));
+        assert_eq!(entries[2].0, format!("{}#choice:0", project.program.ids[1]));
+    }
+
+    #[test]
+    fn loads_flat_translation_files_and_collects_stale_keys() {
+        let root = std::env::temp_dir().join(format!("kairos-project-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("script")).unwrap();
+        std::fs::create_dir_all(root.join("tl/nested")).unwrap();
+        std::fs::write(root.join("kairos.toml"), r#"name = "x""#).unwrap();
+        std::fs::write(
+            root.join("script/a.kai"),
+            r#"label start:
+    "Hello"
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("tl/ja.toml"),
+            r#""some-id" = "Hola"
+[stale]
+"old-id" = "Adios"
+"#,
+        )
+        .unwrap();
+        std::fs::write(root.join("tl/nested/fr.toml"), r#""other" = "non-recursive""#).unwrap();
+        let project = Project::load(&root).unwrap();
+        assert_eq!(project.translations["ja"]["some-id"], "Hola");
+        assert_eq!(project.stale_translations["ja"], ["old-id"]);
+        assert!(!project.translations.contains_key("fr"));
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

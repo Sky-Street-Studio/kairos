@@ -80,6 +80,11 @@ export interface SpriteLayerConfig {
   groups: Record<string, string[]>;
 }
 
+export interface TranslationFile {
+  lang: string;
+  source: string;
+}
+
 export interface ProjectSnapshot {
   root: string;
   manifest: Manifest;
@@ -90,6 +95,7 @@ export interface ProjectSnapshot {
   /** Raw `ui/title.toml`, if present. */
   uiTitle: string | null;
   scripts: SourceFile[];
+  translations: TranslationFile[];
   tree: TreeNode[];
   assets: AssetEntry[];
   audioMetadata?: Record<string, { loopStart?: number; loopEnd?: number }>;

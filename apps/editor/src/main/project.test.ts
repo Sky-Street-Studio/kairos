@@ -82,3 +82,22 @@ describe("project assets", () => {
     expect(await readFile(join(projectRoot, "assets/images/sprites/e/face/joyful.png"), "utf8")).toBe("image");
   });
 });
+
+describe("loadProject translations", () => {
+  it("includes only top-level TOML translations in the player snapshot", async () => {
+    const root = await mkdtemp(join(tmpdir(), "kairos-project-"));
+    try {
+      await writeFile(join(root, "kairos.toml"), 'name = "Test"');
+      await mkdir(join(root, "tl/nested"), { recursive: true });
+      await writeFile(join(root, "tl/ja.toml"), '"id" = "Hola"');
+      await writeFile(join(root, "tl/notes.txt"), "ignored");
+      await writeFile(join(root, "tl/nested/fr.toml"), '"id" = "ignored"');
+
+      const snapshot = await loadProject(root);
+      expect(snapshot.translations).toEqual([{ lang: "ja", source: '"id" = "Hola"' }]);
+      expect(snapshot.tree.some((node) => node.path === "tl")).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});

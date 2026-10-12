@@ -15,6 +15,7 @@ import type {
   ProjectSnapshot,
   SourceFile,
   TreeNode,
+  TranslationFile,
 } from "@shared/types";
 
 import { templateDir, within } from "./paths";
@@ -137,6 +138,11 @@ export async function loadProject(root: string): Promise<ProjectSnapshot> {
   );
   const assetDir = tree.find((n) => n.path === "assets");
   const assets: AssetEntry[] = flatten(assetDir?.children ?? []).map((path) => classifyAsset(path));
+  const translations: TranslationFile[] = await Promise.all(
+    (await readdir(join(root, "tl"), { withFileTypes: true }).catch(() => []))
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".toml"))
+      .map(async ({ name }) => ({ lang: name.slice(0, -5), source: await readFile(join(root, "tl", name), "utf8") })),
+  );
   const manifestSource = await readFile(join(root, "kairos.toml"), "utf8");
   const uiTheme = await readFile(join(root, "ui/theme.toml"), "utf8").catch(() => null);
   const audioMetadata = await readAudioMetadata(root);
@@ -150,6 +156,7 @@ export async function loadProject(root: string): Promise<ProjectSnapshot> {
     uiTheme,
     uiTitle,
     scripts,
+    translations,
     tree,
     assets,
     audioMetadata,
