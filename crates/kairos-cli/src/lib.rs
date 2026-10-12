@@ -1,62 +1,7 @@
 use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
-use kairos_script::Diagnostic;
-use kairos_vm::{Effect, Event, Program, Vm};
-use serde::Deserialize;
-
-#[derive(Debug, Deserialize)]
-pub struct Manifest {
-    pub name: String,
-    #[serde(default = "default_start")]
-    pub start: String,
-}
-
-fn default_start() -> String {
-    "start".into()
-}
-
-pub struct Project {
-    pub root: PathBuf,
-    pub manifest: Manifest,
-    pub program: Arc<Program>,
-    /// Diagnostics paired with the file they came from.
-    pub diagnostics: Vec<(PathBuf, Diagnostic)>,
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum ProjectError {
-    #[error("{0}: {1}")]
-    Io(PathBuf, std::io::Error),
-    #[error("kairos.toml: {0}")]
-    Manifest(#[from] toml::de::Error),
-}
-
-impl Project {
-    pub fn load(root: &Path) -> Result<Project, ProjectError> {
-        let read = |p: &Path| std::fs::read_to_string(p).map_err(|e| ProjectError::Io(p.to_path_buf(), e));
-        let manifest: Manifest = toml::from_str(&read(&root.join("kairos.toml"))?)?;
-        let script_dir = root.join("script");
-        let mut files: Vec<PathBuf> = std::fs::read_dir(&script_dir)
-            .map_err(|e| ProjectError::Io(script_dir.clone(), e))?
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| p.extension().is_some_and(|x| x == "kai"))
-            .collect();
-        files.sort();
-
-        let mut diagnostics = Vec::new();
-        let mut parsed = Vec::new();
-        for file in &files {
-            let (stmts, diags) = kairos_script::parse(&read(file)?);
-            diagnostics.extend(diags.into_iter().map(|d| (file.clone(), d)));
-            parsed.push(stmts);
-        }
-        let (program, diags) = kairos_vm::compile(&parsed);
-        diagnostics.extend(diags.into_iter().map(|(i, d)| (files[i].clone(), d)));
-        Ok(Project { root: root.to_path_buf(), manifest, program: Arc::new(program), diagnostics })
-    }
-}
+pub use kairos_project::{Manifest, Project, ProjectError};
+use kairos_vm::{Effect, Event, Vm};
 
 #[derive(Debug, thiserror::Error)]
 pub enum RunError {

@@ -62,6 +62,11 @@ impl Program {
     pub fn pc_at_line(&self, line: usize) -> Option<usize> {
         self.lines.iter().position(|&l| l >= line)
     }
+
+    /// The first instruction at or after `line` in file `file` (an index into the list given to [`compile`]).
+    pub fn pc_at(&self, file: usize, line: usize) -> Option<usize> {
+        (0..self.instrs.len()).find(|&pc| self.files[pc] == file && self.lines[pc] >= line && self.lines[pc] > 0)
+    }
 }
 
 /// Compiles parsed files in order. Labels fall through into the next label, as in Ren'Py.

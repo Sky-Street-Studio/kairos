@@ -364,6 +364,15 @@ name = "kairos-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "kairos-project",
+ "kairos-vm",
+ "thiserror",
+]
+
+[[package]]
+name = "kairos-project"
+version = "0.1.0"
+dependencies = [
  "kairos-script",
  "kairos-vm",
  "serde",
