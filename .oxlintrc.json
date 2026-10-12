@@ -6,7 +6,11 @@
     "suspicious": "warn"
   },
   "rules": {
-    "react/react-in-jsx-scope": "off"
+    "react/react-in-jsx-scope": "off",
+    "import/default": "off",
+    "import/no-unassigned-import": "off",
+    "import/no-named-as-default-member": "off",
+    "unicorn/consistent-function-scoping": "off"
   },
   "ignorePatterns": [
     "**/out/**",
