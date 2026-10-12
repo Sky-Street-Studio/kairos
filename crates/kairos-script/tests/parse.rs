@@ -47,6 +47,17 @@ label start:
 }
 
 #[test]
+fn parses_title_flow_statements() {
+    let (stmts, diags) = parse("label main_menu:\n    open load\n    open settings\n    quit\n");
+    assert!(diags.is_empty(), "{diags:?}");
+    let kairos_script::StmtKind::Label { body, .. } = &stmts[0].kind else { panic!() };
+    assert_eq!(
+        body.iter().map(|stmt| &stmt.kind).collect::<Vec<_>>(),
+        [&kairos_script::StmtKind::OpenLoad, &kairos_script::StmtKind::OpenSettings, &kairos_script::StmtKind::Quit,]
+    );
+}
+
+#[test]
 fn not_binds_looser_than_comparison() {
     let (stmts, _) = parse("default x = not 1 == 2");
     let kairos_script::StmtKind::Default { value, .. } = &stmts[0].kind else { panic!() };

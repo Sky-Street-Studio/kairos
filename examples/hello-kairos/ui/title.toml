@@ -1,0 +1,4 @@
+title = "Hello Kairos"
+background = "bg room"
+music = "theme.ogg"
+buttons = ["start", "continue", "load", "settings", "quit"]

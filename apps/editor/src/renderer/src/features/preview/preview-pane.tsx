@@ -86,7 +86,15 @@ export function PreviewPane({ width }: { width: number }) {
       const scripts = Object.values(buffers)
         .map(({ path, source }) => ({ path, source }))
         .toSorted((a, b) => a.path.localeCompare(b.path));
-      player.load(projectJson(project.manifestSource, scripts, project.uiTheme, project.assets.map((asset) => asset.path)));
+      player.load(
+        projectJson(
+          project.manifestSource,
+          scripts,
+          project.uiTheme,
+          project.uiTitle,
+          project.assets.map((asset) => asset.path),
+        ),
+      );
       if (from) player.playFromLine(from.path, from.line);
       else player.start();
       setError(null);

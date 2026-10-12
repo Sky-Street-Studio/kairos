@@ -141,12 +141,14 @@ export async function loadProject(root: string): Promise<ProjectSnapshot> {
   const uiTheme = await readFile(join(root, "ui/theme.toml"), "utf8").catch(() => null);
   const audioMetadata = await readAudioMetadata(root);
   const spriteLayers = await readSpriteLayers(root, tree);
+  const uiTitle = await readFile(join(root, "ui/title.toml"), "utf8").catch(() => null);
   currentRoot = root;
   return {
     root,
     manifest,
     manifestSource,
     uiTheme,
+    uiTitle,
     scripts,
     tree,
     assets,

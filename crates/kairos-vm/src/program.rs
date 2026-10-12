@@ -19,6 +19,9 @@ pub enum Instr {
     Jump(String),
     Call(String),
     Return,
+    OpenLoad,
+    OpenSettings,
+    Quit,
     Assign { name: String, op: AssignOp, value: Expr },
     Scene { image: Option<Vec<String>>, with: Option<String> },
     Show { image: Vec<String>, at: Option<String>, with: Option<String> },
@@ -56,6 +59,14 @@ pub struct Program {
 impl Program {
     pub fn pc_of(&self, id: &str) -> Option<usize> {
         self.id_index.get(id).copied()
+    }
+
+    pub fn label_at(&self, pc: usize) -> Option<&str> {
+        self.labels
+            .iter()
+            .filter(|(_, start)| **start <= pc)
+            .max_by_key(|(_, start)| *start)
+            .map(|(name, _)| name.as_str())
     }
 
     /// The first instruction at or after `line`, for "play from this line".
@@ -157,6 +168,9 @@ impl Compiler {
                 }
                 let outer = std::mem::replace(&mut self.label, name.clone());
                 self.block(body);
+                if name == "splashscreen" {
+                    self.emit(Instr::Return, line, "#splashscreen end");
+                }
                 self.label = outer;
                 return;
             }
@@ -221,6 +235,9 @@ impl Compiler {
             StmtKind::Jump(l) => Instr::Jump(l.clone()),
             StmtKind::Call(l) => Instr::Call(l.clone()),
             StmtKind::Return => Instr::Return,
+            StmtKind::OpenLoad => Instr::OpenLoad,
+            StmtKind::OpenSettings => Instr::OpenSettings,
+            StmtKind::Quit => Instr::Quit,
             StmtKind::Say { speaker, text } => Instr::Say { speaker: speaker.clone(), text: text.clone() },
             StmtKind::Assign { name, op, value } => Instr::Assign { name: name.clone(), op: *op, value: value.clone() },
             StmtKind::Scene { image, with } => Instr::Scene { image: image.clone(), with: with.clone() },

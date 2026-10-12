@@ -30,6 +30,11 @@ pub fn run_headless(project: &Project, inputs: &str) -> Result<String, RunError>
             Event::Say { who: None, text, .. } => writeln!(out, "{text}").unwrap(),
             Event::Pause(Some(d)) => writeln!(out, "(pause {d}s)").unwrap(),
             Event::Pause(None) => writeln!(out, "(pause)").unwrap(),
+            Event::OpenLoad | Event::OpenSettings => {}
+            Event::Quit => {
+                writeln!(out, "(quit)").unwrap();
+                return Ok(out);
+            }
             Event::Menu { caption, choices } => {
                 if let Some(c) = caption {
                     writeln!(out, "{c}").unwrap();

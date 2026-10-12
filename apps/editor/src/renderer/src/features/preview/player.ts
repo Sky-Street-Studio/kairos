@@ -30,6 +30,7 @@ export function projectJson(
   manifestSource: string,
   scripts: SourceFile[],
   uiTheme: string | null,
+  uiTitle: string | null,
   assets: string[],
 ): string {
   return JSON.stringify({
@@ -38,6 +39,7 @@ export function projectJson(
     assetBaseUrl: `${ASSET_SCHEME}://project/`,
     assets,
     ...(uiTheme === null ? {} : { theme: uiTheme }),
+    ...(uiTitle === null ? {} : { title: uiTitle }),
   });
 }
 

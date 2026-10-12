@@ -18,6 +18,7 @@ function fakeApi() {
     manifest: { name: "P", start: "start" },
     manifestSource: 'name = "P"\n',
     uiTheme: null,
+    uiTitle: null,
     scripts: [...disk].map(([path, source]) => ({ path, source })),
     tree: [],
     assets: [],
