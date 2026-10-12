@@ -59,7 +59,7 @@ The preview pane loads the WebAssembly player from `crates/kairos-player/pkg` an
 
 ## Playing
 
-Click, space or enter advances; the first press finishes the typewriter. Number keys or clicks pick menu choices. Mouse wheel up or PageUp rolls back. Escape or right-click opens the menu with Save, Load, History, Settings (text speed, auto delay, volumes), Auto, Skip and Restart. `A` toggles auto, Tab toggles skip.
+Click, space or enter advances; the first press finishes the typewriter. Number keys or clicks pick menu choices. Mouse wheel up or PageUp rolls back. Escape or right-click opens the menu with Save, Load, History, Settings (text speed, auto delay, volumes), Auto, Skip, Restart and Main menu. `A` toggles auto, Tab toggles skip.
 
 Saves go to the platform data directory, e.g. `~/Library/Application Support/Kairos/saves/<project name>/slot-N.ksav` on macOS. In the browser they go to `localStorage`.
 
@@ -71,6 +71,7 @@ script/*.kai       story scripts, compiled in file-name order
 assets/images/     backgrounds and sprites
 assets/audio/      music, sounds, voice
 ui/theme.toml      optional game UI styling
+ui/title.toml      optional title screen styling
 ```
 
 ### Asset names
@@ -82,6 +83,22 @@ The editor resolves assets with the same rule, so treat it as stable.
 - A missing image draws a labelled placeholder. A missing sound is skipped with a warning.
 
 Backgrounds are scaled to cover the screen. Sprites are scaled to the screen height and stand on the bottom edge, at `left`, `center` (the default) or `right`. `fade` goes through black over 1 s, `dissolve` crossfades over 0.5 s, and `move` currently crossfades too.
+
+### Title flow
+
+`label splashscreen` runs before the title screen; returning or reaching its end continues to the title. `label main_menu` replaces the built-in title and can use `jump start` to begin the story. `open load`, `open settings` and `quit` are available in script labels. The in-game menu's Main menu button returns to the title without replaying the splashscreen.
+
+Every key in `ui/title.toml` is optional:
+
+```toml
+title = "Hello Kairos"        # defaults to the kairos.toml name
+background = "bg title"       # image name
+logo = "logo"                 # image name, replaces title text
+music = "title.ogg"           # audio name, loops
+buttons = ["start", "continue", "load", "settings", "quit"]
+```
+
+Continue loads the newest save and stays hidden until a save exists. `start` begins at the manifest's start label. Saving stays disabled while `splashscreen` or `main_menu` runs.
 
 ### Theme
 
@@ -128,6 +145,7 @@ player.load(JSON.stringify({
   scripts: [{ path: "script/a.kai", source }],
   assetBaseUrl: "kairos-asset://project/",   // points at the project's assets/ directory
   theme: themeTomlText,                       // optional, contents of ui/theme.toml
+  title: titleTomlText,                       // optional, contents of ui/title.toml
 }));                             // throws Error with "path:line: message" lines
 player.start();                  // or player.playFromLine("script/a.kai", 12)
 player.resize(cssWidth, cssHeight);

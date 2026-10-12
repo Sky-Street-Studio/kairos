@@ -154,6 +154,12 @@ impl Parser {
                     "jump" => StmtKind::Jump(c.ident()?),
                     "call" => StmtKind::Call(c.ident()?),
                     "return" => StmtKind::Return,
+                    "open" => match c.ident()?.as_str() {
+                        "load" => StmtKind::OpenLoad,
+                        "settings" => StmtKind::OpenSettings,
+                        screen => return Err(c.err(format!("unknown screen `{screen}`"))),
+                    },
+                    "quit" => StmtKind::Quit,
                     "pass" => StmtKind::Pass,
                     "character" => {
                         let id = c.ident()?;

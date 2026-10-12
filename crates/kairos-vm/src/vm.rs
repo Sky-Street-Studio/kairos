@@ -43,6 +43,9 @@ pub enum Event {
     Say { who: Option<String>, color: Option<String>, text: String },
     Menu { caption: Option<String>, choices: Vec<String> },
     Pause(Option<f64>),
+    OpenLoad,
+    OpenSettings,
+    Quit,
     End,
 }
 
@@ -77,6 +80,7 @@ pub struct Vm {
     /// Set by rollback: the restored state is already the top snapshot, so the next
     /// checkpoint must not push it twice.
     restored: bool,
+    last_pc: usize,
     effects: Vec<Effect>,
 }
 
@@ -99,6 +103,7 @@ impl Vm {
             constants: BTreeMap::new(),
             history: Vec::new(),
             restored: false,
+            last_pc: 0,
             effects: Vec::new(),
         };
         let program = vm.program.clone();
@@ -144,6 +149,10 @@ impl Vm {
         self.program.lines.get(self.state.pc).copied().unwrap_or(0)
     }
 
+    pub fn last_pc(&self) -> usize {
+        self.last_pc
+    }
+
     /// Runs until the next interaction (dialogue, menu or pause) and returns it.
     pub fn advance(&mut self) -> Result<Event, RuntimeError> {
         if self.state.menu.is_some() {
@@ -152,6 +161,7 @@ impl Vm {
         let program = self.program.clone();
         for _ in 0..STEP_LIMIT {
             let pc = self.state.pc;
+            self.last_pc = pc;
             match &program.instrs[pc] {
                 Instr::Say { speaker, text } => {
                     let text = self.interpolate(text)?;
@@ -201,6 +211,16 @@ impl Vm {
                     Some(call) => self.state.pc = call + 1,
                     None => return Ok(Event::End),
                 },
+                Instr::OpenLoad | Instr::OpenSettings | Instr::Quit => {
+                    self.checkpoint();
+                    self.state.pc += 1;
+                    return Ok(match &program.instrs[pc] {
+                        Instr::OpenLoad => Event::OpenLoad,
+                        Instr::OpenSettings => Event::OpenSettings,
+                        Instr::Quit => Event::Quit,
+                        _ => unreachable!(),
+                    });
+                }
                 Instr::Assign { name, op, value } => {
                     let rhs = self.eval(value, pc)?;
                     if self.constants.contains_key(name) && !self.state.store.contains_key(name) {

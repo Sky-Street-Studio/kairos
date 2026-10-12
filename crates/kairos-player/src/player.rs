@@ -10,7 +10,7 @@ use kairos_vm::Effect;
 use crate::assets::{Assets, Request};
 use crate::game::{Game, Screen, Shown, Signal};
 use crate::saves::SaveStore;
-use crate::theme::Theme;
+use crate::theme::{Theme, Title};
 use crate::view::{self, Action, Hotspot, ImageInfo, SLOTS, ViewInput, image_name};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,6 +33,10 @@ pub enum Key {
 pub struct Player {
     game: Game,
     start_label: String,
+    project_name: String,
+    title: Title,
+    title_text: String,
+    in_splashscreen: bool,
     theme: Theme,
     fonts: Fonts,
     dialogue_family: Option<String>,
@@ -64,9 +68,16 @@ impl Player {
         can_quit: bool,
     ) -> Result<Player, String> {
         let game = Game::new(project.program.clone()).map_err(|e| e.to_string())?;
+        let title = Title::parse(&load_title(project)?)?;
+        let project_name = project.manifest.name.clone();
+        let title_text = title.title.clone().unwrap_or_else(|| project_name.clone());
         let mut player = Player {
             game,
             start_label: project.manifest.start.clone(),
+            project_name,
+            title,
+            title_text,
+            in_splashscreen: false,
             theme,
             fonts: Fonts::new(),
             dialogue_family: None,
@@ -95,11 +106,53 @@ impl Player {
     }
 
     pub fn start(&mut self) {
+        if self.game.has_label("splashscreen") {
+            self.in_splashscreen = true;
+            self.game.start("splashscreen");
+        } else {
+            self.show_title();
+        }
+    }
+
+    pub fn set_title(&mut self, text: &str) -> Result<(), String> {
+        self.title = Title::parse(text)?;
+        self.title_text = self.title.title.clone().unwrap_or_else(|| self.project_name.clone());
+        Ok(())
+    }
+
+    fn show_title(&mut self) {
+        self.in_splashscreen = false;
+        if self.game.has_label("main_menu") {
+            self.game.start("main_menu");
+        } else {
+            self.slots = (0..SLOTS).map(|i| self.saves.preview(i)).collect();
+            self.game.show_title();
+            if self.audio_started {
+                self.play_title_music();
+            }
+        }
+    }
+
+    fn start_game(&mut self) {
+        self.in_splashscreen = false;
         let label = self.start_label.clone();
         self.game.start(&label);
     }
 
+    fn play_title_music(&mut self) {
+        if let Some(asset) = self.title.music.clone() {
+            self.assets.request(Request::Audio {
+                channel: "music".into(),
+                asset,
+                looped: true,
+                queue: false,
+                fadein: None,
+            });
+        }
+    }
+
     pub fn start_at(&mut self, pc: usize) {
+        self.in_splashscreen = false;
         self.game.start_at(pc);
     }
 
@@ -112,6 +165,9 @@ impl Player {
         self.audio = Audio::new();
         self.apply_volumes();
         self.sync_audio();
+        if self.game.screen == Screen::Title {
+            self.play_title_music();
+        }
     }
 
     pub fn should_quit(&self) -> bool {
@@ -130,6 +186,16 @@ impl Player {
         let dt = dt.clamp(0.0, 0.25);
         self.receive_assets();
         self.game.tick(dt);
+        if self.in_splashscreen && matches!(self.game.shown, Shown::End) {
+            self.show_title();
+        }
+        match self.game.shown {
+            Shown::OpenLoad => self.act(Action::Open(Screen::Load)),
+            Shown::OpenSettings => self.act(Action::Open(Screen::Settings)),
+            Shown::Quit if self.can_quit => self.quit = true,
+            Shown::Quit => self.game.proceed(),
+            _ => {}
+        }
         self.renderer.tick(dt);
         self.audio.update();
         self.handle_signals();
@@ -146,6 +212,8 @@ impl Player {
         let input = ViewInput {
             game: &self.game,
             theme: &self.theme,
+            title: &self.title,
+            title_text: &self.title_text,
             size: self.renderer.virtual_size(),
             mouse: self.mouse,
             image: &lookup,
@@ -217,11 +285,21 @@ impl Player {
         match action {
             Action::Choose(i) => self.game.choose(i),
             Action::Back => {
+                if self.game.screen == Screen::Title {
+                    return;
+                }
                 self.game.screen = if self.game.screen == Screen::Menu { Screen::Game } else { self.back_to };
                 self.back_to = Screen::Game;
+                if matches!(self.game.shown, Shown::OpenLoad | Shown::OpenSettings) {
+                    self.game.proceed();
+                }
             }
             Action::Open(screen) => {
-                self.back_to = if self.game.screen == Screen::Menu { Screen::Menu } else { Screen::Game };
+                self.back_to = match self.game.screen {
+                    Screen::Menu => Screen::Menu,
+                    Screen::Title => Screen::Title,
+                    _ => Screen::Game,
+                };
                 self.game.screen = screen;
                 self.backlog_scroll = 0;
                 self.slots = (0..SLOTS).map(|i| self.saves.preview(i)).collect();
@@ -247,6 +325,20 @@ impl Player {
                     Err(e) => self.notify(format!("Could not load: {e}")),
                 }
             }
+            Action::Start => self.start_game(),
+            Action::Continue => {
+                if let Some(slot) = self.saves.newest()
+                    && let Some(bytes) = self.saves.read(slot)
+                {
+                    if let Err(e) = self.game.load(&bytes) {
+                        self.notify(format!("Could not load: {e}"));
+                    } else {
+                        self.game.screen = Screen::Game;
+                        self.notify(format!("Loaded slot {}", slot + 1));
+                    }
+                }
+            }
+            Action::MainMenu => self.show_title(),
             Action::Toggle(mode) => {
                 self.game.toggle(mode);
                 self.game.screen = Screen::Game;
@@ -258,7 +350,7 @@ impl Player {
                 view::adjust(&mut self.game.settings, setting, direction);
                 self.apply_volumes();
             }
-            Action::Restart => self.start(),
+            Action::Restart => self.start_game(),
             Action::Quit => self.quit = true,
         }
     }
@@ -319,6 +411,10 @@ impl Player {
     fn request_stage_images(&mut self) {
         let stage = self.game.stage();
         let mut names: Vec<String> = stage.background.iter().map(|w| image_name(w)).collect();
+        if self.game.screen == Screen::Title {
+            names.extend(self.title.background.iter().cloned());
+            names.extend(self.title.logo.iter().cloned());
+        }
         for sprite in &stage.sprites {
             let mut words = vec![sprite.tag.clone()];
             words.extend(sprite.attrs.iter().cloned());
@@ -353,6 +449,8 @@ impl Player {
                     log(&format!("image `{name}` not found under assets/images"));
                     self.images.insert(name, ImageInfo::Missing);
                 }
+                (Request::Audio { asset, .. }, Some(_))
+                    if self.game.screen != Screen::Title && self.title.music.as_deref() == Some(asset.as_str()) => {}
                 (Request::Audio { channel, asset, looped, queue, fadein }, Some(bytes)) => match Sound::decode(bytes) {
                     Ok(sound) if queue => self.audio.queue(&channel, &asset, sound, looped),
                     Ok(sound) => self.audio.play(&channel, &asset, sound, looped, fadein),
@@ -378,6 +476,20 @@ fn decode_image(bytes: &[u8], max: u32) -> Result<image::RgbaImage, image::Image
         image
     };
     Ok(image.into_rgba8())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn load_title(project: &Project) -> Result<String, String> {
+    match std::fs::read_to_string(project.root.join("ui/title.toml")) {
+        Ok(text) => Ok(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(e) => Err(format!("ui/title.toml: {e}")),
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn load_title(_: &Project) -> Result<String, String> {
+    Ok(String::new())
 }
 
 pub(crate) fn log(message: &str) {

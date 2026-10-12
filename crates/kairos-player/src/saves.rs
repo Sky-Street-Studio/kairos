@@ -9,7 +9,7 @@ pub enum SaveStore {
     /// `localStorage` entries under a per-project prefix.
     #[cfg(target_arch = "wasm32")]
     Local(String),
-    Memory(HashMap<usize, (Vec<u8>, String)>),
+    Memory(HashMap<usize, (Vec<u8>, String, u128)>),
 }
 
 impl SaveStore {
@@ -39,11 +39,16 @@ impl SaveStore {
             SaveStore::Local(prefix) => {
                 let storage = local_storage().ok_or("localStorage is unavailable")?;
                 let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-                storage.set_item(&format!("{prefix}{slot}"), &hex).map_err(|_| "storage is full")?;
-                storage.set_item(&format!("{prefix}{slot}:preview"), preview).map_err(|_| "storage is full".into())
+                storage.set_item(&format!("{prefix}{slot}"), &hex).map_err(|_| "storage is full".to_string())?;
+                storage
+                    .set_item(&format!("{prefix}{slot}:preview"), preview)
+                    .map_err(|_| "storage is full".to_string())?;
+                storage
+                    .set_item(&format!("{prefix}{slot}:saved_at"), &timestamp().to_string())
+                    .map_err(|_| "storage is full".into())
             }
             SaveStore::Memory(slots) => {
-                slots.insert(slot, (bytes.to_vec(), preview.to_string()));
+                slots.insert(slot, (bytes.to_vec(), preview.to_string(), timestamp()));
                 Ok(())
             }
         }
@@ -59,6 +64,45 @@ impl SaveStore {
                 (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(hex.get(i..i + 2)?, 16).ok()).collect()
             }
             SaveStore::Memory(slots) => slots.get(&slot).map(|s| s.0.clone()),
+        }
+    }
+
+    pub fn newest(&self) -> Option<usize> {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            SaveStore::Dir(dir) => std::fs::read_dir(dir)
+                .ok()?
+                .filter_map(Result::ok)
+                .filter_map(|entry| {
+                    let name = entry.file_name();
+                    let name = name.to_str()?;
+                    let slot = name.strip_prefix("slot-")?.strip_suffix(".ksav")?.parse::<usize>().ok()?;
+                    let modified =
+                        entry.metadata().ok()?.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?;
+                    Some((slot, modified))
+                })
+                .max_by_key(|(_, modified)| *modified)
+                .map(|(slot, _)| slot),
+            #[cfg(target_arch = "wasm32")]
+            SaveStore::Local(prefix) => {
+                let storage = local_storage()?;
+                (0..crate::view::SLOTS)
+                    .filter_map(|slot| {
+                        storage.get_item(&format!("{prefix}{slot}")).ok()??;
+                        let saved_at = storage
+                            .get_item(&format!("{prefix}{slot}:saved_at"))
+                            .ok()
+                            .flatten()
+                            .and_then(|value| value.parse::<u128>().ok())
+                            .unwrap_or(slot as u128);
+                        Some((slot, saved_at))
+                    })
+                    .max_by_key(|(_, saved_at)| *saved_at)
+                    .map(|(slot, _)| slot)
+            }
+            SaveStore::Memory(slots) => {
+                slots.iter().max_by_key(|(_, (_, _, timestamp))| timestamp).map(|(slot, _)| *slot)
+            }
         }
     }
 
@@ -80,6 +124,16 @@ impl SaveStore {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn timestamp() -> u128 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn timestamp() -> u128 {
+    (js_sys::Date::now() * 1_000_000.0) as u128
+}
+
 #[cfg(target_arch = "wasm32")]
 fn local_storage() -> Option<web_sys::Storage> {
     web_sys::window()?.local_storage().ok()?
@@ -99,6 +153,14 @@ mod tests {
         assert_eq!(sanitize("Hello Kairos"), "Hello_Kairos");
         assert_eq!(sanitize("../x"), "___x");
         assert_eq!(sanitize(""), "untitled");
+    }
+
+    #[test]
+    fn newest_memory_slot_tracks_write_order() {
+        let mut store = SaveStore::Memory(HashMap::new());
+        store.write(4, b"first", "first").unwrap();
+        store.write(1, b"newest", "newest").unwrap();
+        assert_eq!(store.newest(), Some(1));
     }
 
     #[test]

@@ -17,6 +17,50 @@ fn hex(s: &str) -> Hex {
     Hex(Color::hex(s).expect("built-in colour"))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TitleButton {
+    Start,
+    Continue,
+    Load,
+    Settings,
+    Quit,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Title {
+    pub title: Option<String>,
+    pub background: Option<String>,
+    pub logo: Option<String>,
+    pub music: Option<String>,
+    pub buttons: Vec<TitleButton>,
+}
+
+impl Default for Title {
+    fn default() -> Self {
+        Title {
+            title: None,
+            background: None,
+            logo: None,
+            music: None,
+            buttons: vec![
+                TitleButton::Start,
+                TitleButton::Continue,
+                TitleButton::Load,
+                TitleButton::Settings,
+                TitleButton::Quit,
+            ],
+        }
+    }
+}
+
+impl Title {
+    pub fn parse(text: &str) -> Result<Title, String> {
+        toml::from_str(text).map_err(|e| format!("ui/title.toml: {}", e.message()))
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Theme {
@@ -170,6 +214,21 @@ impl Theme {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_empty_title_uses_the_default_buttons() {
+        assert_eq!(Title::parse("").unwrap(), Title::default());
+    }
+
+    #[test]
+    fn title_keys_are_optional_and_button_names_are_checked() {
+        let title =
+            Title::parse("title = \"Hello\"\nbackground = \"bg title\"\nbuttons = [\"start\", \"load\"]\n").unwrap();
+        assert_eq!(title.title.as_deref(), Some("Hello"));
+        assert_eq!(title.background.as_deref(), Some("bg title"));
+        assert_eq!(title.buttons, [TitleButton::Start, TitleButton::Load]);
+        assert!(Title::parse("buttons = [\"play\"]\n").is_err());
+    }
 
     #[test]
     fn an_empty_theme_is_the_default() {

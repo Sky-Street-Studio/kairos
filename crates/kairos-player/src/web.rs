@@ -26,6 +26,8 @@ struct ProjectJson {
     /// Contents of `ui/theme.toml`, if the project has one.
     #[serde(default)]
     theme: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -37,6 +39,7 @@ struct ScriptJson {
 struct Loaded {
     project: Project,
     theme: Theme,
+    title: Option<String>,
     asset_base_url: String,
 }
 
@@ -124,7 +127,7 @@ impl WebPlayer {
         }
         let theme = Theme::parse(json.theme.as_deref().unwrap_or_default()).map_err(error)?;
         let mut inner = self.inner.borrow_mut();
-        inner.loaded = Some(Loaded { project, theme, asset_base_url: json.asset_base_url });
+        inner.loaded = Some(Loaded { project, theme, title: json.title, asset_base_url: json.asset_base_url });
         inner.build_player().map_err(error)
     }
 
@@ -196,7 +199,11 @@ impl Inner {
         );
         let assets = Assets::url(loaded.asset_base_url.clone());
         let saves = SaveStore::for_project(&loaded.project.manifest.name);
-        self.player = Some(Player::new(renderer, &loaded.project, loaded.theme.clone(), assets, saves, false)?);
+        let mut player = Player::new(renderer, &loaded.project, loaded.theme.clone(), assets, saves, false)?;
+        if let Some(title) = &loaded.title {
+            player.set_title(title)?;
+        }
+        self.player = Some(player);
         Ok(())
     }
 

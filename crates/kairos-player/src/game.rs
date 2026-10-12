@@ -11,6 +11,9 @@ pub enum Shown {
     Say { who: Option<String>, color: Option<String>, text: String, revealed: f32, len: usize, waited: f32 },
     Menu { caption: Option<String>, choices: Vec<String> },
     Pause { remaining: Option<f32> },
+    OpenLoad,
+    OpenSettings,
+    Quit,
     End,
     Error(String),
 }
@@ -25,6 +28,7 @@ pub enum Mode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
     Game,
+    Title,
     Menu,
     Save,
     Load,
@@ -107,6 +111,16 @@ impl Game {
         }
     }
 
+    pub fn has_label(&self, name: &str) -> bool {
+        self.program.labels.contains_key(name)
+    }
+
+    pub fn show_title(&mut self) {
+        self.shown = Shown::Nothing;
+        self.reset();
+        self.screen = Screen::Title;
+    }
+
     /// Starts with fresh variables at an instruction, for "play from this line".
     pub fn start_at(&mut self, pc: usize) {
         match Vm::new(self.program.clone()) {
@@ -149,7 +163,9 @@ impl Game {
         }
         match &mut self.shown {
             Shown::Say { revealed, len, .. } if (*revealed as usize) < *len => *revealed = *len as f32,
-            Shown::Say { .. } | Shown::Pause { .. } => self.step(),
+            Shown::Say { .. } | Shown::Pause { .. } | Shown::OpenLoad | Shown::OpenSettings | Shown::Quit => {
+                self.step()
+            }
             _ => {}
         }
     }
@@ -184,6 +200,9 @@ impl Game {
     }
 
     pub fn save(&self) -> Option<Vec<u8>> {
+        if matches!(self.vm.program().label_at(self.vm.last_pc()), Some("splashscreen" | "main_menu")) {
+            return None;
+        }
         self.vm.save()
     }
 
@@ -283,6 +302,9 @@ impl Game {
             }
             Event::Menu { caption, choices } => Shown::Menu { caption, choices },
             Event::Pause(d) => Shown::Pause { remaining: d.map(|d| d as f32) },
+            Event::OpenLoad => Shown::OpenLoad,
+            Event::OpenSettings => Shown::OpenSettings,
+            Event::Quit => Shown::Quit,
             Event::End => Shown::End,
         };
     }
@@ -505,6 +527,56 @@ label start:
         assert_eq!(game.shown, Shown::End);
         game.proceed();
         assert_eq!(game.shown, Shown::End);
+    }
+
+    #[test]
+    fn open_statements_pause_for_host_screens_then_continue() {
+        let source = "label start:\n    open settings\n    open load\n    quit\n    \"Done\"\n";
+        let project =
+            kairos_project::Project::from_sources("name = \"t\"", [(PathBuf::from("script/a.kai"), source.into())])
+                .unwrap();
+        let mut game = Game::new(project.program).unwrap();
+        game.start("start");
+        assert_eq!(game.shown, Shown::OpenSettings);
+        game.proceed();
+        assert_eq!(game.shown, Shown::OpenLoad);
+        game.proceed();
+        assert_eq!(game.shown, Shown::Quit);
+        game.proceed();
+        assert_eq!(text(&game), "Done");
+    }
+
+    #[test]
+    fn saving_stays_disabled_in_splashscreen_and_main_menu_until_jump_to_start() {
+        let source = "label splashscreen:\n    \"Splash\"\n    return\nlabel main_menu:\n    menu:\n        \"Start\":\n            jump start\nlabel start:\n    \"Game\"\n";
+        let project =
+            kairos_project::Project::from_sources("name = \"t\"", [(PathBuf::from("script/a.kai"), source.into())])
+                .unwrap();
+        let mut game = Game::new(project.program).unwrap();
+        game.start("splashscreen");
+        assert!(game.save().is_none());
+        game.proceed();
+        game.proceed();
+        game.start("main_menu");
+        assert!(game.save().is_none());
+        game.choose(0);
+        assert_eq!(text(&game), "Game");
+        assert!(game.save().is_some());
+    }
+
+    #[test]
+    fn saving_remains_disabled_while_a_main_menu_screen_is_open() {
+        let source = "label main_menu:\n    open settings\nlabel start:\n    \"Game\"\n";
+        let project =
+            kairos_project::Project::from_sources("name = \"t\"", [(PathBuf::from("script/a.kai"), source.into())])
+                .unwrap();
+        let mut game = Game::new(project.program).unwrap();
+        game.start("main_menu");
+        assert_eq!(game.shown, Shown::OpenSettings);
+        assert!(game.save().is_none());
+        game.proceed();
+        assert_eq!(text(&game), "Game");
+        assert!(game.save().is_some());
     }
 
     #[test]

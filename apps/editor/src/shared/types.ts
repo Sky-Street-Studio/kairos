@@ -77,6 +77,8 @@ export interface ProjectSnapshot {
   manifestSource: string;
   /** Raw `ui/theme.toml`, if present. */
   uiTheme: string | null;
+  /** Raw `ui/title.toml`, if present. */
+  uiTitle: string | null;
   scripts: SourceFile[];
   tree: TreeNode[];
   assets: AssetEntry[];

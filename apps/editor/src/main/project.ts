@@ -86,8 +86,9 @@ export async function loadProject(root: string): Promise<ProjectSnapshot> {
   const assets: AssetEntry[] = flatten(assetDir?.children ?? []).map(classifyAsset);
   const manifestSource = await readFile(join(root, "kairos.toml"), "utf8");
   const uiTheme = await readFile(join(root, "ui/theme.toml"), "utf8").catch(() => null);
+  const uiTitle = await readFile(join(root, "ui/title.toml"), "utf8").catch(() => null);
   currentRoot = root;
-  return { root, manifest, manifestSource, uiTheme, scripts, tree, assets };
+  return { root, manifest, manifestSource, uiTheme, uiTitle, scripts, tree, assets };
 }
 
 export async function writeProjectFile(rel: string, content: string): Promise<void> {

@@ -67,6 +67,27 @@ proptest! {
 }
 
 #[test]
+fn splashscreen_falling_off_its_label_returns_before_the_next_label() {
+    let p = program("label splashscreen:\n    \"Splash\"\nlabel start:\n    \"Game\"\n");
+    let mut vm = Vm::new(p.clone()).unwrap();
+    vm.start("splashscreen").unwrap();
+    assert_eq!(say(vm.advance().unwrap()), "Splash");
+    assert_eq!(vm.advance().unwrap(), Event::End);
+    vm.start("start").unwrap();
+    assert_eq!(say(vm.advance().unwrap()), "Game");
+}
+
+#[test]
+fn title_flow_statements_return_host_actions_and_advance() {
+    let p = program("label start:\n    open load\n    open settings\n    quit\n");
+    let mut vm = started(&p);
+    assert_eq!(vm.advance().unwrap(), Event::OpenLoad);
+    assert_eq!(vm.advance().unwrap(), Event::OpenSettings);
+    assert_eq!(vm.advance().unwrap(), Event::Quit);
+    assert_eq!(vm.advance().unwrap(), Event::End);
+}
+
+#[test]
 fn rollback_stops_at_the_first_interaction() {
     let p = program(LOOP);
     let mut vm = started(&p);
