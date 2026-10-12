@@ -1,6 +1,7 @@
 //! The player's input state machine on top of the VM. No graphics; the host draws from
 //! [`Game::shown`] and [`Game::stage`] and acts on [`Signal`]s.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use kairos_vm::{Effect, Event, LoadError, Program, RuntimeError, Stage, Vm};
@@ -77,6 +78,8 @@ pub struct Game {
     pub mode: Mode,
     pub screen: Screen,
     pub settings: Settings,
+    language: String,
+    translations: BTreeMap<String, BTreeMap<String, String>>,
     backlog: Vec<Line>,
     /// Backlog length before each shown interaction, parallel to the VM's rollback history.
     marks: Vec<usize>,
@@ -93,6 +96,8 @@ impl Game {
             mode: Mode::Normal,
             screen: Screen::Game,
             settings: Settings::default(),
+            language: String::new(),
+            translations: BTreeMap::new(),
             backlog: Vec::new(),
             marks: Vec::new(),
             signals: Vec::new(),
@@ -110,7 +115,10 @@ impl Game {
     /// Starts with fresh variables at an instruction, for "play from this line".
     pub fn start_at(&mut self, pc: usize) {
         match Vm::new(self.program.clone()) {
-            Ok(vm) => self.vm = vm,
+            Ok(mut vm) => {
+                vm.set_translations(self.translations.get(&self.language).cloned().unwrap_or_default());
+                self.vm = vm;
+            }
             Err(e) => {
                 self.shown = Shown::Error(e.to_string());
                 return;
@@ -132,6 +140,39 @@ impl Game {
 
     pub fn backlog(&self) -> &[Line] {
         &self.backlog
+    }
+
+    pub fn language(&self) -> &str {
+        &self.language
+    }
+
+    pub fn language_label(&self) -> &str {
+        if self.language.is_empty() { "Source" } else { &self.language }
+    }
+
+    pub fn languages(&self) -> Vec<String> {
+        std::iter::once(String::new()).chain(self.translations.keys().cloned()).collect()
+    }
+
+    pub fn set_localizations(&mut self, translations: BTreeMap<String, BTreeMap<String, String>>, language: &str) {
+        self.translations = translations;
+        self.set_language(language);
+    }
+
+    pub fn set_language(&mut self, language: &str) -> bool {
+        if !language.is_empty() && !self.translations.contains_key(language) {
+            return false;
+        }
+        self.language = language.to_string();
+        self.vm.set_translations(self.translations.get(language).cloned().unwrap_or_default());
+        true
+    }
+
+    pub fn cycle_language(&mut self, direction: i8) {
+        let languages = self.languages();
+        let index = languages.iter().position(|language| language == &self.language).unwrap_or(0);
+        let next = (index as isize + direction.signum() as isize).rem_euclid(languages.len() as isize) as usize;
+        self.set_language(&languages[next]);
     }
 
     pub fn can_rollback(&self) -> bool {
@@ -189,6 +230,7 @@ impl Game {
 
     pub fn load(&mut self, bytes: &[u8]) -> Result<(), LoadError> {
         self.vm = Vm::load(self.program.clone(), bytes)?;
+        self.vm.set_translations(self.translations.get(&self.language).cloned().unwrap_or_default());
         self.reset();
         self.signals.push(Signal::Resync);
         self.step();
@@ -505,6 +547,34 @@ label start:
         assert_eq!(game.shown, Shown::End);
         game.proceed();
         assert_eq!(game.shown, Shown::End);
+    }
+
+    #[test]
+    fn language_selection_changes_runtime_text_and_can_be_restored_from_preferences() {
+        let project =
+            kairos_project::Project::from_sources("name = \"t\"", [(PathBuf::from("script/a.kai"), SCRIPT.into())])
+                .unwrap();
+        let mut translations = BTreeMap::new();
+        translations.insert(
+            "ja".to_string(),
+            project
+                .translation_entries()
+                .into_iter()
+                .map(|(key, source)| {
+                    let value = if source == "Hello there." { "こんにちは" } else { "" };
+                    (key, value.to_string())
+                })
+                .collect(),
+        );
+        let mut game = Game::new(project.program).unwrap();
+        game.set_localizations(translations, "ja");
+        game.start("start");
+        assert_eq!(game.language_label(), "ja");
+        assert_eq!(text(&game), "こんにちは");
+        game.cycle_language(1);
+        assert_eq!(game.language(), "");
+        game.set_localizations(BTreeMap::from([("ja".to_string(), BTreeMap::new())]), "ja");
+        assert_eq!(game.language_label(), "ja");
     }
 
     #[test]

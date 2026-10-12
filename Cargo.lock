@@ -1354,6 +1354,7 @@ dependencies = [
  "kairos-project",
  "kairos-vm",
  "thiserror 2.0.21",
+ "toml",
 ]
 
 [[package]]

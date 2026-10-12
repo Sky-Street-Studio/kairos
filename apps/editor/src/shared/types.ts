@@ -70,6 +70,11 @@ export interface TreeNode {
   children?: TreeNode[];
 }
 
+export interface TranslationFile {
+  lang: string;
+  source: string;
+}
+
 export interface ProjectSnapshot {
   root: string;
   manifest: Manifest;
@@ -78,6 +83,7 @@ export interface ProjectSnapshot {
   /** Raw `ui/theme.toml`, if present. */
   uiTheme: string | null;
   scripts: SourceFile[];
+  translations: TranslationFile[];
   tree: TreeNode[];
   assets: AssetEntry[];
 }

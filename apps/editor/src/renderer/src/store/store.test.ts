@@ -19,6 +19,7 @@ function fakeApi() {
     manifestSource: 'name = "P"\n',
     uiTheme: null,
     scripts: [...disk].map(([path, source]) => ({ path, source })),
+    translations: [],
     tree: [],
     assets: [],
   });

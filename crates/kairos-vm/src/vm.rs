@@ -78,6 +78,7 @@ pub struct Vm {
     /// checkpoint must not push it twice.
     restored: bool,
     effects: Vec<Effect>,
+    translations: BTreeMap<String, String>,
 }
 
 struct Env<'a> {
@@ -100,6 +101,7 @@ impl Vm {
             history: Vec::new(),
             restored: false,
             effects: Vec::new(),
+            translations: BTreeMap::new(),
         };
         let program = vm.program.clone();
         for (name, expr) in &program.defines {
@@ -136,6 +138,10 @@ impl Vm {
         &self.program
     }
 
+    pub fn set_translations(&mut self, translations: BTreeMap<String, String>) {
+        self.translations = translations;
+    }
+
     pub fn take_effects(&mut self) -> Vec<Effect> {
         std::mem::take(&mut self.effects)
     }
@@ -154,8 +160,9 @@ impl Vm {
             let pc = self.state.pc;
             match &program.instrs[pc] {
                 Instr::Say { speaker, text } => {
-                    let text = self.interpolate(text)?;
-                    let (who, color) = self.speaker(speaker.as_ref());
+                    let id = &program.ids[pc];
+                    let text = self.interpolate(text, id)?;
+                    let (who, color) = self.speaker(speaker.as_ref(), id)?;
                     self.checkpoint();
                     self.state.pc += 1;
                     return Ok(Event::Say { who, color, text });
@@ -166,16 +173,18 @@ impl Vm {
                     return Ok(Event::Pause(*d));
                 }
                 Instr::Menu { caption, choices } => {
-                    let caption = caption.as_ref().map(|(_, t)| self.interpolate(t)).transpose()?;
+                    let id = &program.ids[pc];
+                    let caption =
+                        caption.as_ref().map(|(_, t)| self.interpolate(t, &format!("{id}#caption"))).transpose()?;
                     let mut labels = Vec::new();
                     let mut targets = Vec::new();
-                    for choice in choices {
+                    for (index, choice) in choices.iter().enumerate() {
                         let visible = match &choice.guard {
                             Some(g) => eval::truthy(&self.eval(g, pc)?),
                             None => true,
                         };
                         if visible {
-                            labels.push(self.interpolate(&choice.text)?);
+                            labels.push(self.interpolate(&choice.text, &format!("{id}#choice:{index}"))?);
                             targets.push(choice.target);
                         }
                     }
@@ -295,13 +304,17 @@ impl Vm {
         self.history.push(self.state.clone());
     }
 
-    fn speaker(&self, speaker: Option<&Speaker>) -> (Option<String>, Option<String>) {
+    fn speaker(
+        &self,
+        speaker: Option<&Speaker>,
+        statement_id: &str,
+    ) -> Result<(Option<String>, Option<String>), RuntimeError> {
         match speaker {
-            None => (None, None),
-            Some(Speaker::Name(n)) => (Some(n.clone()), None),
+            None => Ok((None, None)),
+            Some(Speaker::Name(n)) => Ok((Some(n.clone()), None)),
             Some(Speaker::Character(id)) => match self.program.characters.get(id) {
-                Some(c) => (Some(c.name.clone()), c.color.clone()),
-                None => (Some(id.clone()), None),
+                Some(c) => Ok((Some(self.interpolate(&c.name, &format!("{statement_id}#name"))?), c.color.clone())),
+                None => Ok((Some(id.clone()), None)),
             },
         }
     }
@@ -318,8 +331,9 @@ impl Vm {
         eval::eval(expr, &self.env()).map_err(|m| self.error_at(pc, m))
     }
 
-    fn interpolate(&self, text: &str) -> Result<String, RuntimeError> {
-        eval::interpolate(text, &self.env()).map_err(|m| self.error(m))
+    fn interpolate(&self, text: &str, key: &str) -> Result<String, RuntimeError> {
+        let source = self.translations.get(key).filter(|s| !s.is_empty()).map(String::as_str).unwrap_or(text);
+        eval::interpolate(source, &self.env()).map_err(|m| self.error(m))
     }
 
     fn error(&self, message: impl Into<String>) -> RuntimeError {
@@ -328,5 +342,52 @@ impl Vm {
 
     fn error_at(&self, pc: usize, message: impl Into<String>) -> RuntimeError {
         RuntimeError { line: self.program.lines.get(pc).copied().unwrap_or(0), message: message.into() }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn translations_use_statement_and_choice_ids_before_interpolation() {
+        let (statements, diagnostics) = kairos_script::parse(
+            r#"character e "Eileen"
+default name = "Kai"
+label start:
+    e "Hello [name]"
+    menu:
+        "Continue [name]":
+            return
+"#,
+        );
+        assert!(diagnostics.is_empty());
+        let (program, diagnostics) = crate::compile(&[statements]);
+        assert!(diagnostics.is_empty());
+        let say_id = program.ids[0].clone();
+        let menu_id = program.ids[1].clone();
+        let mut vm = Vm::new(Arc::new(program)).unwrap();
+        vm.set_translations(BTreeMap::from([
+            (say_id.clone(), "Bonjour [name]".into()),
+            (format!("{say_id}#name"), "Émilie [name]".into()),
+            (format!("{menu_id}#choice:0"), "Continuer [name]".into()),
+        ]));
+        vm.start("start").unwrap();
+        assert_eq!(
+            vm.advance().unwrap(),
+            Event::Say { who: Some("Émilie Kai".into()), color: None, text: "Bonjour Kai".into() }
+        );
+        assert_eq!(vm.advance().unwrap(), Event::Menu { caption: None, choices: vec!["Continuer Kai".into()] });
+    }
+
+    #[test]
+    fn empty_translations_fall_back_to_source() {
+        let (statements, _) = kairos_script::parse("label start:\n    \"Source\"\n");
+        let (program, _) = crate::compile(&[statements]);
+        let id = program.ids[0].clone();
+        let mut vm = Vm::new(Arc::new(program)).unwrap();
+        vm.set_translations(BTreeMap::from([(id, String::new())]));
+        vm.start("start").unwrap();
+        assert_eq!(vm.advance().unwrap(), Event::Say { who: None, color: None, text: "Source".into() });
     }
 }

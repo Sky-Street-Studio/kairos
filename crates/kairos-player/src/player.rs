@@ -63,7 +63,9 @@ impl Player {
         saves: SaveStore,
         can_quit: bool,
     ) -> Result<Player, String> {
-        let game = Game::new(project.program.clone()).map_err(|e| e.to_string())?;
+        let saved_language = saves.language().unwrap_or_default();
+        let mut game = Game::new(project.program.clone()).map_err(|e| e.to_string())?;
+        game.set_localizations(project.translations.clone(), &saved_language);
         let mut player = Player {
             game,
             start_label: project.manifest.start.clone(),
@@ -257,6 +259,12 @@ impl Player {
             Action::Adjust(setting, direction) => {
                 view::adjust(&mut self.game.settings, setting, direction);
                 self.apply_volumes();
+            }
+            Action::Language(direction) => {
+                self.game.cycle_language(direction);
+                if let Err(error) = self.saves.set_language(self.game.language()) {
+                    self.notify(format!("Could not save language: {error}"));
+                }
             }
             Action::Restart => self.start(),
             Action::Quit => self.quit = true,
