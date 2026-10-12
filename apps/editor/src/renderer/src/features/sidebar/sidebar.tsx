@@ -8,6 +8,7 @@ import {
   Folder,
   FolderOpen,
   Music,
+  Images,
   Plus,
   RefreshCw,
   UserRound,
@@ -65,7 +66,7 @@ function fileIcon(path: string) {
   if (path.endsWith(".kai")) return <FileCode2 className="text-primary" />;
   if (path.endsWith(".toml")) return <FileCog />;
   if (/\.(png|jpe?g|webp)$/i.test(path)) return <FileImage />;
-  if (/\.(ogg|mp3|wav|flac|opus|m4a)$/i.test(path)) return <FileMusic />;
+  if (/\.(ogg|mp3|wav|flac)$/i.test(path)) return <FileMusic />;
   return <FileText />;
 }
 
@@ -113,7 +114,11 @@ function TreeRows({ nodes, depth }: { nodes: TreeNode[]; depth: number }) {
             {fileIcon(n.path)}
             <span className="truncate">{n.name}</span>
             {isDirty(buffers[n.path]) && (
-              <span className="size-1.5 shrink-0 rounded-full bg-foreground/70" aria-label="unsaved" />
+              <span
+                className="size-1.5 shrink-0 rounded-full bg-foreground/70"
+                role="status"
+                aria-label="Unsaved changes"
+              />
             )}
             {errors > 0 && <span className="ml-auto text-2xs text-destructive tabular">{errors}</span>}
           </button>
@@ -173,57 +178,64 @@ function Characters() {
 
 function Assets() {
   const assets = useApp((s) => s.project?.assets ?? []);
-  const images = assets.filter((a) => a.kind === "image");
-  const audio = assets.filter((a) => a.kind === "audio");
+  const images = assets.filter((a) => a.kind === "image").slice(0, 6);
+  const audio = assets.filter((a) => a.kind === "audio").slice(0, 4);
+  const openView = useApp((s) => s.openView);
   return (
-    <Section title="Assets" count={images.length + audio.length} grow>
+    <Section
+      title="Assets"
+      count={assets.filter((a) => a.kind !== "other").length}
+      grow
+      actions={
+        <Tooltip content="Open asset manager">
+          <Button variant="ghost" size="icon" aria-label="Open asset manager" onClick={() => openView("assets")}>
+            <Images />
+          </Button>
+        </Tooltip>
+      }
+    >
       {images.length + audio.length === 0 ? (
         <p className="px-3 py-1 text-xs leading-relaxed text-muted-foreground">
-          Put images in <code className="font-mono text-2xs text-foreground">assets/images</code> and sound in{" "}
-          <code className="font-mono text-2xs text-foreground">assets/audio</code>. Drag them onto the editor or preview
-          to stage them.
+          Drag assets onto the editor or preview, or open the asset manager to import files.
         </p>
       ) : (
         <>
-          {images.length > 0 && (
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(72px,1fr))] gap-1.5 px-2.5 pt-0.5">
-              {images.map((a) => (
-                <Tooltip key={a.path} content={a.name.startsWith("bg ") ? `scene ${a.name}` : `show ${a.name}`}>
-                  <div
-                    draggable
-                    onDragStart={(e) => startAssetDrag(e, a)}
-                    className="group cursor-grab overflow-hidden rounded-md border bg-background/40 active:cursor-grabbing"
-                    data-testid="asset-thumb"
-                  >
-                    <div className="aspect-[4/3] overflow-hidden bg-[repeating-conic-gradient(var(--muted)_0_25%,transparent_0_50%)] bg-[length:10px_10px]">
-                      <img
-                        src={assetUrl(a.path)}
-                        alt=""
-                        draggable={false}
-                        loading="lazy"
-                        className="size-full object-cover transition-transform duration-300 ease-[var(--ease-out-expo)] group-hover:scale-105"
-                      />
-                    </div>
-                    <div className="truncate px-1.5 py-1 text-2xs">{a.name}</div>
-                  </div>
-                </Tooltip>
-              ))}
-            </div>
-          )}
-          {audio.length > 0 && (
-            <div className="mt-2">
-              {audio.map((a) => (
-                <div
-                  key={a.path}
-                  draggable
-                  onDragStart={(e) => startAssetDrag(e, a)}
-                  className="flex h-6 cursor-grab items-center gap-2 px-3 text-xs hover:bg-accent"
-                >
-                  <Music className="size-3.5 shrink-0 text-muted-foreground" />
-                  <span className="truncate">{a.name}</span>
-                </div>
-              ))}
-            </div>
+          {images.map((a) => (
+            <button
+              type="button"
+              key={a.path}
+              aria-label={`Drag ${a.name} image`}
+              draggable
+              onDragStart={(e) => startAssetDrag(e, a)}
+              className="flex h-7 cursor-grab items-center gap-2 px-3 text-xs hover:bg-accent active:cursor-grabbing"
+              data-testid="asset-thumb"
+              title={a.name}
+            >
+              <img src={assetUrl(a.path)} alt="" draggable={false} className="size-5 rounded-sm border object-cover" />
+              <span className="truncate">{a.name}</span>
+            </button>
+          ))}
+          {audio.map((a) => (
+            <button
+              type="button"
+              key={a.path}
+              aria-label={`Drag ${a.name} audio`}
+              draggable
+              onDragStart={(e) => startAssetDrag(e, a)}
+              className="flex h-7 cursor-grab items-center gap-2 px-3 text-xs hover:bg-accent active:cursor-grabbing"
+            >
+              <Music className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className="truncate">{a.name}</span>
+            </button>
+          ))}
+          {assets.length > 10 && (
+            <button
+              type="button"
+              onClick={() => openView("assets")}
+              className="px-3 py-1 text-xs text-primary hover:underline"
+            >
+              View all assets
+            </button>
           )}
         </>
       )}

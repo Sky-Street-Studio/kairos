@@ -30,6 +30,8 @@ function fakeApi() {
       open: vi.fn(async () => snapshot()),
       reload: vi.fn(async () => snapshot()),
       writeFile: vi.fn(async (path: string, content: string) => void disk.set(path, content)),
+      importAsset: vi.fn(async () => null),
+      renameAsset: vi.fn(async () => undefined),
       applyEdit: vi.fn(async (edit: ProjectEdit) => {
         const source = edit.source ?? disk.get(edit.path)!;
         const next = edit.kind === "connect" ? insertJump(source, edit.from, edit.to)!.source : source;
