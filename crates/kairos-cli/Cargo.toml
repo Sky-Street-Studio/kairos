@@ -9,9 +9,8 @@ name = "kairos"
 path = "src/main.rs"
 
 [dependencies]
-kairos-script.workspace = true
+kairos-player.workspace = true
+kairos-project.workspace = true
 kairos-vm.workspace = true
-serde.workspace = true
 thiserror.workspace = true
 clap.workspace = true
-toml.workspace = true

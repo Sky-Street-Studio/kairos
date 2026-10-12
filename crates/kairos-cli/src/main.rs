@@ -15,7 +15,7 @@ struct Cli {
 enum Command {
     /// Report script errors.
     Check { project: PathBuf },
-    /// Play a project. Only `--headless` exists until the player lands.
+    /// Play a project in a window, or as a transcript with `--headless`.
     Run {
         project: PathBuf,
         #[arg(long)]
@@ -47,9 +47,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     }
     match cli.command {
         Command::Check { .. } => println!("{}: no problems found", project.manifest.name),
-        Command::Run { headless: false, .. } => {
-            return Err("the graphical player is not built yet; pass --headless".into());
-        }
+        Command::Run { headless: false, .. } => kairos_player::run(project)?,
         Command::Run { inputs, .. } => {
             let inputs = inputs.map(std::fs::read_to_string).transpose()?.unwrap_or_default();
             print!("{}", run_headless(&project, &inputs)?);

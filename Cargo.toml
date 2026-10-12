@@ -11,6 +11,10 @@ repository = "https://github.com/monumei/kairos"
 [workspace.dependencies]
 kairos-script = { path = "crates/kairos-script" }
 kairos-vm = { path = "crates/kairos-vm" }
+kairos-project = { path = "crates/kairos-project" }
+kairos-render = { path = "crates/kairos-render" }
+kairos-audio = { path = "crates/kairos-audio" }
+kairos-player = { path = "crates/kairos-player" }
 serde = { version = "1", features = ["derive"] }
 postcard = { version = "1", features = ["alloc"] }
 thiserror = "2"
