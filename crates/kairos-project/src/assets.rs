@@ -47,7 +47,10 @@ mod tests {
 
     #[test]
     fn audio_without_an_extension_tries_each_format() {
-        assert_eq!(audio_candidates("theme"), ["audio/theme.ogg", "audio/theme.mp3", "audio/theme.wav", "audio/theme.flac"]);
+        assert_eq!(
+            audio_candidates("theme"),
+            ["audio/theme.ogg", "audio/theme.mp3", "audio/theme.wav", "audio/theme.flac"]
+        );
         assert_eq!(audio_candidates("v1.0/line")[0], "audio/v1.0/line.ogg");
     }
 }

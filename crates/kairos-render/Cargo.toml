@@ -1,0 +1,10 @@
+[package]
+name = "kairos-render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+wgpu = { version = "30", features = ["webgl"] }
+glyphon = "0.12"
+bytemuck = { version = "1", features = ["derive"] }
