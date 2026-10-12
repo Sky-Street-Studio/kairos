@@ -16,6 +16,8 @@ export const DEFAULT_LAYOUT: LayoutPrefs = {
 };
 
 const file = () => join(app.getPath("userData"), "settings.json");
+/** Where settings lived before the app was named Kairos; read once so recent projects survive the move. */
+const legacyFile = () => join(app.getPath("appData"), "@kairos", "editor", "settings.json");
 
 let cached: Settings | undefined;
 
@@ -33,7 +35,9 @@ function sanitize(raw: unknown): Settings {
 
 export async function getSettings(): Promise<Settings> {
   if (cached) return cached;
-  const raw = await readFile(file(), "utf8").then(JSON.parse, () => ({}));
+  const raw = await readFile(file(), "utf8")
+    .catch(() => readFile(legacyFile(), "utf8"))
+    .then(JSON.parse, () => ({}));
   cached = sanitize(raw);
   return cached;
 }

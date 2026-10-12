@@ -12,7 +12,8 @@ import { getSettings, rememberProject, updateSettings } from "./settings";
 import { agents, killAllTerminals, killTerminal, resizeTerminal, spawnTerminal, writeTerminal } from "./terminal";
 
 registerSchemes();
-if (process.env.KAIROS_USER_DATA) app.setPath("userData", process.env.KAIROS_USER_DATA);
+app.setName("Kairos");
+app.setPath("userData", process.env.KAIROS_USER_DATA ?? join(app.getPath("appData"), "Kairos"));
 
 function initialProjectArg(): string | null {
   const flag = process.argv.find((a) => a.startsWith("--project="));
