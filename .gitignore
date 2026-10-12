@@ -7,4 +7,3 @@ dist/
 test-results/
 playwright-report/
 crates/kairos-player/pkg/
-.claude/
