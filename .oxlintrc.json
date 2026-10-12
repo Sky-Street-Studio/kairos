@@ -1,0 +1,19 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "react", "import", "unicorn"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn"
+  },
+  "rules": {
+    "react/react-in-jsx-scope": "off"
+  },
+  "ignorePatterns": [
+    "**/out/**",
+    "**/dist/**",
+    "**/node_modules/**",
+    "target/**",
+    "crates/kairos-napi/index.js",
+    "crates/kairos-napi/index.d.ts"
+  ]
+}

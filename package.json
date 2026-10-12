@@ -1,0 +1,29 @@
+{
+  "name": "kairos",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "crates/kairos-napi"
+  ],
+  "type": "module",
+  "scripts": {
+    "build:napi": "bun run --cwd crates/kairos-napi build",
+    "dev": "bun run --cwd apps/editor dev",
+    "test": "bun run --cwd packages/theme test && bun run --cwd apps/editor test",
+    "typecheck": "bun run --cwd packages/theme typecheck && bun run --cwd apps/editor typecheck",
+    "lint": "oxlint",
+    "fmt": "oxfmt",
+    "fmt:check": "oxfmt --check"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.72.0",
+    "oxlint": "^1.87.0",
+    "typescript": "^5.9.0"
+  },
+  "trustedDependencies": [
+    "electron",
+    "esbuild",
+    "node-pty"
+  ]
+}

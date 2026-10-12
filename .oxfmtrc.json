@@ -1,0 +1,15 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "printWidth": 120,
+  "semi": true,
+  "singleQuote": false,
+  "trailingComma": "all",
+  "ignorePatterns": [
+    "**/out/**",
+    "**/dist/**",
+    "target/**",
+    "crates/kairos-napi/index.js",
+    "crates/kairos-napi/index.d.ts",
+    "**/*.md"
+  ]
+}
