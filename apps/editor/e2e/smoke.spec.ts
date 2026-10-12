@@ -36,7 +36,7 @@ test("opens a project, shows the graph, reports diagnostics, stages assets and r
   }
 
   await page.getByRole("tab", { name: /Story flow/ }).click();
-  await expect(page.getByTestId("graph-node")).toHaveCount(4);
+  await expect(page.getByTestId("graph-node")).toHaveCount(5);
   await expect(page.getByTestId("graph-node").filter({ hasText: "meet_kai" })).toBeVisible();
   if (shots) await page.screenshot({ path: join(shots, "graph.png") });
 
