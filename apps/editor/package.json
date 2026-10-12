@@ -1,6 +1,5 @@
 {
   "name": "@kairos/editor",
-  "productName": "Kairos",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -52,5 +51,6 @@
     "vite": "^7.3.0",
     "vitest": "^4.0.0",
     "zustand": "^5.0.15"
-  }
+  },
+  "productName": "Kairos"
 }
