@@ -5,6 +5,7 @@ use kairos_script::{Speaker, Value};
 use serde::{Deserialize, Serialize};
 
 use crate::eval::{self, Scope};
+use crate::persistent::{Persistent, is_persistent};
 use crate::program::{Instr, Program};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -84,16 +85,28 @@ pub struct Vm {
     last_pc: usize,
     effects: Vec<Effect>,
     translations: BTreeMap<String, String>,
+    persistent: Persistent,
+    persistent_changed: bool,
+    /// The dialogue line on screen; it counts as seen once the player advances past it.
+    displayed: Option<usize>,
+    line_seen: bool,
+    pub(crate) relocated: bool,
 }
 
 struct Env<'a> {
     store: &'a BTreeMap<String, Value>,
     constants: &'a BTreeMap<String, Value>,
     debug_overrides: &'a BTreeMap<String, Value>,
+    persistent: &'a BTreeMap<String, Value>,
 }
+
+static NONE: Value = Value::None;
 
 impl Scope for Env<'_> {
     fn lookup(&self, name: &str) -> Option<&Value> {
+        if is_persistent(name) {
+            return Some(self.persistent.get(name).unwrap_or(&NONE));
+        }
         self.store.get(name).or_else(|| self.debug_overrides.get(name)).or_else(|| self.constants.get(name))
     }
 }
@@ -110,6 +123,11 @@ impl Vm {
             last_pc: 0,
             effects: Vec::new(),
             translations: BTreeMap::new(),
+            persistent: Persistent::default(),
+            persistent_changed: false,
+            displayed: None,
+            line_seen: false,
+            relocated: false,
         };
         let program = vm.program.clone();
         for (name, expr) in &program.defines {
@@ -118,7 +136,8 @@ impl Vm {
         }
         for (name, expr) in &program.defaults {
             let v = vm.eval(expr, 0)?;
-            vm.state.store.insert(name.clone(), v);
+            let store = if is_persistent(name) { &mut vm.persistent.values } else { &mut vm.state.store };
+            store.insert(name.clone(), v);
         }
         Ok(vm)
     }
@@ -151,6 +170,7 @@ impl Vm {
             .iter()
             .chain(&self.debug_overrides)
             .chain(&self.state.store)
+            .chain(&self.persistent.values)
             .map(|(name, value)| (name.clone(), value.clone()))
             .collect()
     }
@@ -164,6 +184,10 @@ impl Vm {
     }
 
     pub fn set_variable(&mut self, name: &str, value: Value) -> Result<(), RuntimeError> {
+        if is_persistent(name) {
+            self.set_persistent_value(name, value);
+            return Ok(());
+        }
         if self.state.store.contains_key(name) {
             self.state.store.insert(name.to_string(), value);
             return Ok(());
@@ -178,11 +202,39 @@ impl Vm {
     /// Like [`Vm::set_variable`], but also creates store entries, because play-from-here starts a
     /// fresh VM where variables first assigned with `$` do not exist yet.
     pub fn seed_variable(&mut self, name: &str, value: Value) {
-        if self.constants.contains_key(name) && !self.state.store.contains_key(name) {
+        if is_persistent(name) {
+            self.set_persistent_value(name, value);
+        } else if self.constants.contains_key(name) && !self.state.store.contains_key(name) {
             self.debug_overrides.insert(name.to_string(), value);
         } else {
             self.state.store.insert(name.to_string(), value);
         }
+    }
+
+    /// Replaces the `default persistent.*` values with what an earlier session stored.
+    pub fn set_persistent(&mut self, persistent: Persistent) {
+        self.persistent.values.extend(persistent.values);
+        self.persistent.seen = persistent.seen;
+    }
+
+    pub fn persistent(&self) -> &Persistent {
+        &self.persistent
+    }
+
+    /// Whether persistent data changed since the last call, so the host knows to write it out.
+    pub fn take_persistent_changed(&mut self) -> bool {
+        std::mem::take(&mut self.persistent_changed)
+    }
+
+    /// Whether the player had already read the dialogue line most recently returned by
+    /// [`Vm::advance`], in this playthrough or an earlier one.
+    pub fn line_seen(&self) -> bool {
+        self.line_seen
+    }
+
+    fn set_persistent_value(&mut self, name: &str, value: Value) {
+        self.persistent.values.insert(name.to_string(), value);
+        self.persistent_changed = true;
     }
 
     pub fn rollback_to(&mut self, position: usize) -> bool {
@@ -218,6 +270,9 @@ impl Vm {
             return Err(self.error("waiting for a menu choice"));
         }
         let program = self.program.clone();
+        if let Some(pc) = self.displayed.take() {
+            self.persistent_changed |= self.persistent.seen.insert(program.ids[pc].clone());
+        }
         for _ in 0..STEP_LIMIT {
             let pc = self.state.pc;
             self.last_pc = pc;
@@ -226,6 +281,8 @@ impl Vm {
                     let id = &program.ids[pc];
                     let text = self.interpolate(text, id)?;
                     let (who, color) = self.speaker(speaker.as_ref(), id)?;
+                    self.line_seen = self.persistent.seen.contains(id);
+                    self.displayed = Some(pc);
                     self.checkpoint();
                     self.state.pc += 1;
                     return Ok(Event::Say { who, color, text });
@@ -285,6 +342,12 @@ impl Vm {
                 }
                 Instr::Assign { name, op, value } => {
                     let rhs = self.eval(value, pc)?;
+                    if is_persistent(name) {
+                        let v = eval::assign(*op, self.persistent.values.get(name), rhs).map_err(|m| self.error(m))?;
+                        self.set_persistent_value(name, v);
+                        self.state.pc += 1;
+                        continue;
+                    }
                     if self.constants.contains_key(name) && !self.state.store.contains_key(name) {
                         return Err(self.error(format!("`{name}` is a constant (define); use `default` for variables")));
                     }
@@ -397,7 +460,12 @@ impl Vm {
     }
 
     fn env(&self) -> Env<'_> {
-        Env { store: &self.state.store, constants: &self.constants, debug_overrides: &self.debug_overrides }
+        Env {
+            store: &self.state.store,
+            constants: &self.constants,
+            debug_overrides: &self.debug_overrides,
+            persistent: &self.persistent.values,
+        }
     }
 
     fn eval(&self, expr: &kairos_script::Expr, pc: usize) -> Result<Value, RuntimeError> {
