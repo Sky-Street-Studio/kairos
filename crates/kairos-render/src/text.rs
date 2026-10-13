@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use glyphon::cosmic_text::Align;
+use glyphon::cosmic_text::{Align, Style};
 use glyphon::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, Weight, fontdb};
 
 use crate::{Color, TextAlign, TextSpec};
@@ -26,6 +26,7 @@ impl Fonts {
         let mut db = fontdb::Database::new();
         db.load_font_data(include_bytes!("../fonts/Lato-Regular.ttf").to_vec());
         db.load_font_data(include_bytes!("../fonts/Lato-Bold.ttf").to_vec());
+        load_system_cjk_fallback(&mut db);
         db.set_sans_serif_family(DEFAULT_FAMILY);
         Fonts { system: FontSystem::new_with_locale_and_db("en-US".into(), db) }
     }
@@ -74,18 +75,71 @@ impl Fonts {
             TextAlign::Left => None,
             TextAlign::Center => Some(Align::Center),
         };
-        match spec.reveal {
-            Some(n) if n < spec.text.chars().count() => {
-                let split = spec.text.char_indices().nth(n).map(|(i, _)| i).unwrap_or(spec.text.len());
-                let hidden = attrs.clone().color(glyph_color(Color { a: 0, ..spec.color }));
-                let spans = [(&spec.text[..split], attrs.clone()), (&spec.text[split..], hidden)];
-                buffer.set_rich_text(spans, &attrs, Shaping::Advanced, align);
+        if let Ok(markup) = kairos_script::parse_text_markup(&spec.text) {
+            let mut remaining = spec.reveal.unwrap_or(usize::MAX);
+            let mut rich = Vec::new();
+            for span in &markup.spans {
+                let text = &markup.plain[span.range.clone()];
+                let mut style = span.style;
+                if markup
+                    .ruby
+                    .iter()
+                    .any(|(_, reading)| reading.start <= span.range.start && span.range.end <= reading.end)
+                {
+                    style.size.get_or_insert((size * 0.5).round().max(1.0) as u16);
+                }
+                let styled = span_attrs(attrs.clone(), style, size);
+                let hidden = styled.clone().color(glyph_color(Color { a: 0, ..spec.color }));
+                let visible = text.char_indices().nth(remaining).map_or(text.len(), |(i, _)| i);
+                rich.push((&text[..visible], styled));
+                rich.push((&text[visible..], hidden));
+                remaining = remaining.saturating_sub(text.chars().count());
             }
-            _ => buffer.set_text(&spec.text, &attrs, Shaping::Advanced, align),
+            buffer.set_rich_text(rich, &attrs, Shaping::Advanced, align);
+        } else {
+            buffer.set_text(&spec.text, &attrs, Shaping::Advanced, align);
         }
         buffer.shape_until_scroll(&mut self.system, false);
         buffer
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn load_system_cjk_fallback(db: &mut fontdb::Database) {
+    let candidates = [
+        "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/STHeiti Light.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "C:/Windows/Fonts/msyh.ttc",
+    ];
+    for path in candidates {
+        if let Ok(font) = std::fs::read(path) {
+            db.load_font_data(font);
+            return;
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn load_system_cjk_fallback(_: &mut fontdb::Database) {}
+
+fn span_attrs<'a>(attrs: Attrs<'a>, style: kairos_script::TextStyle, base_size: f32) -> Attrs<'a> {
+    let mut attrs = attrs.weight(if style.bold { Weight::BOLD } else { Weight::NORMAL }).style(if style.italic {
+        Style::Italic
+    } else {
+        Style::Normal
+    });
+    if let Some([r, g, b]) = style.color {
+        attrs = attrs.color(glyph_color(Color::rgb(r, g, b)));
+    }
+    if let Some(size) = style.size {
+        let size = size as f32;
+        attrs = attrs.metrics(Metrics::new(size, size * LINE_HEIGHT));
+    } else {
+        attrs = attrs.metrics(Metrics::new(base_size, base_size * LINE_HEIGHT));
+    }
+    attrs
 }
 
 impl Default for Fonts {
@@ -124,9 +178,23 @@ mod tests {
     }
 
     #[test]
+    fn long_cjk_runs_wrap_between_characters() {
+        let mut fonts = Fonts::new();
+        let lines = fonts.wrap("日本語を話します", 24.0, 60.0);
+        assert!(lines.len() > 1, "{lines:?}");
+        assert_eq!(lines.concat(), "日本語を話します");
+    }
+
+    #[test]
     fn explicit_newlines_start_new_lines() {
         let mut fonts = Fonts::new();
         assert_eq!(fonts.wrap("one\ntwo", 24.0, 1000.0), ["one", "two"]);
+    }
+
+    #[test]
+    fn layout_displays_text_without_markup_delimiters() {
+        let mut fonts = Fonts::new();
+        assert_eq!(fonts.wrap("{b}Hello{/b}", 24.0, 1000.0), ["Hello"]);
     }
 
     #[test]

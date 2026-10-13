@@ -6,6 +6,7 @@ pub mod layout;
 mod text;
 
 pub use gpu::Renderer;
+pub use kairos_script::{TextMarkup, TextSpan, TextStyle, parse_text_markup};
 pub use layout::{Letterbox, Rect};
 pub use text::{DEFAULT_FAMILY, Fonts, TextSize};
 
@@ -105,6 +106,7 @@ pub enum Draw {
         name: String,
         rect: Rect,
         opacity: f32,
+        rotation: f32,
     },
     Text(TextSpec),
 }

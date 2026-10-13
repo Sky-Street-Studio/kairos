@@ -39,12 +39,9 @@ Items 3 and 4 can swap. Take export first if you want a game on Steam early. Tak
 
 Windows and Linux export, optional macOS signing and notarization, and optional Steam achievements and cloud saves. Contract and setup: `desktop-export.md`.
 
-## 5. Text and staging
+## 5. Text and staging (partially done)
 
-- Text tags: bold, italic, color, size, inline waits, shake and ruby text for Japanese furigana.
-- NVL mode (full-screen narration).
-- CJK font fallback.
-- Then the deferred staging work: transform timeline, camera, screen effects (shake, flash) and shaders.
+The contract and implementation decisions are in `text-and-staging.md`. Script diagnostics reject malformed markup with file and line; the shared renderer handles formatting, inline waits, inline ruby, and NVL. CJK wrapping and native system/theme-provided fallback fonts are implemented. Sprite/camera timelines and screen effects are saved, roll back, and snap under skip. Ruby annotation positioning, animated text shake, and bundled fallback fonts remain; per-image shaders are deferred.
 
 ## Next in line
 

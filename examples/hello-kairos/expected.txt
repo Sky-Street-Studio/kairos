@@ -2,8 +2,9 @@
 [scene bg room with fade]
 [play music theme.ogg loop]
 [show e happy at center with dissolve]
-Eileen: Welcome to Kairos, Traveler.
-The room hums quietly.
+Eileen: {b}Welcome{/b} to Kairos, Traveler.
+The room hums quietly. {w=0.3}Outside, {rb}日本語{/rb}{rt}にほんご{/rt} waits on the sign.
+Tonight, the city feels close.
 What would you like to know?
   1) Tell me about the engine
   2) Who else is here?

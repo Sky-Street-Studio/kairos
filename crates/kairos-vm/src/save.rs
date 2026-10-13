@@ -8,7 +8,7 @@ use crate::program::{Instr, Program};
 use crate::vm::{RuntimeError, Stage, State, Track, Vm};
 
 const MAGIC: &[u8; 4] = b"KSAV";
-const VERSION: u32 = 3;
+const VERSION: u32 = 4;
 /// How many earlier statement IDs a save keeps for finding its place after a patch.
 const CONTEXT: usize = 32;
 
@@ -30,6 +30,65 @@ struct SaveData {
     stage: Stage,
     audio: BTreeMap<String, Track>,
     rng: u64,
+    nvl_mode: bool,
+    nvl_page: Vec<(Option<String>, String)>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct SpriteV3 {
+    tag: String,
+    attrs: Vec<String>,
+    at: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct StageV3 {
+    background: Option<Vec<String>>,
+    sprites: Vec<SpriteV3>,
+}
+
+impl From<StageV3> for Stage {
+    fn from(stage: StageV3) -> Stage {
+        Stage {
+            background: stage.background,
+            sprites: stage
+                .sprites
+                .into_iter()
+                .map(|sprite| crate::vm::Sprite {
+                    tag: sprite.tag,
+                    attrs: sprite.attrs,
+                    at: sprite.at,
+                    transform: Default::default(),
+                })
+                .collect(),
+            ..Stage::default()
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct SaveDataV3 {
+    pc: Position,
+    stack: Vec<Position>,
+    store: BTreeMap<String, Value>,
+    stage: StageV3,
+    audio: BTreeMap<String, Track>,
+    rng: u64,
+}
+
+impl From<SaveDataV3> for SaveData {
+    fn from(v3: SaveDataV3) -> SaveData {
+        SaveData {
+            pc: v3.pc,
+            stack: v3.stack,
+            store: v3.store,
+            stage: v3.stage.into(),
+            audio: v3.audio,
+            rng: v3.rng,
+            nvl_mode: false,
+            nvl_page: Vec::new(),
+        }
+    }
 }
 
 /// The version 2 layout, from before random numbers.
@@ -38,7 +97,7 @@ struct SaveDataV2 {
     pc: Position,
     stack: Vec<Position>,
     store: BTreeMap<String, Value>,
-    stage: Stage,
+    stage: StageV3,
     audio: BTreeMap<String, Track>,
 }
 
@@ -46,7 +105,16 @@ impl From<SaveDataV2> for SaveData {
     fn from(v2: SaveDataV2) -> SaveData {
         // Any seed works; deriving it from the saved line keeps old saves from sharing one.
         let rng = v2.pc.id.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3));
-        SaveData { pc: v2.pc, stack: v2.stack, store: v2.store, stage: v2.stage, audio: v2.audio, rng }
+        SaveData {
+            pc: v2.pc,
+            stack: v2.stack,
+            store: v2.store,
+            stage: v2.stage.into(),
+            audio: v2.audio,
+            rng,
+            nvl_mode: false,
+            nvl_page: Vec::new(),
+        }
     }
 }
 
@@ -56,7 +124,7 @@ struct SaveDataV1 {
     pc: String,
     stack: Vec<String>,
     store: BTreeMap<String, Value>,
-    stage: Stage,
+    stage: StageV3,
     audio: BTreeMap<String, Track>,
 }
 
@@ -142,6 +210,8 @@ impl Vm {
             stage: state.stage.clone(),
             audio: state.audio.clone(),
             rng: state.rng.get(),
+            nvl_mode: state.nvl_mode,
+            nvl_page: state.nvl_page.clone(),
         };
         let mut out = MAGIC.to_vec();
         out.extend(postcard::to_allocvec(&VERSION).expect("a version always serialises"));
@@ -156,6 +226,7 @@ impl Vm {
         let data: SaveData = match version {
             1 => SaveDataV2::from(postcard::from_bytes::<SaveDataV1>(body)?).into(),
             2 => postcard::from_bytes::<SaveDataV2>(body)?.into(),
+            3 => postcard::from_bytes::<SaveDataV3>(body)?.into(),
             VERSION => postcard::from_bytes(body)?,
             _ => return Err(LoadError::UnsupportedVersion(version)),
         };
@@ -173,6 +244,8 @@ impl Vm {
             stack,
             stage: data.stage,
             audio: data.audio,
+            nvl_mode: data.nvl_mode,
+            nvl_page: data.nvl_page,
             menu: None,
             store: vm.state.store.clone(),
             rng: data.rng.into(),
@@ -200,6 +273,39 @@ mod tests {
     }
 
     #[test]
+    fn version_3_saves_upgrade_with_nvl_disabled() {
+        #[derive(Serialize)]
+        struct V3<'a> {
+            version: u32,
+            pc: &'a Position,
+            stack: Vec<Position>,
+            store: BTreeMap<String, Value>,
+            stage: StageV3,
+            audio: BTreeMap<String, Track>,
+            rng: u64,
+        }
+        let p = program("label start:\n    \"One\"\n");
+        let v3 = V3 {
+            version: 3,
+            pc: &p.position(0),
+            stack: Vec::new(),
+            store: BTreeMap::new(),
+            stage: StageV3 {
+                background: None,
+                sprites: vec![SpriteV3 { tag: "e".into(), attrs: vec!["happy".into()], at: Some("left".into()) }],
+            },
+            audio: BTreeMap::new(),
+            rng: 17,
+        };
+        let mut bytes = MAGIC.to_vec();
+        bytes.extend(postcard::to_allocvec(&v3).unwrap());
+        let vm = Vm::load(p, &bytes).unwrap();
+        assert!(!vm.state().nvl_mode);
+        assert!(vm.state().nvl_page.is_empty());
+        assert_eq!(vm.state().stage.sprites[0].transform, Default::default());
+    }
+
+    #[test]
     fn version_1_saves_still_load() {
         #[derive(Serialize)]
         struct V1<'a> {
@@ -207,7 +313,7 @@ mod tests {
             pc: &'a str,
             stack: Vec<String>,
             store: BTreeMap<String, Value>,
-            stage: Stage,
+            stage: StageV3,
             audio: BTreeMap<String, Track>,
         }
         let p = program("default n = 0\nlabel start:\n    \"One\"\n    \"Two\"\n");
@@ -216,7 +322,7 @@ mod tests {
             pc: &p.ids[1],
             stack: Vec::new(),
             store: BTreeMap::from([("n".into(), Value::Int(3))]),
-            stage: Stage::default(),
+            stage: StageV3 { background: None, sprites: Vec::new() },
             audio: BTreeMap::new(),
         };
         let mut bytes = MAGIC.to_vec();

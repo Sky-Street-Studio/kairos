@@ -95,9 +95,29 @@ pub(crate) fn sprite_rects(
                     Rect::new((w - pw) * xalign(at), h - ph, pw, ph)
                 }
             };
-            (sprite.tag.clone(), rect)
+            let transform = sprite.transform;
+            let rect = Rect::new(
+                rect.x + rect.w * (1.0 - transform.scale) / 2.0 + transform.x,
+                rect.y + rect.h * (1.0 - transform.scale) / 2.0 + transform.y,
+                rect.w * transform.scale,
+                rect.h * transform.scale,
+            );
+            (sprite.tag.clone(), camera_rect(rect, stage, (w, h)))
         })
         .collect()
+}
+
+fn camera_rect(rect: Rect, stage: &kairos_vm::Stage, (w, h): (f32, f32)) -> Rect {
+    let zoom = stage.camera.zoom;
+    let (dx, dy) = stage
+        .shake
+        .map_or((0.0, 0.0), |(_, elapsed, amount)| ((elapsed * 43.0).sin() * amount, (elapsed * 57.0).cos() * amount));
+    Rect::new(
+        w / 2.0 + (rect.x - w / 2.0 - stage.camera.x) * zoom + dx,
+        h / 2.0 + (rect.y - h / 2.0 - stage.camera.y) * zoom + dy,
+        rect.w * zoom,
+        rect.h * zoom,
+    )
 }
 
 pub(crate) fn sprite_hit_rects(
@@ -157,6 +177,13 @@ pub fn build(input: &ViewInput, fonts: &mut Fonts) -> (Frame, Vec<Hotspot>) {
         ui.push(b.notice(notice));
     }
     b.custom_screens(&mut ui);
+    if let Some((color, duration, elapsed)) = &input.game.stage().flash {
+        let alpha = (1.0 - elapsed / duration).clamp(0.0, 1.0);
+        ui.push(vec![Draw::fill(
+            Rect::new(0.0, 0.0, input.size.0, input.size.1),
+            Color::hex(color).unwrap_or(Color::WHITE).with_alpha(alpha),
+        )]);
+    }
     (Frame { scene, ui }, b.hotspots)
 }
 
@@ -272,7 +299,7 @@ impl Builder<'_, '_> {
                 if let Some(name) = name
                     && matches!((self.input.image)(name), ImageInfo::Ready(_, _))
                 {
-                    layer.push(Draw::Image { name: name.to_string(), rect, opacity: 1.0 });
+                    layer.push(Draw::Image { name: name.to_string(), rect, opacity: 1.0, rotation: 0.0 });
                 }
             }
             NodeType::Button => {
@@ -596,7 +623,7 @@ impl Builder<'_, '_> {
                 match (self.input.image)(name) {
                     ImageInfo::Ready(iw, ih) => {
                         let rect = cover_rect((iw as f32, ih as f32), (w, h));
-                        layer.push(Draw::Image { name: name.clone(), rect, opacity: 1.0 });
+                        layer.push(Draw::Image { name: name.clone(), rect, opacity: 1.0, rotation: 0.0 });
                     }
                     ImageInfo::Missing => {}
                     ImageInfo::Loading => {}
@@ -606,11 +633,11 @@ impl Builder<'_, '_> {
             let name = image_name(words);
             match (self.input.image)(&name) {
                 ImageInfo::Ready(iw, ih) => {
-                    let rect = cover_rect((iw as f32, ih as f32), (w, h));
-                    layer.push(Draw::Image { name, rect, opacity: 1.0 });
+                    let rect = camera_rect(cover_rect((iw as f32, ih as f32), (w, h)), stage, (w, h));
+                    layer.push(Draw::Image { name, rect, opacity: 1.0, rotation: 0.0 });
                 }
                 ImageInfo::Missing => {
-                    let screen = Rect::new(0.0, 0.0, w, h);
+                    let screen = camera_rect(Rect::new(0.0, 0.0, w, h), stage, (w, h));
                     layer.push(Draw::Fill {
                         rect: screen,
                         top: Color::rgb(0x2b, 0x2d, 0x3a),
@@ -629,7 +656,12 @@ impl Builder<'_, '_> {
                 words.extend(sprite.attrs.iter().cloned());
                 let name = image_name(&words);
                 match (self.input.image)(&name) {
-                    ImageInfo::Ready(_, _) => layer.push(Draw::Image { name, rect, opacity: 1.0 }),
+                    ImageInfo::Ready(_, _) => layer.push(Draw::Image {
+                        name,
+                        rect,
+                        opacity: sprite.transform.alpha,
+                        rotation: sprite.transform.rotation,
+                    }),
                     ImageInfo::Missing => {
                         let fill = Color::rgba(255, 255, 255, 34);
                         layer.push(Draw::Fill { rect, top: fill, bottom: fill.with_alpha(0.3), radius: 18.0 });
@@ -656,7 +688,11 @@ impl Builder<'_, '_> {
         match &self.input.game.shown {
             Shown::Say { who, color, text, revealed, .. } => {
                 let character = color.as_deref().and_then(Color::hex);
-                self.textbox(&mut layer, who.as_deref(), character, text, Some(*revealed as usize));
+                if self.input.game.nvl_mode() {
+                    self.nvl(&mut layer, Some(*revealed as usize));
+                } else {
+                    self.textbox(&mut layer, who.as_deref(), character, text, Some(*revealed as usize));
+                }
                 self.quick_menu(&mut layer);
             }
             Shown::Menu { caption, choices } => {
@@ -695,6 +731,32 @@ impl Builder<'_, '_> {
             layer.push(text);
         }
         layer
+    }
+
+    fn nvl(&mut self, layer: &mut Layer, reveal: Option<usize>) {
+        let (w, h) = self.size();
+        let area = Rect::new(48.0, 36.0, w - 96.0, h - 72.0);
+        layer.push(Draw::fill(area, Color::rgba(10, 10, 20, 220)));
+        let mut y = area.y + area.h;
+        let page = self.input.game.nvl_page();
+        for (index, (who, text)) in page.iter().enumerate().rev() {
+            let line = who.as_ref().map_or_else(|| text.clone(), |who| format!("{who}: {text}"));
+            let measured = self.fonts.measure(&line, 30.0, self.input.dialogue_family, Some(area.w - 48.0));
+            if y - measured.height < area.y + 20.0 {
+                break;
+            }
+            y -= measured.height;
+            layer.push(Draw::Text(TextSpec {
+                text: line,
+                rect: Rect::new(area.x + 24.0, y, area.w - 48.0, measured.height + 4.0),
+                size: 30.0,
+                color: self.input.theme.textbox.text_color.0,
+                family: self.input.dialogue_family.map(String::from),
+                reveal: (index + 1 == page.len()).then_some(reveal).flatten(),
+                ..TextSpec::default()
+            }));
+            y -= 12.0;
+        }
     }
 
     fn textbox(
@@ -857,7 +919,7 @@ impl Builder<'_, '_> {
                 let height = 170.0;
                 let width = (height * iw as f32 / ih as f32).min(w * 0.8);
                 let rect = Rect::new((w - width) / 2.0, h * 0.12, width, height);
-                layer.push(Draw::Image { name: logo.clone(), rect, opacity: 1.0 });
+                layer.push(Draw::Image { name: logo.clone(), rect, opacity: 1.0, rotation: 0.0 });
             }
         } else {
             let rect = Rect::new(0.0, h * 0.18, w, 64.0);
@@ -1196,11 +1258,21 @@ mod tests {
         let (frame, _) = view(&game, (0.0, 0.0));
         assert_eq!(
             frame.scene[0],
-            Draw::Image { name: "bg room".into(), rect: Rect::new(0.0, 0.0, 1280.0, 720.0), opacity: 1.0 }
+            Draw::Image {
+                name: "bg room".into(),
+                rect: Rect::new(0.0, 0.0, 1280.0, 720.0),
+                opacity: 1.0,
+                rotation: 0.0
+            }
         );
         assert_eq!(
             frame.scene[1],
-            Draw::Image { name: "e happy".into(), rect: Rect::new(0.0, 0.0, 360.0, 720.0), opacity: 1.0 }
+            Draw::Image {
+                name: "e happy".into(),
+                rect: Rect::new(0.0, 0.0, 360.0, 720.0),
+                opacity: 1.0,
+                rotation: 0.0
+            }
         );
     }
 
@@ -1459,10 +1531,26 @@ mod tests {
         let stage = kairos_vm::Stage {
             background: None,
             sprites: vec![
-                kairos_vm::Sprite { tag: "e".into(), attrs: vec!["happy".into()], at: Some("left".into()) },
-                kairos_vm::Sprite { tag: "k".into(), attrs: vec![], at: Some("right".into()) },
-                kairos_vm::Sprite { tag: "m".into(), attrs: vec![], at: Some("center".into()) },
+                kairos_vm::Sprite {
+                    tag: "e".into(),
+                    attrs: vec!["happy".into()],
+                    at: Some("left".into()),
+                    transform: Default::default(),
+                },
+                kairos_vm::Sprite {
+                    tag: "k".into(),
+                    attrs: vec![],
+                    at: Some("right".into()),
+                    transform: Default::default(),
+                },
+                kairos_vm::Sprite {
+                    tag: "m".into(),
+                    attrs: vec![],
+                    at: Some("center".into()),
+                    transform: Default::default(),
+                },
             ],
+            ..kairos_vm::Stage::default()
         };
         let image = |name: &str| match name {
             "e happy" => ImageInfo::Ready(400, 800),
@@ -1479,9 +1567,20 @@ mod tests {
         let stage = kairos_vm::Stage {
             background: None,
             sprites: vec![
-                kairos_vm::Sprite { tag: "e".into(), attrs: vec!["happy".into()], at: Some("left".into()) },
-                kairos_vm::Sprite { tag: "k".into(), attrs: vec![], at: Some("right".into()) },
+                kairos_vm::Sprite {
+                    tag: "e".into(),
+                    attrs: vec!["happy".into()],
+                    at: Some("left".into()),
+                    transform: Default::default(),
+                },
+                kairos_vm::Sprite {
+                    tag: "k".into(),
+                    attrs: vec![],
+                    at: Some("right".into()),
+                    transform: Default::default(),
+                },
             ],
+            ..kairos_vm::Stage::default()
         };
         let rects = sprite_rects(&stage, &|_: &str| ImageInfo::Ready(400, 800), (1280.0, 720.0));
         assert_eq!(rects.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>(), ["e", "k"]);

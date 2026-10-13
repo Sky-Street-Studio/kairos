@@ -78,6 +78,20 @@ pub enum Speaker {
     Name(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NvlAction {
+    On,
+    Off,
+    Clear,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Easing {
+    At,
+    Linear,
+    Ease,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Choice {
     pub line: usize,
@@ -114,6 +128,7 @@ pub enum StmtKind {
         id: String,
         name: String,
         color: Option<String>,
+        nvl: bool,
     },
     Menu {
         caption: Option<(Option<Speaker>, String)>,
@@ -169,6 +184,32 @@ pub enum StmtKind {
         fadeout: Option<f64>,
     },
     Pause(Option<f64>),
+    Nvl(NvlAction),
+    StageSprite {
+        tag: String,
+        x: Option<f64>,
+        y: Option<f64>,
+        scale: Option<f64>,
+        rotation: Option<f64>,
+        alpha: Option<f64>,
+        over: Option<f64>,
+        easing: Easing,
+    },
+    Camera {
+        x: Option<f64>,
+        y: Option<f64>,
+        zoom: Option<f64>,
+        over: Option<f64>,
+        easing: Easing,
+    },
+    ScreenShake {
+        duration: f64,
+        amount: f64,
+    },
+    ScreenFlash {
+        color: String,
+        duration: f64,
+    },
     Transform {
         name: String,
         body: Vec<String>,

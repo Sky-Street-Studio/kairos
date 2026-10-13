@@ -13,9 +13,41 @@ pub struct MenuChoice {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Instr {
-    Say { speaker: Option<Speaker>, text: String },
-    Menu { caption: Option<(Option<Speaker>, String)>, choices: Vec<MenuChoice> },
+    Say {
+        speaker: Option<Speaker>,
+        text: String,
+    },
+    Menu {
+        caption: Option<(Option<Speaker>, String)>,
+        choices: Vec<MenuChoice>,
+    },
     Pause(Option<f64>),
+    Nvl(kairos_script::NvlAction),
+    StageSprite {
+        tag: String,
+        x: Option<f64>,
+        y: Option<f64>,
+        scale: Option<f64>,
+        rotation: Option<f64>,
+        alpha: Option<f64>,
+        over: Option<f64>,
+        easing: kairos_script::Easing,
+    },
+    Camera {
+        x: Option<f64>,
+        y: Option<f64>,
+        zoom: Option<f64>,
+        over: Option<f64>,
+        easing: kairos_script::Easing,
+    },
+    ScreenShake {
+        duration: f64,
+        amount: f64,
+    },
+    ScreenFlash {
+        color: String,
+        duration: f64,
+    },
     Goto(usize),
     GotoUnless(Expr, usize),
     Jump(String),
@@ -24,22 +56,51 @@ pub enum Instr {
     OpenLoad,
     OpenSettings,
     Quit,
-    Assign { name: String, index: Vec<Expr>, op: AssignOp, value: Expr },
-    Mutate { name: String, method: String, args: Vec<Expr> },
-    Scene { image: Option<Vec<String>>, with: Option<String> },
-    Show { image: Vec<String>, at: Option<String>, with: Option<String> },
+    Assign {
+        name: String,
+        index: Vec<Expr>,
+        op: AssignOp,
+        value: Expr,
+    },
+    Mutate {
+        name: String,
+        method: String,
+        args: Vec<Expr>,
+    },
+    Scene {
+        image: Option<Vec<String>>,
+        with: Option<String>,
+    },
+    Show {
+        image: Vec<String>,
+        at: Option<String>,
+        with: Option<String>,
+    },
     ShowScreen(String),
     HideScreen(String),
-    Hide { tag: String, with: Option<String> },
+    Hide {
+        tag: String,
+        with: Option<String>,
+    },
     With(String),
-    Play { channel: String, asset: String, looped: bool, queue: bool, fadein: Option<f64> },
-    Stop { channel: String, fadeout: Option<f64> },
+    Play {
+        channel: String,
+        asset: String,
+        looped: bool,
+        queue: bool,
+        fadein: Option<f64>,
+    },
+    Stop {
+        channel: String,
+        fadeout: Option<f64>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Character {
     pub name: String,
     pub color: Option<String>,
+    pub nvl: bool,
 }
 
 /// A script compiled to a flat instruction list.
@@ -185,6 +246,11 @@ impl Compiler {
             }
             _ => {}
         }
+        for text in &texts {
+            if let Err(message) = kairos_script::parse_text_markup(text) {
+                problems.push(message);
+            }
+        }
         let parsed: Vec<Expr> = texts
             .iter()
             .flat_map(|t| match eval::interpolations(t) {
@@ -220,8 +286,8 @@ impl Compiler {
                 self.label = outer;
                 return;
             }
-            StmtKind::Character { id, name, color } => {
-                let def = Character { name: name.clone(), color: color.clone() };
+            StmtKind::Character { id, name, color, nvl } => {
+                let def = Character { name: name.clone(), color: color.clone(), nvl: *nvl };
                 self.program.characters.insert(id.clone(), def);
                 return;
             }
@@ -308,6 +374,24 @@ impl Compiler {
             },
             StmtKind::Stop { channel, fadeout } => Instr::Stop { channel: channel.clone(), fadeout: *fadeout },
             StmtKind::Pause(d) => Instr::Pause(*d),
+            StmtKind::Nvl(action) => Instr::Nvl(*action),
+            StmtKind::StageSprite { tag, x, y, scale, rotation, alpha, over, easing } => Instr::StageSprite {
+                tag: tag.clone(),
+                x: *x,
+                y: *y,
+                scale: *scale,
+                rotation: *rotation,
+                alpha: *alpha,
+                over: *over,
+                easing: *easing,
+            },
+            StmtKind::Camera { x, y, zoom, over, easing } => {
+                Instr::Camera { x: *x, y: *y, zoom: *zoom, over: *over, easing: *easing }
+            }
+            StmtKind::ScreenShake { duration, amount } => Instr::ScreenShake { duration: *duration, amount: *amount },
+            StmtKind::ScreenFlash { color, duration } => {
+                Instr::ScreenFlash { color: color.clone(), duration: *duration }
+            }
         };
         self.emit(simple, line, src);
     }
