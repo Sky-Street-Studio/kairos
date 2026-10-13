@@ -138,6 +138,16 @@ export async function loadProject(root: string): Promise<ProjectSnapshot> {
   const audioMetadata = await readAudioMetadata(root);
   const spriteLayers = await readSpriteLayers(root, tree);
   const uiTitle = await readFile(join(root, "ui/title.toml"), "utf8").catch(() => null);
+  const uiScreens: SourceFile[] = await Promise.all(
+    (await readdir(join(root, "ui/screens"), { withFileTypes: true }).catch(() => []))
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".toml"))
+      .map((entry) => entry.name)
+      .toSorted()
+      .map(async (name) => ({
+        path: `ui/screens/${name}`,
+        source: await readFile(join(root, "ui/screens", name), "utf8"),
+      })),
+  );
   currentRoot = root;
   return {
     root,
@@ -145,6 +155,7 @@ export async function loadProject(root: string): Promise<ProjectSnapshot> {
     manifestSource,
     uiTheme,
     uiTitle,
+    uiScreens,
     scripts,
     translations,
     tree,

@@ -99,6 +99,8 @@ export interface ProjectSnapshot {
   uiTheme: string | null;
   /** Raw `ui/title.toml`, if present. */
   uiTitle: string | null;
+  /** Raw `ui/screens/*.toml` files. */
+  uiScreens: SourceFile[];
   scripts: SourceFile[];
   translations: TranslationFile[];
   tree: TreeNode[];

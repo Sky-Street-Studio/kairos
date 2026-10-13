@@ -38,10 +38,12 @@ export function projectJson(
   uiTitle: string | null,
   assets: string[],
   translations: TranslationFile[] = [],
+  screens: SourceFile[] = [],
 ): string {
   return JSON.stringify({
     manifest: manifestSource,
     scripts,
+    screens,
     translations,
     assetBaseUrl: `${ASSET_SCHEME}://project/`,
     assets,
