@@ -93,7 +93,7 @@ export function TreeRows({ nodes, depth, filter = "" }: { nodes: TreeNode[]; dep
                 </button>
               </ContextMenuTrigger>
               <ContextMenuContent>
-                <ContextMenuItem onSelect={() => void revealPath(`${project?.root}/${n.path}`)}>
+                <ContextMenuItem onSelect={() => project && void revealPath(`${project.root}/${n.path}`)}>
                   Reveal in Finder
                 </ContextMenuItem>
                 <ContextMenuItem onSelect={() => project && void copyPath(project.root, n.path)}>
@@ -116,10 +116,10 @@ export function TreeRows({ nodes, depth, filter = "" }: { nodes: TreeNode[]; dep
               <button
                 type="button"
                 style={pad}
-                disabled={!openable}
-                onClick={() => openFile(n.path)}
+                aria-disabled={!openable}
+                onClick={() => openable && openFile(n.path)}
                 className={cn(
-                  "flex h-6 w-full items-center gap-1.5 pr-2 text-xs hover:bg-accent disabled:cursor-default disabled:text-muted-foreground disabled:hover:bg-transparent [&_svg]:size-3.5 [&_svg]:shrink-0",
+                  "flex h-6 w-full items-center gap-1.5 pr-2 text-xs hover:bg-accent aria-disabled:cursor-default aria-disabled:text-muted-foreground aria-disabled:hover:bg-transparent [&_svg]:size-3.5 [&_svg]:shrink-0",
                   activeId === n.path && "bg-accent font-medium text-foreground",
                 )}
                 data-testid="file-tree-row"
