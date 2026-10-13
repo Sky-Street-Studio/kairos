@@ -84,6 +84,10 @@
         "to": "template"
       },
       {
+        "from": "../../examples/beginner-templates",
+        "to": "beginner-templates"
+      },
+      {
         "from": "../../crates/kairos-napi",
         "to": "kairos-napi",
         "filter": [

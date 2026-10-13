@@ -1,4 +1,4 @@
-import { ArrowLeft, FolderClock, PanelsTopLeft, Palette, Search } from "lucide-react";
+import { ArrowLeft, Code2, FolderClock, PanelsTopLeft, Palette, Search } from "lucide-react";
 import { useEffect, useRef, useState, type ComponentType } from "react";
 
 import { Kbd } from "@/components/ui/input";
@@ -8,6 +8,7 @@ import { useApp } from "@/store";
 import { AppearancePage } from "./appearance-page";
 import { LayoutPage } from "./layout-page";
 import { ProjectsPage } from "./projects-page";
+import { WorkspacePage } from "./workspace-page";
 
 interface Page {
   id: string;
@@ -46,6 +47,15 @@ const PAGES: Page[] = [
     keywords: "recent open folder project",
     icon: FolderClock,
     Component: ProjectsPage,
+  },
+  {
+    id: "workspace",
+    group: "Workspace",
+    title: "Workspace",
+    description: "Project files and editor behavior.",
+    keywords: "code script kai files show hide editor",
+    icon: Code2,
+    Component: WorkspacePage,
   },
 ];
 

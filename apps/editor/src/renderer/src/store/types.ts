@@ -26,6 +26,8 @@ export interface ProjectSlice {
   project: Omit<ProjectSnapshot, "scripts"> | null;
   buffers: Record<string, FileBuffer>;
   loading: boolean;
+  checklistDismissed: boolean;
+  beginnerPath: boolean;
   openProject(root: string): Promise<void>;
   refreshTree(): Promise<void>;
   setSource(path: string, source: string): void;
@@ -100,6 +102,9 @@ export interface UiSlice {
   resizePanel(key: "sidebarWidth" | "previewWidth" | "bottomHeight", size: number): void;
   theme: ThemeConfig;
   setTheme(theme: ThemeConfig): void;
+  showCode: boolean;
+  setShowCode(show: boolean): void;
+  dismissChecklist(): void;
 }
 
 export interface DebugLocation {
@@ -124,6 +129,7 @@ export interface PreviewSlice {
   /** Bumped after every save so the preview reloads the project. */
   previewVersion: number;
   playRequest: (Reveal & { mode: "play" | "seek"; overrides?: Record<string, unknown> }) | null;
+  hasPlayed: boolean;
   debugState: DebugState | null;
   debugControl: DebugControl | null;
   setDebugState(state: DebugState | null): void;

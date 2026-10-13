@@ -26,7 +26,7 @@ import { appStore, useApp } from "@/store";
 
 import { ExportDialog } from "../export/export-dialog";
 import { SceneDialogs, useSceneActions } from "../graph/scene-actions";
-import { newProjectFromTemplate, openProjectDialog } from "../shell/actions";
+import { openProjectDialog, requestNewProject } from "../shell/actions";
 
 function Item({
   value,
@@ -67,6 +67,7 @@ export function CommandPalette() {
   const setOpen = useApp((s) => s.setPaletteOpen);
   const project = useApp((s) => s.project);
   const buffers = useApp((s) => s.buffers);
+  const showCode = useApp((s) => s.showCode);
   const nodes = useApp((s) => s.analysis.graph.nodes);
   const theme = useApp((s) => s.theme);
   const s = appStore().getState();
@@ -91,6 +92,7 @@ export function CommandPalette() {
         {project && (
           <Command.Group heading="Files" className={groupClass}>
             {Object.keys(buffers)
+              .filter((path) => showCode || !path.endsWith(".kai"))
               .toSorted()
               .map((path) => (
                 <Item key={path} value={`file ${path}`} icon={<FileCode2 />} onSelect={() => s.openFile(path)}>
@@ -177,9 +179,11 @@ export function CommandPalette() {
           <Item value="open project folder" icon={<FolderOpen />} onSelect={() => void openProjectDialog()}>
             Open project…
           </Item>
-          <Item value="new project from template" icon={<Plus />} onSelect={() => void newProjectFromTemplate()}>
-            New project from template…
-          </Item>
+          {!project && (
+            <Item value="new project template" icon={<Plus />} onSelect={requestNewProject}>
+              New project…
+            </Item>
+          )}
           <Item
             value="settings theme editor"
             icon={<Settings2 />}

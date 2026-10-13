@@ -1,0 +1,5 @@
+label start:
+    scene bg room
+    "The rain had stopped by morning."
+    "I stepped outside and took a breath."
+    return

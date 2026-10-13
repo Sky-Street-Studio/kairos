@@ -1,0 +1,19 @@
+default affection = 0
+
+label start:
+    e "Mira waits by the station gate."
+    menu:
+        "Bring her a coffee":
+            $ affection += 1
+            jump warm_ending
+        "Ask about the train":
+            jump quiet_ending
+
+label warm_ending:
+    if affection > 0:
+        e "You remembered how I take it."
+    return
+
+label quiet_ending:
+    e "The next train is almost here."
+    return

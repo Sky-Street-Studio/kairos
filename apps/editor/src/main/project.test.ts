@@ -5,7 +5,7 @@ import { join } from "node:path";
 import sharp from "sharp";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { importProjectAsset, loadProject, readProjectText, renameProjectAsset } from "./project";
+import { createFromTemplate, importProjectAsset, loadProject, readProjectText, renameProjectAsset } from "./project";
 
 let root: string | undefined;
 let source: string | undefined;
@@ -27,6 +27,20 @@ async function project() {
   await loadProject(root);
   return root;
 }
+
+describe("starter templates", () => {
+  it("creates a named branching romance project from its template", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "kairos-template-"));
+    root = parent;
+    const created = await createFromTemplate(parent, "First Story", "branching-romance");
+    const manifest = await readFile(join(created, "kairos.toml"), "utf8");
+    const script = await readFile(join(created, "script/script.kai"), "utf8");
+    expect((await loadProject(created)).scripts).toHaveLength(1);
+    expect(manifest).toContain('name = "First Story"');
+    expect(script).toContain("menu:");
+    expect(script).toContain("$ affection += 1");
+  });
+});
 
 describe("project assets", () => {
   it("trims fully transparent edges from imported PNG sprites", async () => {

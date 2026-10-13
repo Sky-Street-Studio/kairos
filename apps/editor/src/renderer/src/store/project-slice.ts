@@ -33,6 +33,8 @@ export const createProjectSlice: SliceCreator<ProjectSlice> = (set, get, api) =>
   project: null,
   buffers: {},
   loading: false,
+  checklistDismissed: false,
+  beginnerPath: false,
 
   async openProject(root) {
     set({ loading: true });
@@ -40,14 +42,24 @@ export const createProjectSlice: SliceCreator<ProjectSlice> = (set, get, api) =>
       const snap = await api.project.open(root);
       const buffers = Object.fromEntries(snap.scripts.map((f) => [f.path, { ...f, saved: f.source }]));
       const first = snap.scripts[0]?.path;
+      const settings = await api.settings.get();
       set({
         project: withoutScripts(snap),
+        showCode: !settings.hiddenCodeProjects.includes(root),
+        checklistDismissed: settings.dismissedChecklistProjects.includes(root),
+        beginnerPath: settings.beginnerProjects.includes(root),
         buffers,
-        tabs: [{ id: "graph", kind: "graph" }, ...(first ? [{ id: first, kind: "file" as const, path: first }] : [])],
-        activeId: first ?? "graph",
+        tabs: [
+          { id: "graph", kind: "graph" },
+          ...(first && !settings.hiddenCodeProjects.includes(root)
+            ? [{ id: first, kind: "file" as const, path: first }]
+            : []),
+        ],
+        activeId: first && !settings.hiddenCodeProjects.includes(root) ? first : "graph",
         cursor: null,
         reveal: null,
         playRequest: null,
+        hasPlayed: false,
       });
       get().clearHistory();
       await get().loadGraphLayout();

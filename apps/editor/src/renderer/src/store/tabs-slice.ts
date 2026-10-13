@@ -11,6 +11,7 @@ export const createTabsSlice: SliceCreator<TabsSlice> = (set, get) => ({
   selectedBlock: null,
 
   openFile(path, line) {
+    if (path.endsWith(".kai") && !get().showCode) return;
     set((s) => ({
       tabs: s.tabs.some((t) => t.id === path) ? s.tabs : [...s.tabs, { id: path, kind: "file", path }],
       activeId: path,

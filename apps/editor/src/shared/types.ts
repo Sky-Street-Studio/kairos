@@ -159,6 +159,9 @@ export interface Settings {
   theme: ThemeConfig;
   recentProjects: string[];
   layout: LayoutPrefs;
+  hiddenCodeProjects: string[];
+  beginnerProjects: string[];
+  dismissedChecklistProjects: string[];
 }
 
 export interface KairosApi {
@@ -174,7 +177,8 @@ export interface KairosApi {
     writeFile(path: string, content: string): Promise<void>;
     importAsset(sourcePath: string | null, folder: string, convertWebp?: boolean): Promise<string | null>;
     renameAsset(path: string, name: string): Promise<void>;
-    createFromTemplate(): Promise<string | null>;
+    pickProjectLocation(): Promise<string | null>;
+    createFromTemplate(template: string, name: string, parent: string): Promise<string | null>;
     pickExportFolder(): Promise<string | null>;
     export(target: ExportTarget, output: string): Promise<string>;
   };

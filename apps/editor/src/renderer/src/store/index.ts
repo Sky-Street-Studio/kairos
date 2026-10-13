@@ -71,6 +71,36 @@ const createUiSlice: SliceCreator<UiSlice> = (set, get, api) => {
       persistLayout();
     },
     theme: DEFAULT_THEME,
+    showCode: true,
+    setShowCode(showCode) {
+      const root = get().project?.root;
+      const { tabs, activeId } = get();
+      const filtered = showCode ? tabs : tabs.filter((tab) => !(tab.kind === "file" && tab.path.endsWith(".kai")));
+      set({
+        showCode,
+        tabs: filtered,
+        activeId: filtered.some((tab) => tab.id === activeId) ? activeId : "graph",
+      });
+      if (root) {
+        void api.settings.get().then(({ hiddenCodeProjects }) => {
+          const next = showCode
+            ? hiddenCodeProjects.filter((path) => path !== root)
+            : [...new Set([...hiddenCodeProjects, root])];
+          return api.settings.update({ hiddenCodeProjects: next });
+        });
+      }
+    },
+    dismissChecklist() {
+      const root = get().project?.root;
+      set({ checklistDismissed: true });
+      if (root) {
+        void api.settings
+          .get()
+          .then(({ dismissedChecklistProjects }) =>
+            api.settings.update({ dismissedChecklistProjects: [...new Set([...dismissedChecklistProjects, root])] }),
+          );
+      }
+    },
     setTheme(theme) {
       set({ theme });
       void api.settings.update({ theme });
@@ -83,6 +113,7 @@ let playNonce = 0;
 const createPreviewSlice: SliceCreator<PreviewSlice> = (set) => ({
   previewVersion: 0,
   playRequest: null,
+  hasPlayed: false,
   debugState: null,
   debugControl: null,
   setDebugState(debugState) {
@@ -93,6 +124,7 @@ const createPreviewSlice: SliceCreator<PreviewSlice> = (set) => ({
   },
   playFromLine(path, line, overrides) {
     set((s) => ({
+      hasPlayed: true,
       playRequest: { path, line, overrides, nonce: ++playNonce, mode: "play" },
       layout: { ...s.layout, preview: true },
     }));

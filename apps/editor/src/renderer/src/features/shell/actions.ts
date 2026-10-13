@@ -19,13 +19,19 @@ export async function openRecent(root: string) {
   await open(root);
 }
 
-export async function newProjectFromTemplate() {
+export function requestNewProject() {
+  window.dispatchEvent(new Event("kairos:new-project"));
+}
+
+export async function createBeginnerProject(template: string, name: string, parent: string): Promise<boolean> {
   try {
-    const root = await window.kairos.project.createFromTemplate();
-    if (!root) return;
+    const root = await window.kairos.project.createFromTemplate(template, name, parent);
+    if (!root) return false;
     await open(root);
     toast.success("Project created", { description: root });
+    return true;
   } catch (e) {
     toast.error("Could not create project", { description: (e as Error).message });
+    return false;
   }
 }

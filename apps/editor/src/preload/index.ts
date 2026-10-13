@@ -26,7 +26,8 @@ const api: KairosApi = {
     importAsset: (sourcePath, folder, convertWebp) =>
       ipcRenderer.invoke("project:asset-import", sourcePath, folder, convertWebp ?? false),
     renameAsset: (path, name) => ipcRenderer.invoke("project:asset-rename", path, name),
-    createFromTemplate: () => ipcRenderer.invoke("project:create"),
+    pickProjectLocation: () => ipcRenderer.invoke("project:pick-location"),
+    createFromTemplate: (template, name, parent) => ipcRenderer.invoke("project:create", template, name, parent),
     pickExportFolder: () => ipcRenderer.invoke("export:pick-folder"),
     export: (target, output) => ipcRenderer.invoke("project:export", target, output),
   },

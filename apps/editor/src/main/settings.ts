@@ -30,6 +30,15 @@ function sanitize(raw: unknown): Settings {
       ? r.recentProjects.filter((p): p is string => typeof p === "string").slice(0, 10)
       : [],
     layout: { ...DEFAULT_LAYOUT, ...(typeof r.layout === "object" ? r.layout : {}) },
+    hiddenCodeProjects: Array.isArray(r.hiddenCodeProjects)
+      ? r.hiddenCodeProjects.filter((p): p is string => typeof p === "string")
+      : [],
+    beginnerProjects: Array.isArray(r.beginnerProjects)
+      ? r.beginnerProjects.filter((p): p is string => typeof p === "string")
+      : [],
+    dismissedChecklistProjects: Array.isArray(r.dismissedChecklistProjects)
+      ? r.dismissedChecklistProjects.filter((p): p is string => typeof p === "string")
+      : [],
   };
 }
 
