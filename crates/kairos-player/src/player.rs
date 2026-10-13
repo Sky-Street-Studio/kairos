@@ -167,6 +167,39 @@ impl Player {
         self.game.start_at(pc);
     }
 
+    pub fn debug_start_at(
+        &mut self,
+        pc: usize,
+        overrides: &std::collections::BTreeMap<String, kairos_vm::Value>,
+    ) -> Result<(), kairos_vm::RuntimeError> {
+        self.in_splashscreen = false;
+        self.game.start_at_with_overrides(pc, overrides)
+    }
+
+    pub fn debug_variables(&self) -> std::collections::BTreeMap<String, kairos_vm::Value> {
+        self.game.debug_variables()
+    }
+
+    pub fn debug_pc(&self) -> usize {
+        self.game.debug_pc()
+    }
+
+    pub fn debug_call_stack(&self) -> &[usize] {
+        self.game.debug_call_stack()
+    }
+
+    pub fn debug_history_len(&self) -> usize {
+        self.game.debug_history_len()
+    }
+
+    pub fn debug_set_variable(&mut self, name: &str, value: kairos_vm::Value) -> Result<(), kairos_vm::RuntimeError> {
+        self.game.debug_set_variable(name, value)
+    }
+
+    pub fn debug_rollback_to(&mut self, position: usize) -> bool {
+        self.game.debug_rollback_to(position)
+    }
+
     /// Opens the audio device. Browsers only allow this after a user gesture.
     pub fn start_audio(&mut self) {
         if self.audio_started {

@@ -64,11 +64,33 @@ export interface UiSlice {
   setTheme(theme: ThemeConfig): void;
 }
 
+export interface DebugLocation {
+  label: string;
+  path: string;
+  line: number;
+}
+
+export interface DebugState extends DebugLocation {
+  variables: Record<string, unknown>;
+  callStack: DebugLocation[];
+  history: number;
+  position: number;
+}
+
+export interface DebugControl {
+  setVariable(name: string, json: string): void;
+  rollbackTo(position: number): void;
+}
+
 export interface PreviewSlice {
   /** Bumped after every save so the preview reloads the project. */
   previewVersion: number;
-  playRequest: Reveal | null;
-  playFromLine(path: string, line: number): void;
+  playRequest: (Reveal & { overrides?: Record<string, unknown> }) | null;
+  debugState: DebugState | null;
+  debugControl: DebugControl | null;
+  setDebugState(state: DebugState | null): void;
+  setDebugControl(control: DebugControl | null): void;
+  playFromLine(path: string, line: number, overrides?: Record<string, unknown>): void;
 }
 
 export type AppState = ProjectSlice & AnalysisSlice & TabsSlice & UiSlice & PreviewSlice;

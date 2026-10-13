@@ -75,6 +75,7 @@ pub struct Vm {
     pub(crate) program: Arc<Program>,
     pub(crate) state: State,
     constants: BTreeMap<String, Value>,
+    debug_overrides: BTreeMap<String, Value>,
     /// Snapshots taken at each interaction, newest last; the top is the current interaction.
     pub(crate) history: Vec<State>,
     /// Set by rollback: the restored state is already the top snapshot, so the next
@@ -88,11 +89,12 @@ pub struct Vm {
 struct Env<'a> {
     store: &'a BTreeMap<String, Value>,
     constants: &'a BTreeMap<String, Value>,
+    debug_overrides: &'a BTreeMap<String, Value>,
 }
 
 impl Scope for Env<'_> {
     fn lookup(&self, name: &str) -> Option<&Value> {
-        self.store.get(name).or_else(|| self.constants.get(name))
+        self.store.get(name).or_else(|| self.debug_overrides.get(name)).or_else(|| self.constants.get(name))
     }
 }
 
@@ -102,6 +104,7 @@ impl Vm {
             program,
             state: State::default(),
             constants: BTreeMap::new(),
+            debug_overrides: BTreeMap::new(),
             history: Vec::new(),
             restored: false,
             last_pc: 0,
@@ -141,6 +144,46 @@ impl Vm {
 
     pub fn program(&self) -> &Program {
         &self.program
+    }
+
+    pub fn variables(&self) -> BTreeMap<String, Value> {
+        self.constants
+            .iter()
+            .chain(&self.debug_overrides)
+            .chain(&self.state.store)
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect()
+    }
+
+    pub fn call_stack(&self) -> &[usize] {
+        &self.state.stack
+    }
+
+    pub fn history_len(&self) -> usize {
+        self.history.len()
+    }
+
+    pub fn set_variable(&mut self, name: &str, value: Value) -> Result<(), RuntimeError> {
+        if self.state.store.contains_key(name) {
+            self.state.store.insert(name.to_string(), value);
+            return Ok(());
+        }
+        if self.constants.contains_key(name) {
+            self.debug_overrides.insert(name.to_string(), value);
+            return Ok(());
+        }
+        Err(self.error(format!("unknown variable `{name}`")))
+    }
+
+    pub fn rollback_to(&mut self, position: usize) -> bool {
+        if position + 1 >= self.history.len() {
+            return false;
+        }
+        self.history.truncate(position + 1);
+        self.state = self.history[position].clone();
+        self.restored = true;
+        self.effects.clear();
+        true
     }
 
     pub fn set_translations(&mut self, translations: BTreeMap<String, String>) {
@@ -344,7 +387,7 @@ impl Vm {
     }
 
     fn env(&self) -> Env<'_> {
-        Env { store: &self.state.store, constants: &self.constants }
+        Env { store: &self.state.store, constants: &self.constants, debug_overrides: &self.debug_overrides }
     }
 
     fn eval(&self, expr: &kairos_script::Expr, pc: usize) -> Result<Value, RuntimeError> {
@@ -398,6 +441,30 @@ label start:
             Event::Say { who: Some("Émilie Kai".into()), color: None, text: "Bonjour Kai".into() }
         );
         assert_eq!(vm.advance().unwrap(), Event::Menu { caption: None, choices: vec!["Continuer Kai".into()] });
+    }
+
+    #[test]
+    fn debugger_accessors_edit_variables_and_restore_history_positions() {
+        let (statements, diagnostics) =
+            kairos_script::parse("define fixed = 1\ndefault count = 0\nlabel start:\n    \"First\"\n    \"Second\"\n");
+        assert!(diagnostics.is_empty());
+        let (program, diagnostics) = crate::compile(&[statements]);
+        assert!(diagnostics.is_empty());
+        let mut vm = Vm::new(Arc::new(program)).unwrap();
+        vm.start("start").unwrap();
+        assert_eq!(vm.variables()["count"], Value::Int(0));
+        assert_eq!(vm.variables()["fixed"], Value::Int(1));
+        vm.set_variable("count", Value::Int(4)).unwrap();
+        vm.set_variable("fixed", Value::Int(2)).unwrap();
+        assert_eq!(vm.variables()["fixed"], Value::Int(2));
+        assert!(vm.set_variable("missing", Value::None).is_err());
+        vm.advance().unwrap();
+        vm.advance().unwrap();
+        assert_eq!(vm.history_len(), 2);
+        assert!(vm.rollback_to(0));
+        assert_eq!(vm.current_line(), 4);
+        assert_eq!(vm.history_len(), 1);
+        assert!(!vm.rollback_to(1));
     }
 
     #[test]
