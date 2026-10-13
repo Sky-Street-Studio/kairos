@@ -7,6 +7,8 @@ mod gpu;
 mod native;
 pub mod player;
 pub mod saves;
+#[cfg(all(not(target_arch = "wasm32"), feature = "steam"))]
+mod steam;
 pub mod theme;
 pub mod view;
 #[cfg(target_arch = "wasm32")]

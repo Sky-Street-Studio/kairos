@@ -176,7 +176,11 @@ function registerIpc(): void {
   ipcMain.handle("edit:set-start", (_e, label: string) => setStartLabel(requireOpenRoot(), label));
   ipcMain.handle("player:status", () => playerStatus());
   ipcMain.handle("export:pick-folder", (e) => chooseExportFolder(e.sender));
-  ipcMain.handle("project:export", (_e, target: "web" | "desktop", output: string) => exportProject(target, output));
+  ipcMain.handle(
+    "project:export",
+    (_e, target: "web" | "desktop" | "windows-x64" | "linux-x64" | "macos", output: string) =>
+      exportProject(target, output),
+  );
 
   ipcMain.handle("terminal:agents", () => agents());
   ipcMain.handle("terminal:spawn", (e, opts: TerminalSpawn) => spawnTerminal(e.sender, opts));

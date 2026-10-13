@@ -6,7 +6,7 @@ import { useApp } from "@/store";
 
 export function ExportDialog({ open, onClose }: { open: boolean; onClose(): void }) {
   const saveAll = useApp((state) => state.saveAll);
-  const [target, setTarget] = useState<"web" | "desktop">("web");
+  const [target, setTarget] = useState<"web" | "windows-x64" | "linux-x64" | "macos">("web");
   const [output, setOutput] = useState<string | null>(null);
   const [result, setResult] = useState<{ path?: string; error?: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -48,13 +48,15 @@ export function ExportDialog({ open, onClose }: { open: boolean; onClose(): void
           id="export-target"
           value={target}
           onChange={(event) => {
-            setTarget(event.target.value as "web" | "desktop");
+            setTarget(event.target.value as "web" | "windows-x64" | "linux-x64" | "macos");
             setResult(null);
           }}
           className="mt-1 h-8 w-full rounded-md border bg-background px-2 text-xs"
         >
           <option value="web">Web</option>
-          <option value="desktop">Desktop for this computer</option>
+          <option value="windows-x64">Windows x64</option>
+          <option value="linux-x64">Linux x64</option>
+          <option value="macos">macOS</option>
         </select>
         <div className="mt-4 flex items-center gap-2">
           <div className="min-w-0 flex-1 truncate rounded-md border bg-background/60 px-2 py-1.5 text-xs text-muted-foreground">

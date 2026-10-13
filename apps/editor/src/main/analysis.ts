@@ -9,7 +9,7 @@ interface Addon {
   analyze(input: AnalyzeInput): Analysis;
   exportGame(
     project: string,
-    target: "web" | "desktop",
+    target: "web" | "desktop" | "windows-x64" | "linux-x64" | "macos",
     output: string,
     playerBinary?: string,
     playerPkg?: string,

@@ -20,10 +20,15 @@ impl SaveStore {
     /// The platform data directory, e.g. `~/Library/Application Support/Kairos/saves/<project>`.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn for_project(name: &str) -> SaveStore {
-        match directories::ProjectDirs::from("", "", "Kairos") {
-            Some(dirs) => SaveStore::Dir(dirs.data_dir().join("saves").join(sanitize(name))),
+        match Self::directory_for_project(name) {
+            Some(dir) => SaveStore::Dir(dir),
             None => SaveStore::Memory { slots: HashMap::new(), language: None, persistent: None },
         }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn directory_for_project(name: &str) -> Option<std::path::PathBuf> {
+        Some(directories::ProjectDirs::from("", "", "Kairos")?.data_dir().join("saves").join(sanitize(name)))
     }
 
     #[cfg(target_arch = "wasm32")]

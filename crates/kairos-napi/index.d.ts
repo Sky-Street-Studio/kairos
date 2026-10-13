@@ -26,7 +26,7 @@ export interface CheckResult {
   diagnostics: Array<FileDiagnostic>
 }
 
-export declare function exportGame(project: string, target: 'web' | 'desktop', output: string, playerBinary?: string | undefined | null, playerPkg?: string | undefined | null): string
+export declare function exportGame(project: string, target: 'web' | 'desktop' | 'windows-x64' | 'linux-x64' | 'macos', output: string, playerBinary?: string | undefined | null, playerPkg?: string | undefined | null): string
 
 export interface FileDiagnostic {
   path: string

@@ -12,7 +12,14 @@ pub fn export_game(
     let target = match target {
         "web" => ExportTarget::Web,
         "desktop" => ExportTarget::Desktop,
-        _ => return Err(format!("unknown export target `{target}`; expected `web` or `desktop`")),
+        "windows-x64" => ExportTarget::WindowsX64,
+        "linux-x64" => ExportTarget::LinuxX64,
+        "macos" => ExportTarget::MacOS,
+        _ => {
+            return Err(format!(
+                "unknown export target `{target}`; expected `web`, `desktop`, `windows-x64`, `linux-x64` or `macos`"
+            ));
+        }
     };
     let player_binary = player_binary.map(Path::new);
     let player_pkg = player_pkg.map(Path::new);
