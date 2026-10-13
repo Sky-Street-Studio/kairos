@@ -49,7 +49,7 @@ export function TitleBar() {
   const layout = useApp((s) => s.layout);
   const togglePanel = useApp((s) => s.togglePanel);
   const setPaletteOpen = useApp((s) => s.setPaletteOpen);
-  const openView = useApp((s) => s.openView);
+  const toggleSettings = useApp((s) => s.toggleSettings);
   const mod = modKey();
 
   return (
@@ -92,7 +92,7 @@ export function TitleBar() {
         >
           <PanelRight />
         </PanelToggle>
-        <PanelToggle on={false} label="Settings" keys={`${mod},`} onClick={() => openView("settings")}>
+        <PanelToggle on={false} label="Settings" keys={`${mod},`} onClick={() => toggleSettings()}>
           <Settings2 />
         </PanelToggle>
       </div>

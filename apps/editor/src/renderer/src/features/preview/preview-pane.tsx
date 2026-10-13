@@ -75,7 +75,7 @@ function MissingPlayer({ status, onRetry }: { status: PlayerStatus; onRetry(): v
   );
 }
 
-export function PreviewPane({ width }: { width: number }) {
+export function PreviewPane() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<WebPlayer | null>(null);
@@ -291,14 +291,9 @@ export function PreviewPane({ width }: { width: number }) {
   };
 
   return (
-    <aside
-      style={{ width }}
-      className="flex shrink-0 flex-col overflow-hidden rounded-lg border bg-panel"
-      aria-label="Preview"
-    >
-      <div className="flex h-8.5 shrink-0 items-center gap-1 border-b bg-background/25 pr-1.5 pl-3">
-        <span className="text-xs font-medium">Preview</span>
-        {running && <span className="ml-1 size-1.5 rounded-full bg-success" aria-label="running" />}
+    <aside className="flex min-h-0 flex-1 flex-col overflow-hidden" aria-label="Preview">
+      <div className="flex h-8 shrink-0 items-center gap-1 border-b px-1.5">
+        {running && <span className="ml-1 size-1.5 rounded-full bg-success" role="status" aria-label="running" />}
         <div className="ml-auto flex items-center gap-0.5">
           <Tooltip content="Restart from the start label">
             <Button
@@ -330,6 +325,8 @@ export function PreviewPane({ width }: { width: number }) {
       <div className="flex min-h-0 flex-1 flex-col p-3">
         <div
           ref={stageRef}
+          role="application"
+          aria-label="Preview stage"
           onDragOver={(e) => {
             if (!isAssetDrag(e)) return;
             e.preventDefault();

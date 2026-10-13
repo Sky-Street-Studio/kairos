@@ -9,7 +9,7 @@ export interface FileBuffer {
   saved: string;
 }
 
-export type ViewKind = "graph" | "characters" | "settings" | "assets";
+export type ViewKind = "graph" | "characters" | "assets";
 
 export type Tab =
   | { id: string; kind: "file"; path: string }
@@ -81,6 +81,8 @@ export interface TabsSlice {
   openView(kind: ViewKind): void;
   showAsset(path: string): void;
   closeTab(id: string): void;
+  closeOtherTabs(id: string): void;
+  closeTabsToRight(id: string): void;
   setActive(id: string): void;
   setCursor(path: string, line: number): void;
   goToLabel(name: string): boolean;
@@ -91,7 +93,9 @@ export type PanelKey = "sidebar" | "preview" | "bottom";
 export interface UiSlice {
   layout: LayoutPrefs;
   paletteOpen: boolean;
+  settingsOpen: boolean;
   setPaletteOpen(open: boolean): void;
+  toggleSettings(open?: boolean): void;
   togglePanel(panel: PanelKey, open?: boolean): void;
   resizePanel(key: "sidebarWidth" | "previewWidth" | "bottomHeight", size: number): void;
   theme: ThemeConfig;

@@ -19,6 +19,8 @@ test("a beginner builds a branching scene without the code view", async () => {
   await page.setViewportSize({ width: 1480, height: 920 });
   const mod = process.platform === "darwin" ? "Meta" : "Control";
 
+  await expect(page.getByRole("button", { name: "Run" })).toBeVisible();
+  await expect(page.getByTestId("panel-files")).toBeVisible();
   await page.getByRole("tab", { name: /Story flow/ }).click();
   await page.getByRole("button", { name: "Add scene" }).click();
   await page.getByLabel("Scene name").fill("Beach Day");

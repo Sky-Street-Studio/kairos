@@ -1,6 +1,6 @@
 import { access, cp, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import { _electron as electron, expect, test } from "@playwright/test";
 
@@ -91,9 +91,41 @@ test("opens a project, shows the graph, reports diagnostics, stages assets and r
   await app.close();
 });
 
+test("copies an absolute path from the Files tree context menu", async () => {
+  const { app, page, project } = await launch();
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.getByTestId("panel-files").click();
+  const filter = page.getByLabel("Find files");
+  await filter.fill("label start");
+  await expect(page.getByText(/No files match/)).toBeVisible();
+  await filter.fill("script.kai");
+  const row = page.locator('[data-testid="file-tree-row"]').filter({ hasText: "script.kai" });
+  await row.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Copy path" }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (navigator as Navigator & { clipboard: { readText(): Promise<string> } }).clipboard.readText(),
+      ),
+    )
+    .toBe(join(project, "script/script.kai"));
+  const revealError = await page.evaluate(async (outsidePath) => {
+    const api = (globalThis as unknown as { kairos: { shell: { reveal(path: string): Promise<void> } } }).kairos;
+    try {
+      await api.shell.reveal(outsidePath);
+      return "Path was accepted";
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  }, dirname(project));
+  expect(revealError).toContain("outside the project");
+  await app.close();
+});
+
 test("previews images, audio and the manifest, and navigates settings", async () => {
   const { app, page } = await launch();
   await expect(page.getByText("Hello Kairos", { exact: true })).toBeVisible();
+  await page.getByTestId("panel-files").click();
 
   await page.getByRole("button", { name: "bg room.png", exact: true }).click();
   await expect(page.getByRole("tab", { name: /bg room\.png/ })).toHaveAttribute("aria-selected", "true");
@@ -123,7 +155,7 @@ test("previews images, audio and the manifest, and navigates settings", async ()
   await page.getByRole("tab", { name: /script\.kai/ }).click();
   await expect(page.locator("[data-testid=monaco-host] .view-lines")).toContainText("label start");
 
-  await page.getByRole("button", { name: "Settings" }).click();
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+," : "Control+,");
   await expect(page.getByRole("heading", { name: "Appearance", level: 1 })).toBeVisible();
   if (shots) await page.screenshot({ path: join(shots, "settings-appearance.png") });
   await page.getByRole("navigation", { name: "Settings" }).getByRole("button", { name: "Layout" }).click();
@@ -133,5 +165,7 @@ test("previews images, audio and the manifest, and navigates settings", async ()
   await page.getByLabel("Search settings").fill("recent");
   await expect(page.getByRole("heading", { name: "Projects", level: 1 })).toBeVisible();
   if (shots) await page.screenshot({ path: join(shots, "settings.png") });
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("panel-files")).toBeVisible();
   await app.close();
 });

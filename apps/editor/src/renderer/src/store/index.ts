@@ -59,7 +59,9 @@ const createUiSlice: SliceCreator<UiSlice> = (set, get, api) => {
   return {
     layout: DEFAULT_LAYOUT,
     paletteOpen: false,
+    settingsOpen: false,
     setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
+    toggleSettings: (settingsOpen) => set((s) => ({ settingsOpen: settingsOpen ?? !s.settingsOpen })),
     togglePanel(panel, open) {
       set((s) => ({ layout: { ...s.layout, [panel]: open ?? !s.layout[panel] } }));
       persistLayout();

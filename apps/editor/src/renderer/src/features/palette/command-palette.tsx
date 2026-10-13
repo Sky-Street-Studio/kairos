@@ -184,7 +184,7 @@ export function CommandPalette() {
             value="settings theme editor"
             icon={<Settings2 />}
             hint={<Kbd>{mod},</Kbd>}
-            onSelect={() => s.openView("settings")}
+            onSelect={() => s.toggleSettings()}
           >
             Open settings
           </Item>

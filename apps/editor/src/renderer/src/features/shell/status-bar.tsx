@@ -11,11 +11,11 @@ export function StatusBar() {
   const unsaved = useApp((s) => Object.values(s.buffers).filter(isDirty).length);
   const openFile = useApp((s) => s.openFile);
 
-  if (!project) return <footer className="h-6 shrink-0" />;
+  if (!project) return null;
   const first = diagnostics[0];
 
   return (
-    <footer className="flex h-6 shrink-0 items-center gap-3 px-3 text-2xs text-muted-foreground tabular">
+    <footer className="flex h-5 shrink-0 items-center gap-3 border-t bg-sidebar/70 px-2.5 text-2xs text-muted-foreground tabular">
       <button
         type="button"
         disabled={!first}

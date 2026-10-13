@@ -1,4 +1,4 @@
-import * as ContextMenuPrimitive from "@radix-ui/react-context-menu";
+import { ContextMenuPrimitive } from "@/components/ui/context-menu";
 import type { EdgeKind, GraphEdge } from "@shared/types";
 import {
   Background,
