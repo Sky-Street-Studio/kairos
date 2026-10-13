@@ -25,7 +25,7 @@ const PAGES: Page[] = [
     group: "Interface",
     title: "Appearance",
     description: "Theme, light or dark mode, and the background and accent colors.",
-    keywords: "theme mode light dark system preset color gradient accent background tint import export json",
+    keywords: "theme mode light dark system preset color accent background tint import export json",
     icon: Palette,
     Component: AppearancePage,
   },
