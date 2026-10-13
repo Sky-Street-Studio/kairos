@@ -1,8 +1,7 @@
 import type { ThemeConfig } from "@kairos/theme";
-import type { StoreApi } from "zustand";
-
 import type { EditOp, EditorLayout } from "@shared/edit-types";
 import type { Analysis, KairosApi, LayoutPrefs, ProjectSnapshot } from "@shared/types";
+import type { StoreApi } from "zustand";
 
 export interface FileBuffer {
   path: string;
@@ -55,6 +54,7 @@ export interface EditSlice {
   edit(ops: EditOp[]): Promise<{ path: string; line: number } | null>;
   loadGraphLayout(): Promise<void>;
   setNodePositions(positions: Record<string, { x: number; y: number }>): void;
+  updateNodePositions(positions: Record<string, { x: number; y: number } | null>): void;
   resetGraphLayout(): void;
 }
 

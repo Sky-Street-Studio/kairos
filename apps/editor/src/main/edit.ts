@@ -28,8 +28,17 @@ export function labelFromName(name: string, taken: string[]): string {
 
 export async function readLayout(root: string): Promise<EditorLayout> {
   const raw = await readFile(join(root, ".kairos/editor.json"), "utf8").catch(() => null);
-  const parsed = raw ? (JSON.parse(raw) as Partial<EditorLayout>) : {};
-  return { graph: parsed.graph ?? {} };
+  if (!raw) return { graph: {} };
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return { graph: {} };
+    const graph = (parsed as { graph?: unknown }).graph;
+    return typeof graph === "object" && graph !== null && !Array.isArray(graph)
+      ? ({ graph } as EditorLayout)
+      : { graph: {} };
+  } catch {
+    return { graph: {} };
+  }
 }
 
 export async function writeLayout(root: string, layout: EditorLayout): Promise<void> {
@@ -42,8 +51,17 @@ export async function setStartLabel(root: string, label: string): Promise<void> 
   const path = join(root, "kairos.toml");
   const text = await readFile(path, "utf8");
   const line = `start = ${JSON.stringify(label)}`;
-  const next = /^start\s*=.*$/m.test(text)
-    ? text.replace(/^start\s*=.*$/m, line)
-    : text.replace(/^(name\s*=.*\n)/m, `$1${line}\n`);
+  const lineEnding = text.includes("\r\n") ? "\r\n" : "\n";
+  const startLine = /^start\s*=.*(?=\r?$)/m;
+  const nameLine = /^(name\s*=.*?)(\r?\n|$)/m;
+  const next = startLine.test(text)
+    ? text.replace(startLine, line)
+    : nameLine.test(text)
+      ? text.replace(
+          nameLine,
+          (_, name, ending: string) => `${name}${ending || lineEnding}${line}${ending || lineEnding}`,
+        )
+      : `${line}${lineEnding}${text}`;
+  if (next === text) throw new Error("The start scene is already set to this label.");
   await writeFile(path, next, "utf8");
 }

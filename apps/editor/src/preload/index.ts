@@ -1,6 +1,12 @@
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-
 import type { KairosApi } from "@shared/types";
+import { contextBridge, type IpcRendererEvent, ipcRenderer } from "electron";
+
+function invokeEdit<T>(channel: string, ...args: unknown[]): Promise<T> {
+  return ipcRenderer.invoke(channel, ...args).catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, ""));
+  });
+}
 
 function subscribe<A extends unknown[]>(channel: string, listener: (...args: A) => void): () => void {
   const wrapped = (_e: IpcRendererEvent, ...args: unknown[]) => listener(...(args as A));
@@ -27,16 +33,13 @@ const api: KairosApi = {
     analyze: (input) => ipcRenderer.invoke("analysis:analyze", input),
   },
   edit: {
-    blocks: (source, label) => ipcRenderer.invoke("edit:blocks", source, label),
-    apply: (files, ops) =>
-      ipcRenderer.invoke("edit:apply", files, ops).catch((e: Error) => {
-        throw new Error(e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, ""));
-      }),
-    references: (files, label) => ipcRenderer.invoke("edit:references", files, label),
-    labelFromName: (name, taken) => ipcRenderer.invoke("edit:label-from-name", name, taken),
-    readLayout: () => ipcRenderer.invoke("edit:read-layout"),
-    writeLayout: (layout) => ipcRenderer.invoke("edit:write-layout", layout),
-    setStart: (label) => ipcRenderer.invoke("edit:set-start", label),
+    blocks: (source, label) => invokeEdit("edit:blocks", source, label),
+    apply: (files, ops) => invokeEdit("edit:apply", files, ops),
+    references: (files, label) => invokeEdit("edit:references", files, label),
+    labelFromName: (name, taken) => invokeEdit("edit:label-from-name", name, taken),
+    readLayout: () => invokeEdit("edit:read-layout"),
+    writeLayout: (layout) => invokeEdit("edit:write-layout", layout),
+    setStart: (label) => invokeEdit("edit:set-start", label),
   },
   player: {
     status: () => ipcRenderer.invoke("player:status"),

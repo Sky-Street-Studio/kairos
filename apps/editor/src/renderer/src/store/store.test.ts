@@ -1,7 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
 import type { EditOp } from "@shared/edit-types";
 import type { Analysis, AnalyzeInput, KairosApi, ProjectSnapshot, SourceFile } from "@shared/types";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ANALYZE_DELAY_MS, createAppStore, isDirty } from "./index";
 
@@ -25,8 +24,21 @@ function fakeApi() {
     scripts: [...disk].map(([path, source]) => ({ path, source })),
     translations: [],
     tree: [],
-    assets: [{ path: "assets/images/bg room.png", kind: "image", name: "bg room", category: "background" }],
-    spriteLayers: { e: { order: ["face"], defaults: { face: "happy" }, groups: { face: ["happy"] } } },
+    assets: [
+      {
+        path: "assets/images/bg room.png",
+        kind: "image",
+        name: "bg room",
+        category: "background",
+      },
+    ],
+    spriteLayers: {
+      e: {
+        order: ["face"],
+        defaults: { face: "happy" },
+        groups: { face: ["happy"] },
+      },
+    },
   });
   const api = {
     platform: "darwin",
@@ -71,7 +83,12 @@ function fakeApi() {
         const file = files.find((f) => f.path === "script/a.kai")!;
         if (op.op === "connect")
           return {
-            files: [{ path: file.path, source: insertJump(file.source, op.from, op.to) }],
+            files: [
+              {
+                path: file.path,
+                source: insertJump(file.source, op.from, op.to),
+              },
+            ],
             focus: { path: file.path, line: 3 },
           };
         return {
@@ -130,7 +147,9 @@ describe("app store", () => {
   it("analyzes scripts against the project's assets and sprite layers", () => {
     const [input] = env.analyzed;
     expect(input?.assets).toEqual(["assets/images/bg room.png"]);
-    expect(input?.spriteLayers).toEqual({ e: { order: ["face"], defaults: { face: "happy" } } });
+    expect(input?.spriteLayers).toEqual({
+      e: { order: ["face"], defaults: { face: "happy" } },
+    });
   });
 
   it("saves to disk, clears dirty and bumps the preview", async () => {
@@ -188,7 +207,21 @@ describe("app store", () => {
     expect(store.getState().graphLayout.graph.start).toEqual({ x: 5, y: 6 });
     store.getState().setNodePositions({ start: { x: 3, y: 4 }, end: { x: 1, y: 2 } });
     expect(env.api.edit.writeLayout).toHaveBeenCalledTimes(1);
-    expect(env.api.edit.writeLayout).toHaveBeenCalledWith({ graph: { start: { x: 3, y: 4 }, end: { x: 1, y: 2 } } });
+    expect(env.api.edit.writeLayout).toHaveBeenCalledWith({
+      graph: { start: { x: 3, y: 4 }, end: { x: 1, y: 2 } },
+    });
+  });
+
+  it("moves, copies and drops saved graph positions", () => {
+    store.getState().updateNodePositions({ start: { x: 5, y: 6 }, copy: { x: 5, y: 6 } });
+    store.getState().updateNodePositions({ start: null, renamed: { x: 5, y: 6 } });
+    expect(store.getState().graphLayout.graph).toEqual({
+      copy: { x: 5, y: 6 },
+      renamed: { x: 5, y: 6 },
+    });
+    expect(env.api.edit.writeLayout).toHaveBeenLastCalledWith({
+      graph: { copy: { x: 5, y: 6 }, renamed: { x: 5, y: 6 } },
+    });
   });
 
   it("resets history when a project opens", async () => {
@@ -200,7 +233,10 @@ describe("app store", () => {
   it("opens, reveals and closes tabs", () => {
     const s = store.getState();
     s.openFile("script/b.kai", 3);
-    expect(store.getState().reveal).toMatchObject({ path: "script/b.kai", line: 3 });
+    expect(store.getState().reveal).toMatchObject({
+      path: "script/b.kai",
+      line: 3,
+    });
     s.openView("characters");
     expect(store.getState().activeId).toBe("characters");
     s.closeTab("characters");
@@ -208,7 +244,10 @@ describe("app store", () => {
     s.closeTab("graph");
     expect(store.getState().tabs.map((t) => t.id)).toEqual(["script/a.kai", "script/b.kai"]);
     expect(s.goToLabel("end")).toBe(true);
-    expect(store.getState().reveal).toMatchObject({ path: "script/a.kai", line: 4 });
+    expect(store.getState().reveal).toMatchObject({
+      path: "script/a.kai",
+      line: 4,
+    });
     expect(s.goToLabel("missing")).toBe(false);
   });
 
@@ -217,13 +256,19 @@ describe("app store", () => {
     s.setCursor("script/a.kai", 3);
     expect(s.insertAtCursor("scene bg room")).toBe(true);
     expect(store.getState().buffers["script/a.kai"]!.source.split("\n")[3]).toBe("    scene bg room");
-    expect(store.getState().reveal).toMatchObject({ path: "script/a.kai", line: 4 });
+    expect(store.getState().reveal).toMatchObject({
+      path: "script/a.kai",
+      line: 4,
+    });
   });
 
   it("inserts at the end of a file with no cursor, keeping the final newline", () => {
     expect(store.getState().insertAtCursor("scene bg room")).toBe(true);
     expect(store.getState().buffers["script/a.kai"]!.source).toBe(`${SCRIPT}    scene bg room\n`);
-    expect(store.getState().reveal).toMatchObject({ path: "script/a.kai", line: 6 });
+    expect(store.getState().reveal).toMatchObject({
+      path: "script/a.kai",
+      line: 6,
+    });
   });
 
   it("inserts on a blank line using the indentation above", () => {
@@ -232,7 +277,10 @@ describe("app store", () => {
     s.openFile("script/b.kai");
     expect(s.insertAtCursor("scene bg x", 3)).toBe(true);
     expect(store.getState().buffers["script/b.kai"]!.source).toBe("label a:\n    pass\n    scene bg x\n\nlabel b:\n");
-    expect(store.getState().reveal).toMatchObject({ path: "script/b.kai", line: 3 });
+    expect(store.getState().reveal).toMatchObject({
+      path: "script/b.kai",
+      line: 3,
+    });
   });
 
   it("keeps CRLF line endings when inserting", () => {
@@ -275,10 +323,15 @@ describe("app store", () => {
     const s = store.getState();
     s.togglePanel("bottom");
     expect(store.getState().layout.bottom).toBe(true);
-    expect(env.api.settings.update).toHaveBeenLastCalledWith({ layout: store.getState().layout });
+    expect(env.api.settings.update).toHaveBeenLastCalledWith({
+      layout: store.getState().layout,
+    });
     s.togglePanel("preview", false);
     s.playFromLine("script/a.kai", 3);
     expect(store.getState().layout.preview).toBe(true);
-    expect(store.getState().playRequest).toMatchObject({ path: "script/a.kai", line: 3 });
+    expect(store.getState().playRequest).toMatchObject({
+      path: "script/a.kai",
+      line: 3,
+    });
   });
 });

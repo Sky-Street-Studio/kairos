@@ -46,6 +46,17 @@ export const createEditSlice: SliceCreator<EditSlice> = (set, get, api) => ({
     void api.edit.writeLayout(graphLayout);
   },
 
+  updateNodePositions(positions) {
+    const graph = { ...get().graphLayout.graph };
+    for (const [label, position] of Object.entries(positions)) {
+      if (position) graph[label] = position;
+      else delete graph[label];
+    }
+    const graphLayout = { graph };
+    set({ graphLayout });
+    void api.edit.writeLayout(graphLayout);
+  },
+
   resetGraphLayout() {
     set({ graphLayout: EMPTY_LAYOUT });
     void api.edit.writeLayout(EMPTY_LAYOUT);
