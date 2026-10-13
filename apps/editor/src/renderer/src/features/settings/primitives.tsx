@@ -14,13 +14,13 @@ export function SettingsCard({
   children: ReactNode;
 }) {
   return (
-    <section className="rounded-xl border bg-card/60 px-6 pt-5 pb-3">
-      <header className="flex items-start justify-between gap-4 pb-2">
+    <section className="@container rounded-xl border bg-card/60 px-5 pt-5 pb-3 @2xl:px-6">
+      <header className="flex flex-col items-start justify-between gap-3 pb-2 @sm:flex-row @sm:gap-4">
         <div>
           <h2 className="text-sm font-semibold">{title}</h2>
           {description && <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>}
         </div>
-        {actions && <div className="flex shrink-0 gap-1.5">{actions}</div>}
+        {actions && <div className="flex shrink-0 flex-wrap gap-1.5">{actions}</div>}
       </header>
       {children}
     </section>
@@ -39,7 +39,14 @@ export function SettingRow({
   children: ReactNode;
 }) {
   return (
-    <div className={cn("py-3.5", stacked ? "space-y-3" : "flex items-center justify-between gap-8")}>
+    <div
+      className={cn(
+        "py-3.5",
+        stacked
+          ? "space-y-3"
+          : "flex flex-col items-start gap-3 @sm:flex-row @sm:items-center @sm:justify-between @sm:gap-8",
+      )}
+    >
       <div className="min-w-0">
         <div className="text-[13px] font-medium">{title}</div>
         {description && (

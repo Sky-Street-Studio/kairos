@@ -165,6 +165,13 @@ describe("app store", () => {
     expect(store.getState().buffers["script/a.kai"]!.source.split("\n")[3]).toBe("    play music theme");
   });
 
+  it("opens the asset manager at a given asset", () => {
+    const s = store.getState();
+    s.showAsset("assets/images/bg room.png");
+    expect(store.getState().activeId).toBe("assets");
+    expect(store.getState().assetReveal).toBe("assets/images/bg room.png");
+  });
+
   it("toggles panels, persists layout and opens the preview on play", () => {
     const s = store.getState();
     s.togglePanel("bottom");

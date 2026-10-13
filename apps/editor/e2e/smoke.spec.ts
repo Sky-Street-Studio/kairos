@@ -101,6 +101,12 @@ test("previews images, audio and the manifest, and navigates settings", async ()
   await expect(image).toBeVisible();
   await expect.poll(() => image.evaluate((img) => (img as { naturalWidth: number }).naturalWidth)).toBeGreaterThan(0);
   if (shots) await page.screenshot({ path: join(shots, "image-preview.png") });
+  await page.getByRole("button", { name: "Show in Assets" }).click();
+  await expect(page.getByTestId("managed-asset").filter({ hasText: "bg room" })).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  if (shots) await page.screenshot({ path: join(shots, "show-in-assets.png") });
 
   await page.getByRole("button", { name: "theme.ogg", exact: true }).click();
   const audio = page.getByTestId("audio-preview");
@@ -124,6 +130,5 @@ test("previews images, audio and the manifest, and navigates settings", async ()
   await page.getByLabel("Search settings").fill("recent");
   await expect(page.getByRole("heading", { name: "Projects", level: 1 })).toBeVisible();
   if (shots) await page.screenshot({ path: join(shots, "settings.png") });
-
   await app.close();
 });

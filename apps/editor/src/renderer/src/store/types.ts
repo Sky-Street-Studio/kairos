@@ -43,9 +43,12 @@ export interface TabsSlice {
   tabs: Tab[];
   activeId: string | null;
   reveal: Reveal | null;
+  /** An asset the asset manager should scroll to; it clears this once shown. */
+  assetReveal: string | null;
   cursor: { path: string; line: number } | null;
   openFile(path: string, line?: number): void;
   openView(kind: ViewKind): void;
+  showAsset(path: string): void;
   closeTab(id: string): void;
   setActive(id: string): void;
   setCursor(path: string, line: number): void;
