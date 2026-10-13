@@ -116,6 +116,9 @@ test("previews images, audio and the manifest, and navigates settings", async ()
   await page.getByRole("button", { name: "kairos.toml", exact: true }).click();
   await expect(page.getByTestId("text-preview")).toContainText('name = "Hello Kairos"');
   if (shots) await page.screenshot({ path: join(shots, "text-preview.png") });
+  await page.getByRole("button", { name: "audio.toml", exact: true }).click();
+  await expect(page.getByTestId("text-preview")).toContainText("loop_start");
+  if (shots) await page.screenshot({ path: join(shots, "audio-toml.png") });
 
   await page.getByRole("tab", { name: /script\.kai/ }).click();
   await expect(page.locator("[data-testid=monaco-host] .view-lines")).toContainText("label start");

@@ -3,11 +3,14 @@ import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { useResolvedAppearance } from "@/hooks/use-theme";
-import { basename } from "@/lib/utils";
+import { basename, cn } from "@/lib/utils";
 import { useApp } from "@/store";
-import { assetUrl, fileKind, SNAPSHOT_TEXT_FIELDS } from "@shared/assets";
+import { assetUrl, fileKind } from "@shared/assets";
 
-import { defineTheme, monaco } from "../editor/monaco";
+import { defineTheme, monaco, registerLanguages } from "../editor/monaco";
+import { TOML_LANGUAGE } from "../editor/toml-language";
+
+registerLanguages();
 
 function Footer({ path, detail }: { path: string; detail?: string }) {
   const showAsset = useApp((s) => s.showAsset);
@@ -67,16 +70,19 @@ function AudioPreview({ path }: { path: string }) {
   );
 }
 
+const TEXT_LANGUAGE: Record<string, string> = { toml: TOML_LANGUAGE, json: "json", md: "markdown" };
+
 function TextPreview({ path }: { path: string }) {
   const host = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
-  const source = useApp((s) => s.project?.[SNAPSHOT_TEXT_FIELDS[path as keyof typeof SNAPSHOT_TEXT_FIELDS]] ?? "");
+  const [error, setError] = useState<string | null>(null);
+  const project = useApp((s) => s.project);
   const theme = useApp((s) => s.theme);
   const appearance = useResolvedAppearance();
-  const initialSource = useRef(source);
 
   useEffect(() => {
-    const model = monaco.editor.createModel(initialSource.current, "ini");
+    const ext = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
+    const model = monaco.editor.createModel("", TEXT_LANGUAGE[ext] ?? "plaintext");
     const editor = monaco.editor.create(host.current!, {
       model,
       readOnly: true,
@@ -100,12 +106,24 @@ function TextPreview({ path }: { path: string }) {
       model.dispose();
       editorRef.current = null;
     };
-  }, []);
+  }, [path]);
 
   useEffect(() => {
-    const model = editorRef.current?.getModel();
-    if (model && model.getValue() !== source) model.setValue(source);
-  }, [source]);
+    if (!project) return;
+    let current = true;
+    window.kairos.project.readText(path).then(
+      (source) => {
+        if (!current) return;
+        setError(null);
+        editorRef.current?.getModel()?.setValue(source);
+      },
+      (cause: unknown) =>
+        current && setError(String(cause).replace(/^Error: (Error invoking remote method '[^']+': )?(Error: )?/, "")),
+    );
+    return () => {
+      current = false;
+    };
+  }, [path, project]);
 
   useEffect(() => {
     monaco.editor.setTheme(defineTheme(theme, appearance));
@@ -118,7 +136,12 @@ function TextPreview({ path }: { path: string }) {
         <span className="ml-auto rounded-sm border px-1.5 py-0.5 text-2xs">Read-only</span>
       </header>
       <div className="relative min-h-0 flex-1">
-        <div ref={host} className="absolute inset-0" data-testid="text-preview" />
+        <div ref={host} className={cn("absolute inset-0", error && "invisible")} data-testid="text-preview" />
+        {error && (
+          <p role="alert" className="absolute inset-0 grid place-items-center p-6 text-xs text-muted-foreground">
+            {error}
+          </p>
+        )}
       </div>
     </div>
   );
@@ -128,5 +151,5 @@ export default function FilePreview({ path }: { path: string }) {
   const kind = fileKind(path);
   if (kind === "image") return <ImagePreview path={path} />;
   if (kind === "audio") return <AudioPreview path={path} />;
-  return <TextPreview key={path} path={path} />;
+  return <TextPreview path={path} />;
 }

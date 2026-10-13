@@ -5,7 +5,7 @@ import { join } from "node:path";
 import sharp from "sharp";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { importProjectAsset, loadProject, renameProjectAsset } from "./project";
+import { importProjectAsset, loadProject, readProjectText, renameProjectAsset } from "./project";
 
 let root: string | undefined;
 let source: string | undefined;
@@ -127,5 +127,19 @@ describe("loadProject translations", () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("project text", () => {
+  it("reads text inside the project and refuses paths outside it", async () => {
+    await project();
+    expect(await readProjectText("kairos.toml")).toContain('name = "Test"');
+    await expect(readProjectText("../outside.toml")).rejects.toThrow("outside the project");
+  });
+
+  it("refuses files too large to preview", async () => {
+    const projectRoot = await project();
+    await writeFile(join(projectRoot, "assets/big.txt"), "x".repeat(1024 * 1024 + 1));
+    await expect(readProjectText("assets/big.txt")).rejects.toThrow("too large");
   });
 });
