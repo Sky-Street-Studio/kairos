@@ -9,9 +9,9 @@ The web player exposes a read-mostly debug surface to the editor. All values cro
 | Method | Returns / effect |
 | --- | --- |
 | `debugState()` | `{ "label": string, "path": string, "line": number, "variables": { name: value }, "callStack": [{ "label": string, "path": string, "line": number }], "history": number, "position": number }` |
-| `setVariable(name, json)` | Sets a `default`/`define`d variable or a `$` variable already in the store. Unknown names are an error. Takes effect from the next statement. |
+| `setVariable(name, json)` | Sets a `default`/`define`d variable or a `$` variable already in the store. Unknown names are an error. Takes effect from the next statement. A `define` override is a debug-session setting: it is never saved and survives rollback until the preview reloads. |
 | `rollbackTo(position)` | Rolls back to an earlier history position (`0..history`). Uses the existing rollback; forward moves are not supported. |
-| `playFromLine(path, line, overrides)` | Existing call gains an optional overrides JSON object applied before the first statement runs. |
+| `playFromLine(path, line, overrides)` | Existing call gains an optional overrides JSON object applied before the first statement runs. Unlike `setVariable`, overrides may create `$` variables the fresh VM has not seen yet. |
 
 The player calls `onDebug` (a JS callback passed at load) after every statement that changes the stage, variables or position. It is called at most once per frame.
 

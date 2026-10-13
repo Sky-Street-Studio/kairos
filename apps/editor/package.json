@@ -8,7 +8,7 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "package": "cargo build --release -p kairos-cli && electron-vite build && electron-builder --mac dir",
+    "package": "cargo build --release -p kairos-cli && bash ../../scripts/build-wasm.sh && bun run --cwd ../../crates/kairos-napi build && electron-vite build && electron-builder --mac dir",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "test:e2e": "electron-vite build && playwright test"

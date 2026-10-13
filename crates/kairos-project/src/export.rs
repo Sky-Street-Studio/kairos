@@ -18,6 +18,8 @@ pub enum ExportError {
     Io(#[from] std::io::Error),
     #[error("{0}")]
     Player(String),
+    #[error("{0}")]
+    Output(String),
     #[error("failed to serialize game.json: {0}")]
     Json(#[from] serde_json::Error),
 }
@@ -40,6 +42,7 @@ pub fn export(
         return Err(ExportError::Check(errors));
     }
 
+    reject_overlapping_output(root, output)?;
     match target {
         ExportTarget::Web => export_web(root, output, &project, player_pkg),
         ExportTarget::Desktop => export_desktop(root, output, &project, player_binary),
@@ -153,8 +156,38 @@ fn export_desktop(
     }
 }
 
+const PROJECT_ENTRIES: [&str; 5] = ["kairos.toml", "script", "assets", "ui", "tl"];
+
+/// Exporting into the project root or a copied folder would overwrite sources or copy the export
+/// into itself forever.
+fn reject_overlapping_output(root: &Path, output: &Path) -> Result<(), ExportError> {
+    let root = root.canonicalize()?;
+    let output = resolve_existing_prefix(output)?;
+    if output == root || PROJECT_ENTRIES.iter().any(|entry| output.starts_with(root.join(entry))) {
+        return Err(ExportError::Output(format!(
+            "choose an output folder outside the project root and its {} folders",
+            PROJECT_ENTRIES[1..].join(", ")
+        )));
+    }
+    Ok(())
+}
+
+fn resolve_existing_prefix(path: &Path) -> Result<PathBuf, std::io::Error> {
+    let path = std::path::absolute(path)?;
+    let mut existing = path.as_path();
+    let mut rest = Vec::new();
+    while !existing.exists() {
+        let Some(parent) = existing.parent() else { break };
+        rest.push(existing.file_name().unwrap_or_default().to_owned());
+        existing = parent;
+    }
+    let mut resolved = existing.canonicalize()?;
+    resolved.extend(rest.iter().rev());
+    Ok(resolved)
+}
+
 fn copy_project_files(root: &Path, destination: &Path) -> Result<(), std::io::Error> {
-    for name in ["kairos.toml", "script", "assets", "ui", "tl"] {
+    for name in PROJECT_ENTRIES {
         let source = root.join(name);
         if !source.exists() {
             continue;
@@ -306,6 +339,13 @@ mod tests {
         assert!(output.join("kairos_player.js").is_file());
         assert!(std::fs::read_to_string(output.join("index.html")).unwrap().contains("<title>test</title>"));
         assert_eq!(std::fs::read_to_string(output.join("script/start.kai")).unwrap(), "label start:\n    return\n");
+
+        for inside in [root.clone(), root.join("assets/export"), root.join("script")] {
+            let error = export(&root, &inside, ExportTarget::Web, None, Some(&pkg)).unwrap_err();
+            assert!(matches!(error, ExportError::Output(_)), "{inside:?} should be rejected");
+        }
+        assert!(!root.join("assets/export").exists());
+        export(&root, &root.join("build"), ExportTarget::Web, None, Some(&pkg)).unwrap();
 
         std::fs::write(root.join("script/start.kai"), "label start:\n    jump missing\n").unwrap();
         let error = export(&root, &output, ExportTarget::Web, None, Some(&pkg)).unwrap_err();

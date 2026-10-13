@@ -142,7 +142,7 @@ impl Game {
             Ok(mut vm) => {
                 vm.set_translations(self.translations.get(&self.language).cloned().unwrap_or_default());
                 for (name, value) in overrides {
-                    vm.set_variable(name, value.clone())?;
+                    vm.seed_variable(name, value.clone());
                 }
                 self.vm = vm;
             }

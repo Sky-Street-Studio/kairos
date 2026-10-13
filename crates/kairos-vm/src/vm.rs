@@ -175,6 +175,16 @@ impl Vm {
         Err(self.error(format!("unknown variable `{name}`")))
     }
 
+    /// Like [`Vm::set_variable`], but also creates store entries, because play-from-here starts a
+    /// fresh VM where variables first assigned with `$` do not exist yet.
+    pub fn seed_variable(&mut self, name: &str, value: Value) {
+        if self.constants.contains_key(name) && !self.state.store.contains_key(name) {
+            self.debug_overrides.insert(name.to_string(), value);
+        } else {
+            self.state.store.insert(name.to_string(), value);
+        }
+    }
+
     pub fn rollback_to(&mut self, position: usize) -> bool {
         if position + 1 >= self.history.len() {
             return false;
@@ -465,6 +475,18 @@ label start:
         assert_eq!(vm.current_line(), 4);
         assert_eq!(vm.history_len(), 1);
         assert!(!vm.rollback_to(1));
+    }
+
+    #[test]
+    fn seeding_creates_assignment_variables_that_set_variable_rejects() {
+        let (statements, _) = kairos_script::parse("define fixed = 1\nlabel start:\n    \"[visited]\"\n");
+        let (program, _) = crate::compile(&[statements]);
+        let mut vm = Vm::new(Arc::new(program)).unwrap();
+        assert!(vm.set_variable("visited", Value::Bool(true)).is_err());
+        vm.seed_variable("visited", Value::Bool(true));
+        vm.seed_variable("fixed", Value::Int(2));
+        assert_eq!(vm.variables()["visited"], Value::Bool(true));
+        assert_eq!(vm.variables()["fixed"], Value::Int(2));
     }
 
     #[test]
