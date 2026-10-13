@@ -52,6 +52,15 @@ pub struct Manifest {
     pub window: Window,
     #[serde(default)]
     pub audio: AudioSettings,
+    #[serde(default)]
+    pub steam: Option<SteamConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SteamConfig {
+    pub app_id: u32,
+    #[serde(default)]
+    pub achievements: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]

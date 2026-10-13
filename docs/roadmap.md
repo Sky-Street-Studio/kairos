@@ -38,11 +38,9 @@ Templates, a guided first project and code hidden until wanted. Contract: `begin
 
 Items 3 and 4 can swap. Take export first if you want a game on Steam early. Take screens first if the next milestone is a demo that shows off custom UI.
 
-## 4. Desktop export and stores
+## 4. Desktop export and stores (done)
 
-- Windows and Linux builds of the player and the export pipeline.
-- macOS signing and notarization.
-- Steam integration: achievements and cloud saves. Achievements read from the persistent store in item 1.
+Windows and Linux export, optional macOS signing and notarization, and optional Steam achievements and cloud saves. Contract and setup: `desktop-export.md`.
 
 ## 5. Text and staging
 

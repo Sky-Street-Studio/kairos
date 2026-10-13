@@ -47,7 +47,7 @@ mod bindings {
     #[napi]
     pub fn export_game(
         project: String,
-        #[napi(ts_arg_type = "'web' | 'desktop'")] target: String,
+        #[napi(ts_arg_type = "'web' | 'desktop' | 'windows-x64' | 'linux-x64' | 'macos'")] target: String,
         output: String,
         player_binary: Option<String>,
         player_pkg: Option<String>,

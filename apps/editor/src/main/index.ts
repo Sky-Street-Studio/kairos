@@ -5,7 +5,7 @@ import { realpath } from "node:fs/promises";
 import { BrowserWindow, Menu, app, dialog, ipcMain, shell, type MenuItemConstructorOptions } from "electron";
 
 import type { EditOp, EditorLayout } from "@shared/edit-types";
-import type { AnalyzeInput, Settings, SourceFile, TerminalSpawn } from "@shared/types";
+import type { AnalyzeInput, ExportTarget, Settings, SourceFile, TerminalSpawn } from "@shared/types";
 
 import { analyze } from "./analysis";
 import { applyEdits, labelFromName, readLayout, references, sceneBlocks, setStartLabel, writeLayout } from "./edit";
@@ -183,7 +183,7 @@ function registerIpc(): void {
   ipcMain.handle("edit:set-start", (_e, label: string) => setStartLabel(requireOpenRoot(), label));
   ipcMain.handle("player:status", () => playerStatus());
   ipcMain.handle("export:pick-folder", (e) => chooseExportFolder(e.sender));
-  ipcMain.handle("project:export", (_e, target: "web" | "desktop", output: string) => exportProject(target, output));
+  ipcMain.handle("project:export", (_e, target: ExportTarget, output: string) => exportProject(target, output));
 
   ipcMain.handle("terminal:agents", () => agents());
   ipcMain.handle("terminal:spawn", (e, opts: TerminalSpawn) => spawnTerminal(e.sender, opts));

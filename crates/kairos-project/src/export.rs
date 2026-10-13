@@ -6,6 +6,9 @@ use crate::{PlayerProjectJson, PlayerScriptJson, PlayerTranslationJson, Project,
 pub enum ExportTarget {
     Web,
     Desktop,
+    WindowsX64,
+    LinuxX64,
+    MacOS,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -24,7 +27,7 @@ pub enum ExportError {
     Json(#[from] serde_json::Error),
 }
 
-/// Checks a project and assembles a web folder or a host-platform desktop bundle.
+/// Checks a project and assembles a web folder or a desktop bundle.
 pub fn export(
     root: &Path,
     output: &Path,
@@ -45,7 +48,7 @@ pub fn export(
     reject_overlapping_output(root, output)?;
     match target {
         ExportTarget::Web => export_web(root, output, &project, player_pkg),
-        ExportTarget::Desktop => export_desktop(root, output, &project, player_binary),
+        target => export_desktop(root, output, &project, player_binary, target),
     }
 }
 
@@ -108,52 +111,147 @@ fn export_desktop(
     output: &Path,
     project: &Project,
     player_binary: Option<&Path>,
+    target: ExportTarget,
 ) -> Result<PathBuf, ExportError> {
+    let target = match target {
+        ExportTarget::Desktop => host_target(),
+        target => target,
+    };
+    if !target_is_host(target) && player_binary.is_none() {
+        return Err(ExportError::Player(format!(
+            "cross-target export for {} requires a matching player binary; Kairos can only build for the host platform",
+            target_name(target)
+        )));
+    }
     let binary = player_binary
         .ok_or_else(|| ExportError::Player("desktop export requires an explicit Kairos player binary path".into()))?;
     if !binary.is_file() {
         return Err(ExportError::Player(format!("Kairos player binary not found at {}", binary.display())));
     }
 
-    #[cfg(target_os = "macos")]
-    let bundle = {
-        let name = safe_name(&project.manifest.name);
-        let app = output.join(format!("{}.app", bundle_name(&project.manifest.name)));
-        let executable = app.join("Contents/MacOS").join(&name);
-        let game = app.join("Contents/Resources/game");
-        std::fs::create_dir_all(executable.parent().unwrap())?;
-        std::fs::create_dir_all(&game)?;
-        std::fs::copy(binary, &executable)?;
-        copy_project_files(root, &game)?;
-        std::fs::write(
-            app.join("Contents/Info.plist"),
-            format!(
-                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict><key>CFBundleName</key><string>{}</string><key>CFBundleExecutable</key><string>{name}</string><key>CFBundleIdentifier</key><string>studio.skystreet.kairos.game</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>\n",
-                xml_escape(&project.manifest.name)
-            ),
-        )?;
-        app
+    if target == ExportTarget::MacOS {
+        let app = export_macos(root, output, project, binary)?;
+        sign_macos(&app)?;
+        return Ok(app);
+    }
+    let name = safe_name(&project.manifest.name);
+    let game = output.join("game");
+    std::fs::create_dir_all(output)?;
+    let (executable, launcher) = match target {
+        ExportTarget::WindowsX64 => (output.join(format!("{name}.exe")), output.join("run.bat")),
+        ExportTarget::LinuxX64 => (output.join(&name), output.join("run.sh")),
+        _ => return Err(ExportError::Player(format!("unsupported desktop target {}", target_name(target)))),
     };
-    #[cfg(not(target_os = "macos"))]
-    let bundle = {
-        let name = safe_name(&project.manifest.name);
-        #[cfg(target_os = "windows")]
-        let executable = output.join(format!("{name}.exe"));
-        #[cfg(not(target_os = "windows"))]
-        let executable = output.join(name);
-        let game = output.join("game");
-        std::fs::create_dir_all(output)?;
-        std::fs::copy(binary, &executable)?;
-        copy_project_files(root, &game)?;
-        executable
+    std::fs::copy(binary, &executable)?;
+    copy_project_files(root, &game)?;
+    let launcher_text = if target == ExportTarget::WindowsX64 {
+        format!("@echo off\r\ncd /d \"%~dp0\"\r\n\"%~dp0\\{name}.exe\"\r\n")
+    } else {
+        format!("#!/bin/sh\ncd \"$(dirname \"$0\")\"\nexec \"./{name}\"\n")
+    };
+    std::fs::write(&launcher, launcher_text)?;
+    #[cfg(unix)]
+    if target == ExportTarget::LinuxX64 {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o755))?;
+    }
+    Ok(output.to_path_buf())
+}
+
+fn export_macos(root: &Path, output: &Path, project: &Project, binary: &Path) -> Result<PathBuf, ExportError> {
+    let name = safe_name(&project.manifest.name);
+    let app = output.join(format!("{}.app", bundle_name(&project.manifest.name)));
+    let executable = app.join("Contents/MacOS").join(&name);
+    let game = app.join("Contents/Resources/game");
+    std::fs::create_dir_all(executable.parent().unwrap())?;
+    std::fs::create_dir_all(&game)?;
+    std::fs::copy(binary, &executable)?;
+    copy_project_files(root, &game)?;
+    std::fs::write(
+        app.join("Contents/Info.plist"),
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict><key>CFBundleName</key><string>{}</string><key>CFBundleExecutable</key><string>{name}</string><key>CFBundleIdentifier</key><string>studio.skystreet.kairos.game</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>\n",
+            xml_escape(&project.manifest.name)
+        ),
+    )?;
+    Ok(app)
+}
+
+fn host_target() -> ExportTarget {
+    #[cfg(target_os = "macos")]
+    return ExportTarget::MacOS;
+    #[cfg(target_os = "windows")]
+    return ExportTarget::WindowsX64;
+    #[cfg(target_os = "linux")]
+    return ExportTarget::LinuxX64;
+    #[allow(unreachable_code)]
+    ExportTarget::Desktop
+}
+
+fn target_is_host(target: ExportTarget) -> bool {
+    target == host_target()
+        && (target != ExportTarget::WindowsX64 && target != ExportTarget::LinuxX64 || cfg!(target_arch = "x86_64"))
+}
+
+fn target_name(target: ExportTarget) -> &'static str {
+    match target {
+        ExportTarget::Web => "web",
+        ExportTarget::Desktop => "host desktop",
+        ExportTarget::WindowsX64 => "windows-x64",
+        ExportTarget::LinuxX64 => "linux-x64",
+        ExportTarget::MacOS => "macos",
+    }
+}
+
+fn sign_macos(app: &Path) -> Result<(), ExportError> {
+    let identity = std::env::var("KAIROS_MACOS_SIGNING_IDENTITY").ok();
+    let team = std::env::var("KAIROS_MACOS_TEAM_ID").ok();
+    let profile = std::env::var("KAIROS_MACOS_NOTARY_PROFILE").ok();
+    if identity.is_none() && team.is_none() && profile.is_none() {
+        eprintln!(
+            "warning: macOS app is unsigned; set KAIROS_MACOS_SIGNING_IDENTITY, KAIROS_MACOS_TEAM_ID and KAIROS_MACOS_NOTARY_PROFILE to sign and notarize"
+        );
+        return Ok(());
+    }
+    let (Some(identity), Some(team), Some(profile)) = (identity, team, profile) else {
+        return Err(ExportError::Player("macOS signing requires KAIROS_MACOS_SIGNING_IDENTITY, KAIROS_MACOS_TEAM_ID and KAIROS_MACOS_NOTARY_PROFILE".into()));
     };
     #[cfg(target_os = "macos")]
-    return Ok(bundle);
+    {
+        use std::process::Command;
+        let status = Command::new("codesign")
+            .args(["--force", "--deep", "--options", "runtime", "--timestamp", "--sign", &identity])
+            .arg(app)
+            .status()?;
+        if !status.success() {
+            return Err(ExportError::Player("codesign failed".into()));
+        }
+        // notarytool only accepts a zip, dmg or pkg, not a bare .app bundle.
+        let archive = app.with_extension("zip");
+        let status = Command::new("ditto").args(["-c", "-k", "--keepParent"]).arg(app).arg(&archive).status()?;
+        if !status.success() {
+            return Err(ExportError::Player("ditto could not archive the app for notarization".into()));
+        }
+        let status = Command::new("xcrun")
+            .args(["notarytool", "submit"])
+            .arg(&archive)
+            .args(["--keychain-profile", &profile, "--team-id", &team, "--wait"])
+            .status();
+        let _ = std::fs::remove_file(&archive);
+        if !status?.success() {
+            return Err(ExportError::Player("notarytool failed".into()));
+        }
+        let status = Command::new("xcrun").args(["stapler", "staple"]).arg(app).status()?;
+        if !status.success() {
+            return Err(ExportError::Player("stapler failed".into()));
+        }
+    }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = bundle;
-        Ok(output.to_path_buf())
+        let _ = (identity, team, profile, app);
+        eprintln!("warning: macOS signing was skipped because export is running on a non-macOS host");
     }
+    Ok(())
 }
 
 const PROJECT_ENTRIES: [&str; 5] = ["kairos.toml", "script", "assets", "ui", "tl"];
@@ -245,7 +343,6 @@ fn safe_name(name: &str) -> String {
     if name.is_empty() { "kairos-game".into() } else { name }
 }
 
-#[cfg(target_os = "macos")]
 fn bundle_name(name: &str) -> String {
     let name: String = name
         .chars()
@@ -304,6 +401,54 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
         let _ = std::fs::remove_dir_all(output);
         let _ = std::fs::remove_file(binary);
+    }
+
+    #[test]
+    fn platform_export_adds_a_launcher_and_bundles_project_files() {
+        let root = std::env::temp_dir().join(format!("kairos-platform-export-{}", std::process::id()));
+        let binary = root.with_extension("bin");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("script")).unwrap();
+        std::fs::write(root.join("kairos.toml"), "name = 'Demo Game'").unwrap();
+        std::fs::write(root.join("script/start.kai"), "label start:\n    return\n").unwrap();
+        std::fs::write(&binary, "player binary").unwrap();
+
+        for (target, executable, launcher) in
+            [(ExportTarget::WindowsX64, "demo-game.exe", "run.bat"), (ExportTarget::LinuxX64, "demo-game", "run.sh")]
+        {
+            let output = root.with_extension(target_name(target));
+            let _ = std::fs::remove_dir_all(&output);
+            export(&root, &output, target, Some(&binary), None).unwrap();
+            assert_eq!(std::fs::read_to_string(output.join(executable)).unwrap(), "player binary");
+            assert!(output.join(launcher).is_file());
+            assert!(output.join("game/script/start.kai").is_file());
+            let _ = std::fs::remove_dir_all(output);
+        }
+        let output = root.with_extension("macos");
+        let _ = std::fs::remove_dir_all(&output);
+        let app = export_macos(&root, &output, &Project::load(&root).unwrap(), &binary).unwrap();
+        assert!(app.join("Contents/MacOS/demo-game").is_file());
+        assert!(app.join("Contents/Resources/game/script/start.kai").is_file());
+        assert!(app.join("Contents/Info.plist").is_file());
+        let _ = std::fs::remove_dir_all(output);
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_file(binary);
+    }
+
+    #[test]
+    fn cross_target_export_without_a_target_player_explains_the_host_limit() {
+        let root = std::env::temp_dir().join(format!("kairos-cross-export-{}", std::process::id()));
+        let output = root.with_extension("out");
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&output);
+        std::fs::create_dir_all(root.join("script")).unwrap();
+        std::fs::write(root.join("kairos.toml"), "name = 'test'").unwrap();
+        std::fs::write(root.join("script/start.kai"), "label start:\n    return\n").unwrap();
+        let target =
+            if host_target() == ExportTarget::WindowsX64 { ExportTarget::LinuxX64 } else { ExportTarget::WindowsX64 };
+        let error = export(&root, &output, target, None, None).unwrap_err();
+        assert!(error.to_string().contains("requires a matching player binary"));
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

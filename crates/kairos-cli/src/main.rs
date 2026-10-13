@@ -21,7 +21,7 @@ enum Command {
         #[arg(long)]
         lang: String,
     },
-    /// Export a checked project for the web or host desktop.
+    /// Export a checked project for the web or a desktop platform.
     Export {
         project: PathBuf,
         #[arg(long, value_enum)]
@@ -30,6 +30,8 @@ enum Command {
         out: PathBuf,
         #[arg(long)]
         player_pkg: Option<PathBuf>,
+        #[arg(long)]
+        player_binary: Option<PathBuf>,
     },
     /// Play a project in a window, or as a transcript with `--headless`.
     Run {
@@ -46,6 +48,21 @@ enum Command {
 enum ExportTarget {
     Web,
     Desktop,
+    #[value(name = "windows-x64")]
+    WindowsX64,
+    #[value(name = "linux-x64")]
+    LinuxX64,
+    Macos,
+}
+
+fn is_host_target(target: kairos_project::export::ExportTarget) -> bool {
+    match target {
+        kairos_project::export::ExportTarget::Desktop => true,
+        kairos_project::export::ExportTarget::WindowsX64 => cfg!(all(target_os = "windows", target_arch = "x86_64")),
+        kairos_project::export::ExportTarget::LinuxX64 => cfg!(all(target_os = "linux", target_arch = "x86_64")),
+        kairos_project::export::ExportTarget::MacOS => cfg!(target_os = "macos"),
+        kairos_project::export::ExportTarget::Web => false,
+    }
 }
 
 fn main() -> ExitCode {
@@ -68,13 +85,20 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
-    if let Command::Export { project, target, out, player_pkg } = &cli.command {
+    if let Command::Export { project, target, out, player_pkg, player_binary } = &cli.command {
         let target = match target {
             ExportTarget::Web => kairos_project::export::ExportTarget::Web,
             ExportTarget::Desktop => kairos_project::export::ExportTarget::Desktop,
+            ExportTarget::WindowsX64 => kairos_project::export::ExportTarget::WindowsX64,
+            ExportTarget::LinuxX64 => kairos_project::export::ExportTarget::LinuxX64,
+            ExportTarget::Macos => kairos_project::export::ExportTarget::MacOS,
         };
-        let player = std::env::current_exe()?;
-        let result = kairos_project::export::export(project, out, target, Some(&player), player_pkg.as_deref())?;
+        let player = match player_binary {
+            Some(path) => Some(path.clone()),
+            None if is_host_target(target) => Some(std::env::current_exe()?),
+            None => None,
+        };
+        let result = kairos_project::export::export(project, out, target, player.as_deref(), player_pkg.as_deref())?;
         println!("exported to {}", result.display());
         return Ok(ExitCode::SUCCESS);
     }

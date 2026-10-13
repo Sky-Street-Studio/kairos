@@ -88,7 +88,7 @@ export interface TranslationFile {
   source: string;
 }
 
-export type ExportTarget = "web" | "desktop";
+export type ExportTarget = "web" | "desktop" | "windows-x64" | "linux-x64" | "macos";
 
 export interface ProjectSnapshot {
   root: string;

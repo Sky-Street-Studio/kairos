@@ -21,7 +21,16 @@ use crate::theme::Theme;
 pub fn run(project: Project) -> Result<(), Box<dyn std::error::Error>> {
     let theme = load_theme(&project.root)?;
     let event_loop = EventLoop::new()?;
-    let mut app = App { project, theme, running: None, error: None };
+    #[cfg(feature = "steam")]
+    let steam = crate::steam::Steam::new(project.manifest.steam.as_ref(), &project.manifest.name);
+    let mut app = App {
+        project,
+        theme,
+        running: None,
+        error: None,
+        #[cfg(feature = "steam")]
+        steam,
+    };
     event_loop.run_app(&mut app)?;
     match app.error {
         Some(e) => Err(e.into()),
@@ -62,6 +71,8 @@ struct App {
     theme: Theme,
     running: Option<Running>,
     error: Option<String>,
+    #[cfg(feature = "steam")]
+    steam: Option<crate::steam::Steam>,
 }
 
 struct Running {
@@ -120,6 +131,10 @@ impl ApplicationHandler for App {
     fn exiting(&mut self, _: &ActiveEventLoop) {
         if let Some(r) = &mut self.running {
             r.player.flush_persistent();
+            #[cfg(feature = "steam")]
+            if let Some(steam) = &self.steam {
+                steam.sync_cloud();
+            }
         }
     }
 
@@ -137,6 +152,10 @@ impl ApplicationHandler for App {
                 r.last = now;
                 let player = &mut r.player;
                 r.gpu.draw(|view| player.frame(dt, view));
+                #[cfg(feature = "steam")]
+                if let Some(steam) = &mut self.steam {
+                    steam.update();
+                }
                 if r.player.should_quit() {
                     event_loop.exit();
                     return;
