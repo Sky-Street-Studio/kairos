@@ -1,4 +1,4 @@
-import type { Block } from "@shared/edit-types";
+import type { Block, Scene } from "@shared/edit-types";
 import {
   AudioLines,
   Braces,
@@ -19,7 +19,8 @@ import {
   VolumeX,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useRef } from "react";
+import { useRef, useState } from "react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -35,6 +36,7 @@ import { AddBlockMenu } from "./add-block-menu";
 import { BlockEditor } from "./block-editors";
 import { blockDiagnostics, blockTitle, variableSummary } from "./block-labels";
 import { insertOp, stripBlock, type BlockContext } from "./block-ops";
+import { dropPlace, type DropRow } from "./drop-target";
 import { flushPendingEdits, resolveBlock, type BlockPosition } from "./pending-edits";
 import { useScene } from "./use-scene";
 
@@ -102,6 +104,65 @@ function blockSummary(block: Block): string {
   }
 }
 
+type PositionedDropRow = { row: DropRow; position: BlockPosition };
+
+type DropListTarget = { header: number; position: BlockPosition; depth: number; empty: boolean };
+
+function sceneDropLists(blocks: Block[], header: number, prefix: BlockPosition = [], depth = 0): DropListTarget[] {
+  return [
+    { header, position: prefix, depth, empty: blocks.length === 0 },
+    ...blocks.flatMap((block, index) =>
+      block.kind === "choice"
+        ? block.options.flatMap((option, childIndex) =>
+            sceneDropLists(
+              option.blocks,
+              option.line,
+              [...prefix, { index, child: { kind: "choice", index: childIndex } }],
+              depth + 1,
+            ),
+          )
+        : block.kind === "if"
+          ? block.branches.flatMap((branch, childIndex) =>
+              sceneDropLists(
+                branch.blocks,
+                branch.line,
+                [...prefix, { index, child: { kind: "if", index: childIndex } }],
+                depth + 1,
+              ),
+            )
+          : [],
+    ),
+  ];
+}
+
+function sceneDropRows(blocks: Block[], header: number, prefix: BlockPosition = [], depth = 0): PositionedDropRow[] {
+  return blocks.flatMap((block, index) => {
+    const position = [...prefix, { index }];
+    const row: DropRow = { line: block.line, endLine: block.endLine, depth, parentHeader: header };
+    const children =
+      block.kind === "choice"
+        ? block.options.flatMap((option, childIndex) =>
+            sceneDropRows(
+              option.blocks,
+              option.line,
+              [...prefix, { index, child: { kind: "choice", index: childIndex } }],
+              depth + 1,
+            ),
+          )
+        : block.kind === "if"
+          ? block.branches.flatMap((branch, childIndex) =>
+              sceneDropRows(
+                branch.blocks,
+                branch.line,
+                [...prefix, { index, child: { kind: "if", index: childIndex } }],
+                depth + 1,
+              ),
+            )
+          : [];
+    return [{ row, position }, ...children];
+  });
+}
+
 function BlockList({
   blocks,
   path,
@@ -124,6 +185,75 @@ function BlockList({
   const edit = useApp((state) => state.edit);
   const names = Object.fromEntries(characters.map((character) => [character.id, character.name]));
   const listRef = useRef<HTMLDivElement>(null);
+  const [dropY, setDropY] = useState<number | null>(null);
+  const isRootList = positionPrefix.length === 0;
+  const onDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    if (!event.dataTransfer.types.includes("application/x-kairos-block")) return;
+    event.preventDefault();
+    setDropY(event.clientY - (listRef.current?.getBoundingClientRect().top ?? 0));
+  };
+  const onDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    if (!event.dataTransfer.types.includes("application/x-kairos-block")) return;
+    event.preventDefault();
+    setDropY(null);
+    const pointerY = event.clientY;
+    const positionData = event.dataTransfer.getData("application/x-kairos-block-position");
+    let draggedPosition: BlockPosition;
+    try {
+      draggedPosition = JSON.parse(positionData) as BlockPosition;
+    } catch {
+      toast.error("Could not move this block.");
+      return;
+    }
+    void (async () => {
+      await flushPendingEdits();
+      const source = appStore().getState().buffers[path]?.source;
+      const latestScene: Scene | null = source ? await window.kairos.edit.blocks(source, sceneLabel) : null;
+      const dragged = latestScene ? resolveBlock(latestScene.blocks, draggedPosition) : null;
+      const root = listRef.current;
+      if (!latestScene || !dragged || !root) {
+        toast.error("Could not move this block because the scene changed.");
+        return;
+      }
+      const elements = new Map(
+        [...root.querySelectorAll<HTMLElement>("[data-block-position]")].map((element) => [
+          element.dataset.blockPosition,
+          element,
+        ]),
+      );
+      const listElements = new Map(
+        [root, ...root.querySelectorAll<HTMLElement>("[data-scene-list-position]")].map((element) => [
+          element.dataset.sceneListPosition,
+          element,
+        ]),
+      );
+      const emptyLists = sceneDropLists(latestScene.blocks, latestScene.line)
+        .filter((list) => list.empty)
+        .map((list) => ({ list, element: listElements.get(JSON.stringify(list.position)) ?? null }))
+        .filter((item): item is { list: DropListTarget; element: HTMLElement } => item.element !== null);
+      const emptyTarget = emptyLists
+        .filter(({ element }) => {
+          const rect = element.getBoundingClientRect();
+          return pointerY >= rect.top && pointerY <= rect.bottom;
+        })
+        .toSorted((a, b) => b.list.depth - a.list.depth)[0];
+      const visibleRows = sceneDropRows(latestScene.blocks, latestScene.line)
+        .map(({ row, position }) => ({ row, element: elements.get(JSON.stringify(position)) }))
+        .filter((item): item is { row: DropRow; element: HTMLElement } => item.element !== undefined);
+      const rects = visibleRows.map(({ element }) => element.getBoundingClientRect());
+      const place = emptyTarget
+        ? { at: "start" as const, header: emptyTarget.list.header }
+        : dropPlace(
+            visibleRows.map(({ row }) => row),
+            pointerY,
+            rects,
+          );
+      if (!place) return;
+      const focus = await edit([{ op: "move", path, line: dragged.line, place }]);
+      if (!focus) toast.error(appStore().getState().editError ?? "Could not move this block.");
+    })();
+  };
+  const onDragEnd = () => setDropY(null);
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement;
@@ -183,7 +313,11 @@ function BlockList({
         onKeyDown(event);
         event.stopPropagation();
       }}
-      className="flex flex-col outline-none"
+      data-scene-list-position={JSON.stringify(positionPrefix)}
+      className="relative flex flex-col outline-none"
+      onDragOver={isRootList ? onDragOver : undefined}
+      onDrop={isRootList ? onDrop : undefined}
+      onDragEnd={isRootList ? onDragEnd : undefined}
     >
       <div className="flex items-center justify-center gap-2">
         {blocks.length === 0 && <span className="text-2xs text-muted-foreground">Add the first line</span>}
@@ -202,6 +336,13 @@ function BlockList({
                 role="option"
                 aria-selected={selected}
                 data-testid="block"
+                data-block-position={JSON.stringify(position)}
+                draggable
+                onDragStart={(event) => {
+                  event.dataTransfer.setData("application/x-kairos-block", String(block.line));
+                  event.dataTransfer.setData("application/x-kairos-block-position", JSON.stringify(position));
+                  event.dataTransfer.effectAllowed = "move";
+                }}
                 onClick={() => selectBlock({ path, line: block.line })}
                 className="flex min-h-12 min-w-0 flex-1 items-center gap-3 px-4 py-2 text-left outline-none focus-visible:bg-accent/50 aria-selected:bg-accent/70"
               >
@@ -298,6 +439,13 @@ function BlockList({
           </div>
         );
       })}
+      {dropY !== null && isRootList && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute left-0 right-0 z-20 h-0.5 bg-primary"
+          style={{ top: dropY }}
+        />
+      )}
     </div>
   );
 }
