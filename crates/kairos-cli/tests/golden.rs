@@ -24,6 +24,22 @@ fn beginner_templates_load_without_diagnostics() {
 }
 
 #[test]
+fn test_routes_emits_json_and_returns_failure_for_unreachable_labels() {
+    let root = std::env::temp_dir().join(format!("kairos-routes-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("script")).unwrap();
+    std::fs::write(root.join("kairos.toml"), "name = 'test'").unwrap();
+    std::fs::write(root.join("script/main.kai"), "label start:\n    return\nlabel orphan:\n    return\n").unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_kairos"))
+        .args(["test-routes", root.to_str().unwrap(), "--json"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["unreachableLabels"][0], "orphan");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn check_reports_duplicate_asset_names_with_both_paths() {
     let root = std::env::temp_dir().join(format!("kairos-check-assets-{}", std::process::id()));
     std::fs::create_dir_all(root.join("script")).unwrap();

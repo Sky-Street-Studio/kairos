@@ -2,6 +2,7 @@
 
 pub mod assets;
 pub mod export;
+pub mod routes;
 pub mod screens;
 
 use std::collections::BTreeMap;
