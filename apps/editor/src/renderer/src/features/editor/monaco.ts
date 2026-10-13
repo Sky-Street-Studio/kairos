@@ -5,6 +5,7 @@ import EditorWorker from "monaco-editor/editor/editor.worker?worker";
 import { appStore } from "@/store";
 
 import { KAI_LANGUAGE, kaiConfiguration, kaiMonarch } from "./kai-language";
+import { TOML_LANGUAGE, tomlConfiguration, tomlMonarch } from "./toml-language";
 
 export { monaco };
 
@@ -117,12 +118,15 @@ export function defineTheme(theme: ThemeConfig, appearance: ResolvedAppearance):
 
 let registered = false;
 
-export function registerKairosLanguage(): void {
+export function registerLanguages(): void {
   if (registered) return;
   registered = true;
   monaco.languages.register({ id: KAI_LANGUAGE, extensions: [".kai"], aliases: ["Kairos"] });
   monaco.languages.setLanguageConfiguration(KAI_LANGUAGE, kaiConfiguration);
   monaco.languages.setMonarchTokensProvider(KAI_LANGUAGE, kaiMonarch);
+  monaco.languages.register({ id: TOML_LANGUAGE, extensions: [".toml"], aliases: ["TOML"] });
+  monaco.languages.setLanguageConfiguration(TOML_LANGUAGE, tomlConfiguration);
+  monaco.languages.setMonarchTokensProvider(TOML_LANGUAGE, tomlMonarch);
 
   monaco.languages.registerDefinitionProvider(KAI_LANGUAGE, {
     provideDefinition(model, position) {

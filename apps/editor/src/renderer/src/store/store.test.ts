@@ -32,6 +32,7 @@ function fakeApi() {
       pick: vi.fn(async () => null),
       open: vi.fn(async () => snapshot()),
       reload: vi.fn(async () => snapshot()),
+      readText: vi.fn(async (path: string) => disk.get(path) ?? ""),
       writeFile: vi.fn(async (path: string, content: string) => void disk.set(path, content)),
       importAsset: vi.fn(async () => null),
       renameAsset: vi.fn(async () => undefined),

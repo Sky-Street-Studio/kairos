@@ -1,4 +1,4 @@
-import { ASSET_SCHEME, type AssetEntry, type AssetKind, type ProjectSnapshot } from "./types";
+import { ASSET_SCHEME, type AssetEntry, type AssetKind } from "./types";
 
 export const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "webp"];
 export const AUDIO_EXTENSIONS = ["ogg", "mp3", "wav", "flac"];
@@ -49,20 +49,15 @@ export function classifyAsset(path: string, characterIds: string[] = []): AssetE
 
 export type FileKind = "script" | "text" | "image" | "audio";
 
-/** Files whose raw source the project snapshot carries, so they can open without another read. */
-export const SNAPSHOT_TEXT_FIELDS = {
-  "kairos.toml": "manifestSource",
-  "ui/theme.toml": "uiTheme",
-  "ui/title.toml": "uiTitle",
-} as const satisfies Record<string, keyof ProjectSnapshot>;
+export const TEXT_EXTENSIONS = ["toml", "md", "txt", "json"];
 
 /** How the editor opens a project file, or `null` when it has no view for it. */
 export function fileKind(path: string): FileKind | null {
   if (path.endsWith(".kai")) return "script";
-  if (Object.hasOwn(SNAPSHOT_TEXT_FIELDS, path)) return "text";
+  const ext = extension(path);
+  if (TEXT_EXTENSIONS.includes(ext)) return "text";
   // The asset protocol serves nothing outside assets/, so media elsewhere can't be previewed.
   if (!path.startsWith("assets/")) return null;
-  const ext = extension(path);
   if (IMAGE_EXTENSIONS.includes(ext)) return "image";
   if (AUDIO_EXTENSIONS.includes(ext)) return "audio";
   return null;
