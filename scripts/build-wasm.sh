@@ -6,6 +6,9 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 profile="${PROFILE:-release}"
 version="$(grep -A1 'name = "wasm-bindgen"' "$root/Cargo.lock" | sed -n 's/version = "\(.*\)"/\1/p')"
 
+# `cargo install` puts wasm-bindgen here, which is not on PATH for every rustup setup.
+export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
+
 rustup target add wasm32-unknown-unknown >/dev/null
 if ! wasm-bindgen --version 2>/dev/null | grep -q "$version"; then
   cargo install wasm-bindgen-cli --version "$version" --locked

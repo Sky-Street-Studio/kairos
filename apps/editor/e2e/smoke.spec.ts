@@ -30,7 +30,8 @@ test("opens a project, shows the graph, reports diagnostics, stages assets and r
   );
   if (playerBuilt) {
     await expect(page.getByLabel("running")).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByRole("complementary", { name: "Preview" }).getByRole("alert")).toHaveCount(0);
+    const alerts = page.getByRole("complementary", { name: "Preview" }).getByRole("alert");
+    await expect(alerts, `preview alert: ${(await alerts.allInnerTexts()).join(" | ")}`).toHaveCount(0);
     await page.keyboard.press(`${mod}+j`);
     await page.getByRole("tab", { name: "Debug" }).click();
     await expect(page.getByLabel("Value of curious")).toHaveValue("0");

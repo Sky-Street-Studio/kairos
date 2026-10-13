@@ -207,6 +207,7 @@ function buildMenu(): void {
 }
 
 app.whenReady().then(() => {
+  if (!app.isPackaged) app.dock?.setIcon(join(app.getAppPath(), "build/icon.png"));
   handleProtocols();
   registerIpc();
   buildMenu();
