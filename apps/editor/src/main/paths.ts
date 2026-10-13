@@ -2,16 +2,18 @@ import { isAbsolute, relative, resolve } from "node:path";
 
 import { app } from "electron";
 
-/** The repository root while running from source; packaged builds would ship these alongside. */
+/** The repository root while running from source. */
 export function repoRoot(): string {
   return resolve(app.getAppPath(), "../..");
 }
 
 export function templateDir(): string {
+  if (app.isPackaged) return resolve(process.resourcesPath, "template");
   return process.env.KAIROS_TEMPLATE ?? resolve(repoRoot(), "examples/hello-kairos");
 }
 
 export function playerPkgDir(): string {
+  if (app.isPackaged) return resolve(process.resourcesPath, "kairos-player");
   return process.env.KAIROS_PLAYER_PKG ?? resolve(repoRoot(), "crates/kairos-player/pkg");
 }
 

@@ -53,6 +53,7 @@ bun run build:napi                       # builds crates/kairos-napi for the edi
 bun run dev                              # opens the Electron editor
 KAIROS_PROJECT=$PWD/examples/hello-kairos bun run dev   # opens a project directly
 bun run test && bun run typecheck
+bun run --cwd apps/editor package         # builds an unsigned Kairos.app on macOS
 bun run --cwd apps/editor test:e2e       # Playwright Electron smoke test
 ```
 
