@@ -85,6 +85,8 @@ export interface TranslationFile {
   source: string;
 }
 
+export type ExportTarget = "web" | "desktop";
+
 export interface ProjectSnapshot {
   root: string;
   manifest: Manifest;
@@ -170,6 +172,8 @@ export interface KairosApi {
     renameAsset(path: string, name: string): Promise<void>;
     applyEdit(edit: ProjectEdit): Promise<EditResult>;
     createFromTemplate(): Promise<string | null>;
+    pickExportFolder(): Promise<string | null>;
+    export(target: ExportTarget, output: string): Promise<string>;
   };
   analysis: {
     analyze(files: SourceFile[]): Promise<Analysis>;

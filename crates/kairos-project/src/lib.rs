@@ -1,6 +1,7 @@
 //! Project manifests, script loading and the asset naming rule shared by the CLI, player and editor.
 
 pub mod assets;
+pub mod export;
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -9,7 +10,35 @@ use std::sync::Arc;
 
 use kairos_script::Diagnostic;
 use kairos_vm::Program;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlayerProjectJson {
+    pub manifest: String,
+    pub scripts: Vec<PlayerScriptJson>,
+    #[serde(default)]
+    pub translations: Vec<PlayerTranslationJson>,
+    pub asset_base_url: String,
+    #[serde(default)]
+    pub assets: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlayerScriptJson {
+    pub path: String,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlayerTranslationJson {
+    pub lang: String,
+    pub source: String,
+}
 
 pub type Translations = BTreeMap<String, BTreeMap<String, String>>;
 pub type StaleTranslations = BTreeMap<String, Vec<String>>;

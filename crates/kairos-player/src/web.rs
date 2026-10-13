@@ -4,9 +4,8 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use kairos_project::Project;
+use kairos_project::{PlayerProjectJson, Project};
 use kairos_render::Renderer;
-use serde::Deserialize;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use web_sys::{HtmlCanvasElement, KeyboardEvent, MouseEvent, WheelEvent};
@@ -16,35 +15,6 @@ use crate::gpu::Gpu;
 use crate::player::{Button, Key, Player};
 use crate::saves::SaveStore;
 use crate::theme::Theme;
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ProjectJson {
-    manifest: String,
-    scripts: Vec<ScriptJson>,
-    #[serde(default)]
-    translations: Vec<TranslationJson>,
-    asset_base_url: String,
-    #[serde(default)]
-    assets: Vec<String>,
-    /// Contents of `ui/theme.toml`, if the project has one.
-    #[serde(default)]
-    theme: Option<String>,
-    #[serde(default)]
-    title: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct ScriptJson {
-    path: String,
-    source: String,
-}
-
-#[derive(Deserialize)]
-struct TranslationJson {
-    lang: String,
-    source: String,
-}
 
 struct Loaded {
     project: Project,
@@ -130,7 +100,8 @@ impl WebPlayer {
 
     /// Compiles a project. Throws an `Error` with one `path:line: message` line per diagnostic.
     pub fn load(&self, project_json: &str) -> Result<(), JsError> {
-        let json: ProjectJson = serde_json::from_str(project_json).map_err(|e| error(format!("project json: {e}")))?;
+        let json: PlayerProjectJson =
+            serde_json::from_str(project_json).map_err(|e| error(format!("project json: {e}")))?;
         let sources = json.scripts.into_iter().map(|s| (PathBuf::from(s.path), s.source));
         let mut project = Project::from_sources(&json.manifest, sources).map_err(|e| error(e.to_string()))?;
         for translation in json.translations {

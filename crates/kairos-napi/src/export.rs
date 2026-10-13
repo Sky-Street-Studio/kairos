@@ -1,0 +1,39 @@
+use std::path::{Path, PathBuf};
+
+use kairos_project::export::{self, ExportTarget};
+
+pub fn export_game(
+    project: &str,
+    target: &str,
+    output: &str,
+    player_binary: Option<&str>,
+    player_pkg: Option<&str>,
+) -> Result<String, String> {
+    let target = match target {
+        "web" => ExportTarget::Web,
+        "desktop" => ExportTarget::Desktop,
+        _ => return Err(format!("unknown export target `{target}`; expected `web` or `desktop`")),
+    };
+    let player_binary = player_binary.map(Path::new);
+    let player_pkg = player_pkg.map(Path::new);
+    export::export(Path::new(project), Path::new(output), target, player_binary, player_pkg)
+        .map(|path: PathBuf| path.to_string_lossy().into_owned())
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn desktop_export_reports_when_player_binary_is_missing() {
+        let root = std::env::temp_dir().join(format!("kairos-napi-export-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("script")).unwrap();
+        std::fs::write(root.join("kairos.toml"), "name = 'test'").unwrap();
+        std::fs::write(root.join("script/start.kai"), "label start:\n    return\n").unwrap();
+        let error = export_game(root.to_str().unwrap(), "desktop", "out", None, None).unwrap_err();
+        assert!(error.contains("desktop export requires an explicit Kairos player binary path"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+}

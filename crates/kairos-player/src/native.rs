@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -30,6 +30,25 @@ pub fn run(project: Project) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Reads `ui/theme.toml`, or the default theme when the file does not exist.
+pub fn run_bundled() -> Result<(), Box<dyn std::error::Error>> {
+    let executable = std::env::current_exe()?;
+    let root = bundled_game_dir(&executable)?;
+    run(Project::load(&root)?)
+}
+
+fn bundled_game_dir(executable: &Path) -> Result<PathBuf, String> {
+    let directory = executable.parent().ok_or("player executable has no parent directory")?;
+    let sibling = directory.join("game");
+    let resources = directory.join("../Resources/game");
+    if sibling.is_dir() {
+        Ok(sibling)
+    } else if resources.is_dir() {
+        Ok(resources)
+    } else {
+        Err(format!("could not find bundled game/ beside {}", executable.display()))
+    }
+}
+
 pub fn load_theme(root: &Path) -> Result<Theme, String> {
     match std::fs::read_to_string(root.join("ui/theme.toml")) {
         Ok(text) => Theme::parse(&text),
@@ -152,5 +171,26 @@ impl ApplicationHandler for App {
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bundled_game_uses_the_executable_sibling_or_macos_resources_folder() {
+        let root = std::env::temp_dir().join(format!("kairos-bundled-game-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let executable = root.join("Demo.app/Contents/MacOS/kairos");
+        let directory = executable.parent().unwrap();
+        let resources = directory.join("../Resources/game");
+        std::fs::create_dir_all(&resources).unwrap();
+        assert_eq!(bundled_game_dir(&executable).unwrap(), resources);
+
+        let sibling = directory.join("game");
+        std::fs::create_dir_all(&sibling).unwrap();
+        assert_eq!(bundled_game_dir(&executable).unwrap(), sibling);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
