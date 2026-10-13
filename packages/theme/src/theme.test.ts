@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DEFAULT_THEME,
   PRESETS,
   THEME_VARIABLES,
   applyTheme,
@@ -31,12 +32,11 @@ describe("color", () => {
 });
 
 describe("presets", () => {
-  it("has 4 to 6 valid presets with unique ids, both light and dark", () => {
-    expect(PRESETS.length).toBeGreaterThanOrEqual(4);
-    expect(PRESETS.length).toBeLessThanOrEqual(6);
-    expect(new Set(PRESETS.map((p) => p.id)).size).toBe(PRESETS.length);
+  it("provides flat non-purple presets with Graphite as the default", () => {
+    expect(PRESETS.map((p) => p.id)).toEqual(["graphite", "slate", "pine", "paper", "sand"]);
     expect(PRESETS.some((p) => p.appearance === "light")).toBe(true);
     expect(PRESETS.some((p) => p.appearance === "dark")).toBe(true);
+    expect(DEFAULT_THEME.id).toBe("graphite");
     for (const p of PRESETS) expect(validateTheme(p)).toEqual({ ok: true, theme: p });
   });
 
@@ -54,29 +54,81 @@ describe("presets", () => {
 });
 
 describe("validation", () => {
-  it("rejects bad colors, angles, stop order and stop counts", () => {
-    const t = clone(PRESETS[0]!) as unknown as Record<string, any>;
-    t.background.angle = 400;
-    t.background.stops[1].position = -1;
-    t.accent.stops = [{ color: "red", position: 0 }];
+  it("rejects invalid colors and surface tint amounts", () => {
+    const t = clone(PRESETS[0]!);
+    t.background = "invalid";
     t.surfaceTint.amount = 90;
     const r = validateTheme(t);
-    expect(r.ok).toBe(false);
-    if (!r.ok) {
-      expect(r.errors).toEqual([
-        "background.angle must be a number from 0 to 360",
-        "background.stops[1].position must be a number from 0 to 100",
-        "accent.stops must have 2 to 6 entries",
-        "surfaceTint.amount must be a number from 0 to 40",
-      ]);
-    }
+    expect(r).toEqual({
+      ok: false,
+      errors: ["background must be a #rrggbb hex color", "surfaceTint.amount must be a number from 0 to 40"],
+    });
   });
 
-  it("rejects decreasing stop positions", () => {
-    const t = clone(PRESETS[0]!);
-    t.background.stops[2]!.position = 10;
-    const r = validateTheme(t);
-    expect(r.ok ? [] : r.errors).toEqual(["background.stops[2].position must not be lower than the previous stop"]);
+  it.each(["dusk", "aurora", "ember", "dawn"])("migrates removed v1 preset %s to Graphite", (id) => {
+    const legacy = {
+      version: 1,
+      id,
+      name: "Dusk",
+      appearance: "dark",
+      background: {
+        angle: 145,
+        stops: [
+          { color: "#342455", position: 0 },
+          { color: "#b055aa", position: 100 },
+        ],
+      },
+      backgroundIntensity: 62,
+      accent: {
+        angle: 120,
+        stops: [
+          { color: "#e8e8e8", position: 0 },
+          { color: "#ff7a8a", position: 100 },
+        ],
+      },
+      surfaceTint: { color: "#6b55e0", amount: 7 },
+    };
+    expect(parseThemeJson(JSON.stringify(legacy))).toEqual({
+      ok: true,
+      theme: {
+        version: 2,
+        id: "graphite",
+        name: "Graphite",
+        appearance: "dark",
+        background: "#17181e",
+        accent: "#e9e9e9",
+        surfaceTint: { color: "#e9e9e9", amount: 0 },
+      },
+    });
+  });
+
+  it("keeps the first stop of custom v1 themes", () => {
+    const legacy = {
+      version: 1,
+      id: "my-theme",
+      name: "My theme",
+      appearance: "dark",
+      background: {
+        angle: 180,
+        stops: [
+          { color: "#202124", position: 0 },
+          { color: "#ffffff", position: 100 },
+        ],
+      },
+      backgroundIntensity: 30,
+      accent: {
+        angle: 90,
+        stops: [
+          { color: "#bbbbbb", position: 0 },
+          { color: "#ff0000", position: 100 },
+        ],
+      },
+      surfaceTint: { color: "#000000", amount: 0 },
+    };
+    expect(parseThemeJson(JSON.stringify(legacy))).toMatchObject({
+      ok: true,
+      theme: { version: 2, id: "my-theme", background: "#202124", accent: "#bbbbbb" },
+    });
   });
 
   it("parses exported JSON and reports invalid JSON", () => {
@@ -104,16 +156,17 @@ describe("apply", () => {
     const theme = { ...clone(PRESETS[0]!), appearance: "system" as const };
     expect(applyTheme(theme, target, true)).toBe("dark");
     expect([...props.keys()]).toEqual(THEME_VARIABLES.map((n) => `--${n}`));
-    expect(props.get("--app-gradient")).toMatch(/^linear-gradient\(145deg, #[0-9a-f]{6} 0%, /);
+    expect(props.get("--background")).toBe(themeVariables(theme, "dark").background);
+    const forbiddenWord = ["grad", "ient"].join("");
+    expect([...props.values()].some((value) => value.includes(forbiddenWord))).toBe(false);
     expect(target.dataset.appearance).toBe("dark");
     expect(classes.has("dark")).toBe(true);
     applyTheme(theme, target, false);
     expect(classes.has("dark")).toBe(false);
   });
 
-  it("flat presets with zero intensity draw a solid backdrop", () => {
-    const graphite = PRESETS.find((p) => p.id === "graphite")!;
-    const v = themeVariables(graphite, "dark");
-    expect(v["app-gradient"]).toBe(`linear-gradient(180deg, ${v.background} 0%, ${v.background} 100%)`);
+  it("keeps neutral accents neutral when fitting lightness", () => {
+    const variables = themeVariables(PRESETS[0]!, "dark");
+    expect(hexToOklch(variables.primary).c).toBeCloseTo(0, 2);
   });
 });

@@ -58,7 +58,6 @@
   }
   body {
     @apply bg-background text-foreground font-sans text-sm antialiased;
-    background-image: var(--app-gradient);
     font-feature-settings: "ss01", "cv11";
     user-select: none;
   }
@@ -115,10 +114,6 @@
 @utility tabular {
   font-variant-numeric: tabular-nums;
 }
-@utility bg-accent-gradient {
-  background-image: var(--accent-gradient);
-}
-
 .react-flow {
   --xy-background-color: transparent;
   --xy-node-border-radius: 8px;

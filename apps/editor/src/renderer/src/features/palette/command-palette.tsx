@@ -199,10 +199,7 @@ export function CommandPalette() {
               onSelect={() => s.setTheme(structuredClone(p))}
             >
               <span className="flex items-center gap-2">
-                <span
-                  className="h-3 w-6 rounded-sm border"
-                  style={{ background: gradientPreview(p.background.stops) }}
-                />
+                <span className="h-3 w-6 rounded-sm border" style={{ background: p.accent }} />
                 {p.name}
               </span>
             </Item>
@@ -214,6 +211,3 @@ export function CommandPalette() {
     <SceneDialogs key="scene-dialogs" {...sceneActions.dialogs} />,
   ];
 }
-
-export const gradientPreview = (stops: { color: string; position: number }[]) =>
-  `linear-gradient(90deg, ${stops.map((x) => `${x.color} ${x.position}%`).join(", ")})`;

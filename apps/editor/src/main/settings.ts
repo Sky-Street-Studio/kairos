@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import { DEFAULT_THEME, validateTheme } from "@kairos/theme";
+import { DEFAULT_THEME, parseThemeJson } from "@kairos/theme";
 import { app } from "electron";
 
 import type { LayoutPrefs, Settings } from "@shared/types";
@@ -23,7 +23,7 @@ let cached: Settings | undefined;
 
 function sanitize(raw: unknown): Settings {
   const r = (typeof raw === "object" && raw !== null ? raw : {}) as Partial<Settings>;
-  const theme = validateTheme(r.theme);
+  const theme = parseThemeJson(JSON.stringify(r.theme));
   return {
     theme: theme.ok ? theme.theme : DEFAULT_THEME,
     recentProjects: Array.isArray(r.recentProjects)

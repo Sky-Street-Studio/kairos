@@ -52,7 +52,7 @@ function LabelNode({ data, selected }: NodeProps<LabelNodeType>) {
       )}
       data-testid="graph-node"
     >
-      {data.start && <span className="bg-accent-gradient absolute inset-x-3 -top-px h-0.5 rounded-full" />}
+      {data.start && <span className="absolute inset-x-3 -top-px h-0.5 rounded-full bg-primary" />}
       <Handle type="target" position={Position.Top} className="!h-2 !w-2 !border-2 opacity-0 group-hover:opacity-100" />
       <div className="flex items-center gap-1.5">
         {data.start && <Flag className="size-3 shrink-0 text-primary" aria-label="start label" />}
