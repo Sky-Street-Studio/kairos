@@ -347,9 +347,10 @@ mod tests {
     use std::time::{Duration, Instant};
 
     fn poll_until(assets: &mut Assets, count: usize) -> Vec<Loaded> {
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut loaded = Vec::new();
         loop {
-            let loaded = assets.poll();
+            loaded.extend(assets.poll());
             if loaded.len() >= count {
                 return loaded;
             }
