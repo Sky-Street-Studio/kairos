@@ -11,7 +11,10 @@ export interface FileBuffer {
 
 export type ViewKind = "graph" | "characters" | "settings" | "assets";
 
-export type Tab = { id: string; kind: "file"; path: string } | { id: ViewKind; kind: ViewKind };
+export type Tab =
+  | { id: string; kind: "file"; path: string }
+  | { id: ViewKind; kind: ViewKind }
+  | { id: `scene:${string}`; kind: "scene"; label: string };
 
 export interface Reveal {
   path: string;
@@ -69,7 +72,10 @@ export interface TabsSlice {
   activeId: string | null;
   reveal: Reveal | null;
   cursor: { path: string; line: number } | null;
+  selectedBlock: { path: string; line: number } | null;
   openFile(path: string, line?: number): void;
+  openScene(label: string): void;
+  selectBlock(selectedBlock: { path: string; line: number } | null): void;
   openView(kind: ViewKind): void;
   closeTab(id: string): void;
   setActive(id: string): void;

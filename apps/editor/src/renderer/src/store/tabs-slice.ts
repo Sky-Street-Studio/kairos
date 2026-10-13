@@ -7,6 +7,7 @@ export const createTabsSlice: SliceCreator<TabsSlice> = (set, get) => ({
   activeId: null,
   reveal: null,
   cursor: null,
+  selectedBlock: null,
 
   openFile(path, line) {
     set((s) => ({
@@ -14,6 +15,18 @@ export const createTabsSlice: SliceCreator<TabsSlice> = (set, get) => ({
       activeId: path,
       reveal: line === undefined ? s.reveal : { path, line, nonce: ++nonce },
     }));
+  },
+
+  openScene(label) {
+    const id = `scene:${label}` as const;
+    set((s) => ({
+      tabs: s.tabs.some((t) => t.id === id) ? s.tabs : [...s.tabs, { id, kind: "scene", label }],
+      activeId: id,
+    }));
+  },
+
+  selectBlock(selectedBlock) {
+    set({ selectedBlock });
   },
 
   openView(kind) {

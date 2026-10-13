@@ -230,6 +230,13 @@ describe("app store", () => {
     expect(store.getState().canUndo).toBe(false);
   });
 
+  it("opens a scene tab once per label", () => {
+    store.getState().openScene("start");
+    store.getState().openScene("start");
+    expect(store.getState().tabs.filter((t) => t.id === "scene:start")).toHaveLength(1);
+    expect(store.getState().activeId).toBe("scene:start");
+  });
+
   it("opens, reveals and closes tabs", () => {
     const s = store.getState();
     s.openFile("script/b.kai", 3);

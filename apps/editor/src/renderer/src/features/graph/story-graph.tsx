@@ -135,7 +135,7 @@ function Graph() {
   const graphLayout = useApp((s) => s.graphLayout);
   const setNodePositions = useApp((s) => s.setNodePositions);
   const resetGraphLayout = useApp((s) => s.resetGraphLayout);
-  const goToLabel = useApp((s) => s.goToLabel);
+  const openScene = useApp((s) => s.openScene);
   const actions = useSceneActions();
   const [contextLabel, setContextLabel] = useState<string | null>(null);
   const [ghostLabel, setGhostLabel] = useState<string | null>(null);
@@ -321,7 +321,7 @@ function Graph() {
   const targetNode = selectedEdge && flow.nodes.find((node) => node.id === selectedEdge.target);
   const openNode = (label: string | null) => {
     if (label?.startsWith("missing:")) void actions.createGhost(label.slice("missing:".length));
-    else if (label) goToLabel(label);
+    else if (label) openScene(label);
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
