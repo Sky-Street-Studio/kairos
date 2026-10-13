@@ -150,6 +150,8 @@ pub enum StmtKind {
         at: Option<String>,
         with: Option<String>,
     },
+    ShowScreen(String),
+    HideScreen(String),
     Hide {
         tag: String,
         with: Option<String>,

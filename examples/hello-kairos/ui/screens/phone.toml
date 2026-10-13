@@ -1,0 +1,37 @@
+id = "phone"
+modal = true
+layer = 10
+
+[[nodes]]
+id = "root"
+type = "column"
+gap = 12
+padding = 24
+
+[[nodes]]
+id = "heading"
+parent = "root"
+type = "text"
+text = "Inventory"
+
+[[nodes]]
+id = "selected"
+parent = "root"
+type = "text"
+text = "Selected: [selected_item]"
+
+[[nodes]]
+id = "items"
+parent = "root"
+type = "list"
+binding = "inventory"
+target = "selected_item"
+
+[[nodes]]
+id = "close"
+parent = "root"
+type = "button"
+text = "Close"
+
+[nodes.action]
+type = "return"

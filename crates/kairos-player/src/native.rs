@@ -80,6 +80,7 @@ struct Running {
     gpu: Gpu,
     last: Instant,
     window: Arc<Window>,
+    shift: bool,
 }
 
 impl App {
@@ -107,7 +108,7 @@ impl App {
         let mut player = Player::new(renderer, &self.project, self.theme.clone(), assets, saves, true)?;
         player.start_audio();
         player.start();
-        Ok(Running { player, gpu, last: Instant::now(), window })
+        Ok(Running { player, gpu, last: Instant::now(), window, shift: false })
     }
 }
 
@@ -162,6 +163,7 @@ impl ApplicationHandler for App {
                 }
                 r.window.request_redraw();
             }
+            WindowEvent::ModifiersChanged(modifiers) => r.shift = modifiers.state().shift_key(),
             WindowEvent::CursorMoved { position, .. } => r.player.pointer_moved(position.x as f32, position.y as f32),
             WindowEvent::MouseInput { state: ElementState::Pressed, button, .. } => match button {
                 MouseButton::Left => r.player.pointer_down(Button::Primary),
@@ -183,7 +185,9 @@ impl ApplicationHandler for App {
                     WinitKey::Named(NamedKey::Escape) => Some(Key::Escape),
                     WinitKey::Named(NamedKey::PageUp) => Some(Key::Back),
                     WinitKey::Named(NamedKey::PageDown) => Some(Key::Forward),
-                    WinitKey::Named(NamedKey::Tab) => Some(Key::Skip),
+                    WinitKey::Named(NamedKey::Tab) => Some(if r.shift { Key::FocusPrevious } else { Key::FocusNext }),
+                    WinitKey::Named(NamedKey::ArrowUp | NamedKey::ArrowLeft) => Some(Key::FocusPrevious),
+                    WinitKey::Named(NamedKey::ArrowDown | NamedKey::ArrowRight) => Some(Key::FocusNext),
                     WinitKey::Character(c) => match c.as_str() {
                         "a" | "A" => Some(Key::Auto),
                         s => s.parse::<u8>().ok().map(Key::Digit),

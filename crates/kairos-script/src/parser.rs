@@ -214,18 +214,26 @@ impl Parser {
                         StmtKind::Scene { image: (!image.is_empty()).then_some(image), with }
                     }
                     "show" => {
-                        let image = c.words();
-                        if image.is_empty() {
-                            return Err(c.err("`show` needs an image name"));
+                        if c.keyword("screen") {
+                            StmtKind::ShowScreen(c.ident()?)
+                        } else {
+                            let image = c.words();
+                            if image.is_empty() {
+                                return Err(c.err("`show` needs an image name"));
+                            }
+                            let at = if c.keyword("at") { Some(c.ident()?) } else { None };
+                            let with = c.with_clause()?;
+                            StmtKind::Show { image, at, with }
                         }
-                        let at = if c.keyword("at") { Some(c.ident()?) } else { None };
-                        let with = c.with_clause()?;
-                        StmtKind::Show { image, at, with }
                     }
                     "hide" => {
-                        let tag = c.ident()?;
-                        let with = c.with_clause()?;
-                        StmtKind::Hide { tag, with }
+                        if c.keyword("screen") {
+                            StmtKind::HideScreen(c.ident()?)
+                        } else {
+                            let tag = c.ident()?;
+                            let with = c.with_clause()?;
+                            StmtKind::Hide { tag, with }
+                        }
                     }
                     "with" => StmtKind::With(c.ident()?),
                     "play" | "queue" => {

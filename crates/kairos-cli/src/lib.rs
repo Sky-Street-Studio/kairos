@@ -123,6 +123,8 @@ fn describe_effect(e: &Effect) -> String {
             format!("[show {}{attrs}{at}{}]", sprite.tag, with(w))
         }
         Effect::Hide { tag, with: w } => format!("[hide {tag}{}]", with(w)),
+        Effect::ShowScreen(id) => format!("[show screen {id}]"),
+        Effect::HideScreen(id) => format!("[hide screen {id}]"),
         Effect::Transition(t) => format!("[with {t}]"),
         Effect::Play { channel, asset, looped, queue, .. } => {
             let verb = if *queue { "queue" } else { "play" };

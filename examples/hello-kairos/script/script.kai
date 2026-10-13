@@ -4,12 +4,15 @@ character k "Kai"
 define player_name = "Traveler"
 default curious = 0
 default met_kai = False
+default inventory = ["key", "map", "potion"]
+default selected_item = "key"
 
 label splashscreen:
     "A little story is getting ready."
     return
 
 label start:
+    show screen phone
     scene bg room with fade
     play music "theme.ogg" loop
     show e happy at center with dissolve

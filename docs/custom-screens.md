@@ -60,22 +60,22 @@ Every screen has one root layout. Containers arrange child nodes; widgets occupy
 - `column` places children vertically.
 - `grid` places children in rows and columns with an explicit column count and optional gaps.
 
-Containers support `gap` and `padding`. Row, column and grid children can use `fixed`, `fill` or `content` sizing. `fixed` uses the declared logical-pixel size, `fill` shares remaining parent space, and `content` uses the widget's measured size. Grid children fill their cells unless they specify a fixed size.
+Containers support `gap` and `padding`. Child `width` and `height` accept a positive number for fixed logical pixels, `"fill"` to share remaining row or column space, or `"content"` to use the widget's measured size. An omitted dimension fills its cell. Grid children fill their cells unless they specify a fixed or content size. `anchor_x` accepts `left`, `center` or `right`; `anchor_y` accepts `top`, `center` or `bottom`.
 
-A node can anchor to the top, center or bottom vertically and left, center or right horizontally. Anchors position a node within its parent; they do not change its size. The root uses the player's logical viewport, with aspect-ratio handling owned by the player. Layout values use logical pixels and scale with the existing viewport rules. Layout overflow clips at the screen viewport. The first implementation does not support arbitrary coordinates or responsive breakpoints.
+Anchors position a node within its parent without changing its size. The root uses the player's logical viewport, with aspect-ratio handling owned by the player. Layout values use logical pixels and scale with the existing viewport rules. Layout overflow clips at the screen viewport. The first implementation does not support arbitrary coordinates or responsive breakpoints.
 
 ## Widgets
 
 - `text` displays literal text or a binding. Text interpolation can reference scalar values by variable name. `None` renders as empty; lists and dictionaries require a repeater.
 - `image` displays an image asset resolved by the existing asset lookup rules. An optional string binding supplies the image name.
-- `button` displays a label and runs one action on activation. Disabled state can be bound to a boolean.
+- `button` displays a label and runs one action on activation.
 - `bar` displays an integer or float within declared minimum and maximum values. Its binding is read-only.
 - `toggle` reads and writes a boolean binding.
 - `slider` reads and writes an integer or float binding within declared minimum and maximum values. Integer bindings write integers; float bindings write floats.
 - `list` presents selectable scalar values from a list or dictionary. Selection writes the selected value or dictionary key to its declared target binding.
 - `repeat` instantiates a child template for each item in a list or dictionary. A list repeats in index order; a dictionary repeats in string-key order. Each instance exposes its item, zero-based index, and, for dictionaries, key to child bindings.
 
-All bounds and bindings are validated when the project loads. A control with an invalid runtime value shows its declared fallback or stays inert; it does not coerce a string into a number or mutate the variable. Text bindings format `None`, booleans, integers, floats and strings. A list or dictionary is never implicitly stringified.
+All bounds and bindings are validated when the project loads. A control with an invalid runtime value stays inert; it does not coerce a string into a number or mutate the variable. Text bindings format `None`, booleans, integers, floats and strings. A list or dictionary is never implicitly stringified.
 
 ## Bindings and script values
 
@@ -83,7 +83,7 @@ A binding names a variable or a nested list/dictionary path, such as `gold`, `pa
 
 Bindings use the script's real `Value` variants: `None`, `Bool`, `Int`, `Float`, `Str`, `List` and `Dict`. Dictionaries have string keys. `bar` and `slider` accept only `Int` or `Float`; `toggle` accepts only `Bool`; `repeat` and `list` accept `List` or `Dict`. Repeater item bindings expose the actual nested `Value`, so a row can bind to fields in a dictionary item without converting it to a display string.
 
-Screen files do not evaluate Kairos expressions. Conditions and formatting beyond scalar interpolation are out of scope for the first version; use script labels and variables to prepare values and actions.
+Screen files do not evaluate Kairos expressions. Conditions and formatting beyond scalar interpolation are out of scope for the first version; use script labels and variables to prepare values and actions. A `repeat` child can bind `item`, `index`, and, for dictionary entries, `key`; `item` is the original nested `Value`, so paths such as `item.name` work without string conversion.
 
 ## Actions and script entry points
 
@@ -98,17 +98,17 @@ A button action is one of:
 
 Screen actions do not execute arbitrary script. `jump` and `call` target labels, using the same label validation as script statements. A screen can be opened by script with `show screen <id>` and removed with `hide screen <id>`. Showing an already-open screen does not create a duplicate instance. `return` in a screen action closes that screen; the script statement `return` keeps its existing meaning of returning from a label.
 
-A screen action that changes a binding updates game state before navigation takes effect. A failed action leaves the screen stack and bound values unchanged and reports a player diagnostic. The editor can expose the same action values as typed controls.
+A list writes its selection before running its optional action and stays open until that action closes or hides it. A screen action that changes a binding updates game state before navigation takes effect. Invalid runtime actions report a player diagnostic and do not perform navigation. The editor can expose the same action values as typed controls.
 
 ## Modality, layering and input
 
 Screens form an ordered stack above the story view. `layer` orders screens with lower values behind higher values; the most recently shown screen wins ties. A modal screen blocks pointer and keyboard/gamepad input to screens and story controls below it. A non-modal screen leaves uncovered controls below interactive. Hiding a screen removes only that instance; `return` removes the topmost one.
 
-Each screen has one focused widget when it contains focusable controls. Focus follows document order by default, with an optional explicit tab order. Tab and Shift-Tab move focus; arrows move among list items and directional controls. Enter or Space activates the focused control. Escape invokes the screen's configured close action when present; it does not close a screen implicitly. The player maps gamepad confirm, cancel and directional input to the same focus and activation model. Pointer activation and focus highlight remain available on both web and native players.
+Each screen has one focused widget when it contains focusable controls. Focus follows document order. Tab and Shift-Tab move focus; arrow keys move to the previous or next focusable control. Enter or Space activates the focused control. Escape invokes the screen's configured close action when present; it does not close a screen implicitly. Custom screens add no gamepad-specific mappings; the player uses its default confirm, cancel and navigation mapping. Pointer activation and focus highlight remain available on both web and native players.
 
 ## Theme and save/load
 
-Screens use the interface font and configured colors from `ui/theme.toml`, with built-in defaults when a value is absent. A widget may override a color or font asset. Screen files do not replace `ui/theme.toml`; its values remain shared by the built-in player and custom screens.
+Screens inherit the interface font and the theme's text, accent, panel and border colors from `ui/theme.toml`, with built-in defaults when a value is absent. A widget may override only its color. Screen files do not replace `ui/theme.toml`; its values remain shared by the built-in player and custom screens.
 
 Screen layout, focus, and the visible screen stack are presentation state, not saved game state. A normal save captures the script variables and VM state; loading redraws the active story and does not restore an open custom screen. Variables needed after a new playthrough belong under `persistent.*` and persist outside save slots. Ordinary variables, including lists and dictionaries, follow the existing save-slot behavior. Screen input changes the same variables that scripts read, so no separate screen save format is needed.
 
@@ -130,10 +130,10 @@ Follow the player and editor test pattern in `visual-story-editor.md`:
 - **Editor tests:** create and rename a screen; add and reorder nodes; edit typed properties; choose bindings and actions; round-trip TOML; report invalid nodes; preview at the target viewport.
 - **End-to-end:** open a custom screen from script, change a bound value, return to the story, and verify the script reads the changed value. Repeat with save/load and a second playthrough for persistent data.
 
-## Open questions
+## Decisions
 
-- Should the first release support custom transitions, or keep screen changes immediate?
-- Should `list` choose an item and return immediately, or remain open until the user confirms?
-- Which theme roles should custom screens inherit, and which may authors override per widget?
-- Should a future editor preserve unknown TOML keys for forward compatibility, or reject them as the player does?
-- Do gamepad directional controls need a configurable mapping beyond the player's default confirm, cancel and navigation actions?
+- Screen changes are immediate; the first release has no custom transitions.
+- `list` writes the selection and stays open until an action closes it.
+- Screens inherit the theme's font, text, accent, panel and border colors. Widgets may override only color.
+- The player rejects unknown TOML keys, and the future editor will do the same.
+- Gamepad input uses only the player's default confirm, cancel and navigation mapping.

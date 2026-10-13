@@ -126,6 +126,7 @@ export function PreviewPane() {
             project.uiTitle,
             project.assets.map((asset) => asset.path),
             project.translations,
+            project.uiScreens,
           ),
           (state) => setDebugState(JSON.parse(state)),
         );

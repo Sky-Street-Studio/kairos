@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::{PlayerProjectJson, PlayerScriptJson, PlayerTranslationJson, Project, ProjectError};
+use crate::{PlayerProjectJson, PlayerScreenJson, PlayerScriptJson, PlayerTranslationJson, Project, ProjectError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExportTarget {
@@ -75,6 +75,19 @@ fn export_web(
         .iter()
         .map(|path| Ok(PlayerScriptJson { path: relative_path(root, path)?, source: std::fs::read_to_string(path)? }))
         .collect::<Result<Vec<_>, std::io::Error>>()?;
+    let screens = std::fs::read_dir(root.join("ui/screens"))
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().extension().is_some_and(|extension| extension == "toml"))
+        .map(|entry| {
+            Ok(PlayerScreenJson {
+                path: relative_path(root, &entry.path())?,
+                source: std::fs::read_to_string(entry.path())?,
+            })
+        })
+        .collect::<Result<Vec<_>, std::io::Error>>()?;
     let translations = std::fs::read_dir(root.join("tl"))
         .ok()
         .into_iter()
@@ -93,6 +106,7 @@ fn export_web(
     let game = PlayerProjectJson {
         manifest: std::fs::read_to_string(root.join("kairos.toml"))?,
         scripts,
+        screens,
         translations,
         asset_base_url: "./assets/".into(),
         assets,
@@ -461,12 +475,14 @@ mod tests {
         let _ = std::fs::remove_dir_all(&pkg);
         std::fs::create_dir_all(root.join("script")).unwrap();
         std::fs::create_dir_all(root.join("assets/images")).unwrap();
-        std::fs::create_dir_all(root.join("ui")).unwrap();
+        std::fs::create_dir_all(root.join("ui/screens")).unwrap();
         std::fs::create_dir_all(root.join("tl")).unwrap();
         std::fs::create_dir_all(&pkg).unwrap();
         std::fs::write(root.join("kairos.toml"), "name = 'test'").unwrap();
         std::fs::write(root.join("script/start.kai"), "label start:\n    return\n").unwrap();
         std::fs::write(root.join("ui/theme.toml"), "").unwrap();
+        std::fs::write(root.join("ui/screens/phone.toml"), "id = 'phone'\n[[nodes]]\nid = 'root'\ntype = 'column'\n")
+            .unwrap();
         std::fs::write(root.join("tl/fr.toml"), "hello = 'bonjour'").unwrap();
         std::fs::write(root.join("assets/images/bg.png"), []).unwrap();
         std::fs::write(pkg.join("kairos_player.js"), "export class WebPlayer {}").unwrap();
@@ -477,10 +493,13 @@ mod tests {
             serde_json::from_slice(&std::fs::read(output.join("game.json")).unwrap()).unwrap();
         assert_eq!(json.manifest, "name = 'test'");
         assert_eq!(json.scripts[0].path, "script/start.kai");
+        assert_eq!(json.screens[0].path, "ui/screens/phone.toml");
+        assert!(json.screens[0].source.contains("id = 'phone'"));
         assert_eq!(json.translations[0].lang, "fr");
         assert_eq!(json.asset_base_url, "./assets/");
         assert_eq!(json.assets[0], "assets/images/bg.png");
         assert_eq!(json.theme.as_deref(), Some(""));
+        assert!(output.join("ui/screens/phone.toml").is_file());
         assert!(output.join("kairos_player.js").is_file());
         assert!(std::fs::read_to_string(output.join("index.html")).unwrap().contains("<title>test</title>"));
         assert_eq!(std::fs::read_to_string(output.join("script/start.kai")).unwrap(), "label start:\n    return\n");

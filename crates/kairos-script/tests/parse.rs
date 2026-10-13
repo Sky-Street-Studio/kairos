@@ -58,6 +58,15 @@ fn parses_title_flow_statements() {
 }
 
 #[test]
+fn parses_custom_screen_statements_without_confusing_sprite_tags() {
+    let (stmts, diagnostics) = parse("label start:\n    show screen phone\n    hide screen phone\n");
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    let kairos_script::StmtKind::Label { body, .. } = &stmts[0].kind else { panic!() };
+    assert_eq!(body[0].kind, kairos_script::StmtKind::ShowScreen("phone".into()));
+    assert_eq!(body[1].kind, kairos_script::StmtKind::HideScreen("phone".into()));
+}
+
+#[test]
 fn not_binds_looser_than_comparison() {
     let (stmts, _) = parse("default x = not 1 == 2");
     let kairos_script::StmtKind::Default { value, .. } = &stmts[0].kind else { panic!() };

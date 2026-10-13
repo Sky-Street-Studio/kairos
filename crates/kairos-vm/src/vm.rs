@@ -61,6 +61,8 @@ pub enum Effect {
     Scene { image: Option<Vec<String>>, with: Option<String> },
     Show { sprite: Sprite, with: Option<String> },
     Hide { tag: String, with: Option<String> },
+    ShowScreen(String),
+    HideScreen(String),
     Transition(String),
     Play { channel: String, asset: String, looped: bool, queue: bool, fadein: Option<f64> },
     Stop { channel: String, fadeout: Option<f64> },
@@ -196,6 +198,25 @@ impl Vm {
 
     pub fn history_len(&self) -> usize {
         self.history.len()
+    }
+
+    pub fn set_variable_path(&mut self, name: &str, indices: &[Value], value: Value) -> Result<(), RuntimeError> {
+        let target = self.variable_mut(name, false)?;
+        eval::assign_at(target, indices, AssignOp::Set, value).map_err(|message| self.error(message))
+    }
+
+    pub fn jump_to_label(&mut self, name: &str) -> Result<(), RuntimeError> {
+        self.state.pc = self.label(name, self.state.pc)?;
+        self.state.menu = None;
+        Ok(())
+    }
+
+    pub fn call_label(&mut self, name: &str) -> Result<(), RuntimeError> {
+        let target = self.label(name, self.state.pc)?;
+        self.state.stack.push(self.state.pc.saturating_sub(1));
+        self.state.pc = target;
+        self.state.menu = None;
+        Ok(())
     }
 
     pub fn set_variable(&mut self, name: &str, value: Value) -> Result<(), RuntimeError> {
@@ -395,6 +416,14 @@ impl Vm {
                 Instr::Hide { tag, with } => {
                     self.state.stage.sprites.retain(|s| &s.tag != tag);
                     self.effects.push(Effect::Hide { tag: tag.clone(), with: with.clone() });
+                    self.state.pc += 1;
+                }
+                Instr::ShowScreen(id) => {
+                    self.effects.push(Effect::ShowScreen(id.clone()));
+                    self.state.pc += 1;
+                }
+                Instr::HideScreen(id) => {
+                    self.effects.push(Effect::HideScreen(id.clone()));
                     self.state.pc += 1;
                 }
                 Instr::With(t) => {

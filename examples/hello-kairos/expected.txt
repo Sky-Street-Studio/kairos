@@ -1,3 +1,4 @@
+[show screen phone]
 [scene bg room with fade]
 [play music theme.ogg loop]
 [show e happy at center with dissolve]

@@ -89,8 +89,10 @@ pub struct Game {
     backlog: Vec<Line>,
     /// Backlog length before each shown interaction, parallel to the VM's rollback history.
     marks: Vec<usize>,
+    screen_history: Vec<Vec<String>>,
     signals: Vec<Signal>,
     skip_timer: f32,
+    custom_screens: Vec<String>,
 }
 
 impl Game {
@@ -106,8 +108,10 @@ impl Game {
             translations: BTreeMap::new(),
             backlog: Vec::new(),
             marks: Vec::new(),
+            screen_history: Vec::new(),
             signals: Vec::new(),
             skip_timer: 0.0,
+            custom_screens: Vec::new(),
         })
     }
 
@@ -194,6 +198,24 @@ impl Game {
         &self.vm.state().stage
     }
 
+    pub fn custom_screens(&self) -> &[String] {
+        &self.custom_screens
+    }
+
+    pub fn show_custom_screen(&mut self, id: &str) {
+        if !self.custom_screens.iter().any(|open| open == id) {
+            self.custom_screens.push(id.to_string());
+        }
+    }
+
+    pub fn hide_custom_screen(&mut self, id: &str) {
+        self.custom_screens.retain(|open| open != id);
+    }
+
+    pub fn return_custom_screen(&mut self) {
+        self.custom_screens.pop();
+    }
+
     pub fn audio_state(&self) -> &std::collections::BTreeMap<String, kairos_vm::Track> {
         &self.vm.state().audio
     }
@@ -259,12 +281,37 @@ impl Game {
         self.vm.set_variable(name, value)
     }
 
+    pub fn set_variable_path(
+        &mut self,
+        name: &str,
+        indices: &[kairos_vm::Value],
+        value: kairos_vm::Value,
+    ) -> Result<(), RuntimeError> {
+        self.vm.set_variable_path(name, indices, value)
+    }
+
+    pub fn jump_label(&mut self, name: &str) -> Result<(), RuntimeError> {
+        self.vm.jump_to_label(name)?;
+        self.step();
+        Ok(())
+    }
+
+    pub fn call_label(&mut self, name: &str) -> Result<(), RuntimeError> {
+        self.vm.call_label(name)?;
+        self.step();
+        Ok(())
+    }
+
     pub fn debug_rollback_to(&mut self, position: usize) -> bool {
         if !self.vm.rollback_to(position) {
             return false;
         }
         self.backlog.truncate(*self.marks.get(position).unwrap_or(&0));
+        if let Some(screens) = self.screen_history.get(position).cloned() {
+            self.custom_screens = screens;
+        }
         self.marks.truncate(position);
+        self.screen_history.truncate(position);
         self.mode = Mode::Normal;
         self.signals.push(Signal::Resync);
         self.step();
@@ -310,6 +357,10 @@ impl Game {
         }
         self.mode = Mode::Normal;
         self.marks.pop();
+        self.screen_history.pop();
+        if let Some(screens) = self.screen_history.pop() {
+            self.custom_screens = screens;
+        }
         if let Some(mark) = self.marks.pop() {
             self.backlog.truncate(mark);
         }
@@ -407,6 +458,8 @@ impl Game {
     fn reset(&mut self) {
         self.backlog.clear();
         self.marks.clear();
+        self.screen_history.clear();
+        self.custom_screens.clear();
         self.mode = Mode::Normal;
         self.screen = Screen::Game;
     }
@@ -419,6 +472,8 @@ impl Game {
                 Effect::Scene { with, .. } | Effect::Show { with, .. } | Effect::Hide { with, .. } => {
                     transition = with.or(transition);
                 }
+                Effect::ShowScreen(id) => self.show_custom_screen(&id),
+                Effect::HideScreen(id) => self.hide_custom_screen(&id),
                 Effect::Transition(t) => transition = Some(t),
                 audio @ (Effect::Play { .. } | Effect::Stop { .. }) => self.signals.push(Signal::Audio(audio)),
             }
@@ -435,6 +490,7 @@ impl Game {
         };
         if !matches!(event, Event::End) {
             self.marks.push(self.backlog.len());
+            self.screen_history.push(self.custom_screens.clone());
         }
         self.shown = match event {
             Event::Say { who, color, text } => {
@@ -737,6 +793,67 @@ label start:
         assert_eq!(game.shown, Shown::Quit);
         game.proceed();
         assert_eq!(text(&game), "Done");
+    }
+
+    #[test]
+    fn script_screen_statements_update_the_presentation_stack() {
+        let project = kairos_project::Project::from_sources(
+            r#"name = "test""#,
+            [(
+                std::path::PathBuf::from("script/main.kai"),
+                r#"label start:
+    show screen phone
+    "Open."
+    hide screen phone
+    "Closed."
+"#
+                .into(),
+            )],
+        )
+        .unwrap();
+        let mut game = Game::new(project.program).unwrap();
+        game.settings.text_speed = Settings::INSTANT;
+        game.start("start");
+        assert_eq!(text(&game), "Open.");
+        assert_eq!(game.custom_screens(), ["phone"]);
+        game.proceed();
+        assert_eq!(text(&game), "Closed.");
+        assert!(game.custom_screens().is_empty());
+    }
+
+    #[test]
+    fn rollback_restores_the_custom_screen_stack_at_the_history_point() {
+        let project = kairos_project::Project::from_sources(
+            "name = \"t\"",
+            [(
+                PathBuf::from("script/a.kai"),
+                "label start:\n    show screen phone\n    \"First\"\n    \"Second\"\n".into(),
+            )],
+        )
+        .unwrap();
+        let mut game = Game::new(project.program).unwrap();
+        game.settings.text_speed = Settings::INSTANT;
+        game.start("start");
+        assert_eq!(game.custom_screens(), ["phone"]);
+        game.proceed();
+        game.show_custom_screen("inventory");
+
+        assert!(game.rollback());
+        assert_eq!(game.custom_screens(), ["phone"]);
+    }
+
+    #[test]
+    fn custom_screen_stack_deduplicates_hides_and_is_not_restored_from_saves() {
+        let mut game = game();
+        game.show_custom_screen("phone");
+        game.show_custom_screen("phone");
+        assert_eq!(game.custom_screens(), ["phone"]);
+        let saved = game.save().unwrap();
+        game.show_custom_screen("inventory");
+        game.hide_custom_screen("phone");
+        assert_eq!(game.custom_screens(), ["inventory"]);
+        game.load(&saved).unwrap();
+        assert!(game.custom_screens().is_empty());
     }
 
     #[test]
