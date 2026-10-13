@@ -26,11 +26,11 @@ The language, compiler, interpreter and graphical player work, natively and in t
 | --- | --- |
 | `kairos-script` | Parser for `.kai` files, with diagnostics that keep parsing past errors |
 | `kairos-vm` | Compiler to a flat instruction list, interpreter, rollback, saves |
-| `kairos-project` | `kairos.toml`, script loading and the asset naming rule |
+| `kairos-project` | Project loading, checks, export assembly and the asset naming rule |
 | `kairos-render` | wgpu renderer: scene, text (glyphon), fade and dissolve transitions |
 | `kairos-audio` | kira mixer with `music`, `sound` and `voice` channels |
 | `kairos-player` | Window or browser canvas with the default game UI |
-| `kairos-cli` | `kairos check`, `kairos translate` and `kairos run` |
+| `kairos-cli` | `kairos check`, `kairos translate`, `kairos run` and `kairos export` |
 | `kairos-napi` | Node bindings for the editor: diagnostics, outline, story graph |
 
 Saves point at statements by a stable ID (label, source-text hash and occurrence), so a save keeps working after edits that leave the saved line and its call sites alone.
@@ -41,6 +41,8 @@ Saves point at statements by a stable ID (label, source-text hash and occurrence
 cargo run -p kairos-cli -- run examples/hello-kairos
 cargo run -p kairos-cli -- check examples/hello-kairos
 cargo run -p kairos-cli -- translate examples/hello-kairos --lang ja
+cargo run -p kairos-cli -- export examples/hello-kairos --target web --out /tmp/hello-kairos-web
+cargo run -p kairos-cli -- export examples/hello-kairos --target desktop --out /tmp/hello-kairos-desktop
 cargo run -p kairos-cli -- run --headless examples/hello-kairos --inputs examples/hello-kairos/inputs.txt
 cargo test --workspace
 ```
@@ -58,6 +60,10 @@ bun run --cwd apps/editor test:e2e       # Playwright Electron smoke test
 ```
 
 The preview pane loads the WebAssembly player from `crates/kairos-player/pkg` and shows build instructions when it is missing.
+
+## Export
+
+`kairos export <project> --target web|desktop --out <directory>` checks the project, then builds a web folder or a desktop bundle for the host platform. Web export includes `index.html`, the wasm player, `game.json` and project assets; run it from any static host. Build the web player first with `scripts/build-wasm.sh`, or pass its package directory with `--player-pkg`. Desktop export copies the running `kairos` executable; double-clicking the exported app starts the project bundled beside it. The editor exposes the same targets through the command palette's **Export game** command.
 
 ## Playing
 

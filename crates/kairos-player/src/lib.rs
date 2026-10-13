@@ -13,6 +13,6 @@ pub mod view;
 mod web;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use native::{load_theme, run};
+pub use native::{load_theme, run, run_bundled};
 #[cfg(target_arch = "wasm32")]
 pub use web::WebPlayer;

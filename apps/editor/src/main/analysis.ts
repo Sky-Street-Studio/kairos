@@ -9,11 +9,19 @@ interface Addon {
   checkProject(files: SourceFile[]): { diagnostics: Analysis["diagnostics"] };
   outline(source: string): Outline;
   storyGraph(files: SourceFile[]): StoryGraph;
+  exportGame(
+    project: string,
+    target: "web" | "desktop",
+    output: string,
+    playerBinary?: string,
+    playerPkg?: string,
+  ): string;
 }
 
 let addon: Addon | undefined;
 
-function load(): Addon {
+/** The packaged app ships the binding under Resources, outside node_modules. */
+export function napi(): Addon {
   addon ??= createRequire(import.meta.url)(
     app.isPackaged ? join(process.resourcesPath, "kairos-napi", "index.js") : "@kairos/napi",
   ) as Addon;
@@ -21,7 +29,7 @@ function load(): Addon {
 }
 
 export function analyze(files: SourceFile[]): Analysis {
-  const k = load();
+  const k = napi();
   return {
     diagnostics: k.checkProject(files).diagnostics,
     outlines: Object.fromEntries(files.map((f) => [f.path, k.outline(f.source)])),

@@ -5,6 +5,7 @@ import {
   FolderOpen,
   Hash,
   Network,
+  PackageOpen,
   PanelBottom,
   PanelLeft,
   PanelRight,
@@ -14,12 +15,13 @@ import {
   Settings2,
   UsersRound,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { Kbd } from "@/components/ui/input";
 import { modKey } from "@/lib/utils";
 import { appStore, useApp } from "@/store";
 
+import { ExportDialog } from "../export/export-dialog";
 import { newProjectFromTemplate, openProjectDialog } from "../shell/actions";
 
 function Item({
@@ -55,6 +57,7 @@ const groupClass =
   "[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:text-2xs [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted-foreground";
 
 export function CommandPalette() {
+  const [exportOpen, setExportOpen] = useState(false);
   const open = useApp((s) => s.paletteOpen);
   const setOpen = useApp((s) => s.setPaletteOpen);
   const project = useApp((s) => s.project);
@@ -64,8 +67,9 @@ export function CommandPalette() {
   const s = appStore().getState();
   const mod = modKey();
 
-  return (
+  return [
     <Command.Dialog
+      key="palette"
       open={open}
       onOpenChange={setOpen}
       label="Command palette"
@@ -113,6 +117,9 @@ export function CommandPalette() {
               </Item>
               <Item value="characters manager" icon={<UsersRound />} onSelect={() => s.openView("characters")}>
                 Manage characters
+              </Item>
+              <Item value="export game" icon={<PackageOpen />} onSelect={() => setExportOpen(true)}>
+                Export game…
               </Item>
               <Item value="save all files" icon={<Save />} hint={<Kbd>{mod}⌥S</Kbd>} onSelect={() => void s.saveAll()}>
                 Save all
@@ -178,8 +185,9 @@ export function CommandPalette() {
           ))}
         </Command.Group>
       </Command.List>
-    </Command.Dialog>
-  );
+    </Command.Dialog>,
+    <ExportDialog key="export" open={exportOpen} onClose={() => setExportOpen(false)} />,
+  ];
 }
 
 export const gradientPreview = (stops: { color: string; position: number }[]) =>

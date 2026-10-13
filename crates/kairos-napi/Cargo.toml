@@ -10,6 +10,7 @@ crate-type = ["cdylib"]
 [dependencies]
 kairos-script.workspace = true
 kairos-vm.workspace = true
+kairos-project.workspace = true
 napi = { version = "3", default-features = false, features = ["napi6"] }
 napi-derive = "3"
 

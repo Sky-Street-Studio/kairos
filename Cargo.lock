@@ -1361,6 +1361,7 @@ dependencies = [
 name = "kairos-napi"
 version = "0.1.0"
 dependencies = [
+ "kairos-project",
  "kairos-script",
  "kairos-vm",
  "napi",
@@ -1398,6 +1399,7 @@ dependencies = [
  "kairos-script",
  "kairos-vm",
  "serde",
+ "serde_json",
  "thiserror 2.0.21",
  "toml",
 ]
