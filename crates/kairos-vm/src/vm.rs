@@ -1,7 +1,8 @@
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use kairos_script::{Speaker, Value};
+use kairos_script::{AssignOp, Speaker, Value};
 use serde::{Deserialize, Serialize};
 
 use crate::eval::{self, Scope};
@@ -37,6 +38,9 @@ pub struct State {
     pub audio: BTreeMap<String, Track>,
     /// Jump targets of the visible choices while a menu is waiting for input.
     pub menu: Option<Vec<usize>>,
+    /// Random generator state. A `Cell` because expressions draw numbers while only reading
+    /// the rest of the state.
+    pub rng: Cell<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -98,6 +102,7 @@ struct Env<'a> {
     constants: &'a BTreeMap<String, Value>,
     debug_overrides: &'a BTreeMap<String, Value>,
     persistent: &'a BTreeMap<String, Value>,
+    rng: &'a Cell<u64>,
 }
 
 static NONE: Value = Value::None;
@@ -108,6 +113,16 @@ impl Scope for Env<'_> {
             return Some(self.persistent.get(name).unwrap_or(&NONE));
         }
         self.store.get(name).or_else(|| self.debug_overrides.get(name)).or_else(|| self.constants.get(name))
+    }
+
+    /// splitmix64: small, fast and good enough for story randomness.
+    fn random(&self) -> u64 {
+        let state = self.rng.get().wrapping_add(0x9e37_79b9_7f4a_7c15);
+        self.rng.set(state);
+        let mut z = state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        z ^ (z >> 31)
     }
 }
 
@@ -237,6 +252,11 @@ impl Vm {
         self.persistent_changed = true;
     }
 
+    /// Seeds `random()`, `randint()` and `choice()`. Rollback and loads replay the same draws.
+    pub fn seed_random(&mut self, seed: u64) {
+        self.state.rng.set(seed);
+    }
+
     pub fn rollback_to(&mut self, position: usize) -> bool {
         if position + 1 >= self.history.len() {
             return false;
@@ -278,12 +298,13 @@ impl Vm {
             self.last_pc = pc;
             match &program.instrs[pc] {
                 Instr::Say { speaker, text } => {
+                    // Before interpolating, so rollback replays the same random draws.
+                    self.checkpoint();
                     let id = &program.ids[pc];
                     let text = self.interpolate(text, id)?;
                     let (who, color) = self.speaker(speaker.as_ref(), id)?;
                     self.line_seen = self.persistent.seen.contains(id);
                     self.displayed = Some(pc);
-                    self.checkpoint();
                     self.state.pc += 1;
                     return Ok(Event::Say { who, color, text });
                 }
@@ -293,6 +314,7 @@ impl Vm {
                     return Ok(Event::Pause(*d));
                 }
                 Instr::Menu { caption, choices } => {
+                    self.checkpoint();
                     let id = &program.ids[pc];
                     let caption =
                         caption.as_ref().map(|(_, t)| self.interpolate(t, &format!("{id}#caption"))).transpose()?;
@@ -311,7 +333,6 @@ impl Vm {
                     if targets.is_empty() {
                         return Err(self.error("no menu choice is available"));
                     }
-                    self.checkpoint();
                     self.state.menu = Some(targets);
                     return Ok(Event::Menu { caption, choices: labels });
                 }
@@ -340,19 +361,17 @@ impl Vm {
                         _ => unreachable!(),
                     });
                 }
-                Instr::Assign { name, op, value } => {
+                Instr::Assign { name, index, op, value } => {
                     let rhs = self.eval(value, pc)?;
-                    if is_persistent(name) {
-                        let v = eval::assign(*op, self.persistent.values.get(name), rhs).map_err(|m| self.error(m))?;
-                        self.set_persistent_value(name, v);
-                        self.state.pc += 1;
-                        continue;
-                    }
-                    if self.constants.contains_key(name) && !self.state.store.contains_key(name) {
-                        return Err(self.error(format!("`{name}` is a constant (define); use `default` for variables")));
-                    }
-                    let v = eval::assign(*op, self.state.store.get(name), rhs).map_err(|m| self.error(m))?;
-                    self.state.store.insert(name.clone(), v);
+                    let keys = index.iter().map(|e| self.eval(e, pc)).collect::<Result<Vec<_>, _>>()?;
+                    let target = self.variable_mut(name, keys.is_empty() && *op == AssignOp::Set)?;
+                    eval::assign_at(target, &keys, *op, rhs).map_err(|m| self.error(m))?;
+                    self.state.pc += 1;
+                }
+                Instr::Mutate { name, method, args } => {
+                    let args = args.iter().map(|e| self.eval(e, pc)).collect::<Result<Vec<_>, _>>()?;
+                    let target = self.variable_mut(name, false)?;
+                    eval::mutate(target, method, args).map_err(|m| self.error(m))?;
                     self.state.pc += 1;
                 }
                 Instr::Scene { image, with } => {
@@ -440,6 +459,23 @@ impl Vm {
         self.history.push(self.state.clone());
     }
 
+    /// The variable a statement writes to. `create` allows a plain `$ x = ...` to introduce a
+    /// new variable; everything else must change one that exists.
+    fn variable_mut(&mut self, name: &str, create: bool) -> Result<&mut Value, RuntimeError> {
+        if is_persistent(name) {
+            self.persistent_changed = true;
+            return Ok(self.persistent.values.entry(name.to_string()).or_insert(Value::None));
+        }
+        if self.constants.contains_key(name) && !self.state.store.contains_key(name) {
+            return Err(self.error(format!("`{name}` is a constant (define); use `default` for variables")));
+        }
+        if create {
+            return Ok(self.state.store.entry(name.to_string()).or_insert(Value::None));
+        }
+        let missing = self.error(format!("`{name}` is not defined"));
+        self.state.store.get_mut(name).ok_or(missing)
+    }
+
     fn speaker(
         &self,
         speaker: Option<&Speaker>,
@@ -465,6 +501,7 @@ impl Vm {
             constants: &self.constants,
             debug_overrides: &self.debug_overrides,
             persistent: &self.persistent.values,
+            rng: &self.state.rng,
         }
     }
 

@@ -143,6 +143,7 @@ impl Game {
         match Vm::new(self.program.clone()) {
             Ok(mut vm) => {
                 vm.set_persistent(self.vm.persistent().clone());
+                vm.seed_random(crate::saves::timestamp() as u64);
                 vm.set_translations(self.translations.get(&self.language).cloned().unwrap_or_default());
                 for (name, value) in overrides {
                     vm.seed_variable(name, value.clone());

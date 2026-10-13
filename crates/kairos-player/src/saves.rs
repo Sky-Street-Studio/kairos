@@ -186,12 +186,12 @@ impl SaveStore {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn timestamp() -> u128 {
+pub(crate) fn timestamp() -> u128 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos()
 }
 
 #[cfg(target_arch = "wasm32")]
-fn timestamp() -> u128 {
+pub(crate) fn timestamp() -> u128 {
     (js_sys::Date::now() * 1_000_000.0) as u128
 }
 

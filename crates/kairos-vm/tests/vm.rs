@@ -271,3 +271,142 @@ fn persistent_files_reject_other_data() {
     assert!(Persistent::from_bytes(b"KSAV").is_err());
     assert!(Persistent::from_bytes(&[]).is_err());
 }
+
+fn lines(src: &str) -> Vec<String> {
+    let p = program(src);
+    let mut vm = started(&p);
+    let mut out = Vec::new();
+    loop {
+        match vm.advance().unwrap() {
+            Event::Say { text, .. } => out.push(text),
+            Event::End => return out,
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn lists_and_dicts_read_like_python() {
+    let out = lines(
+        r#"
+default inventory = ["key", "map"]
+default affection = {"kai": 3, "eileen": 5}
+label start:
+    "[inventory[0]] [inventory[-1]] [len(inventory)]"
+    "[affection['eileen']] [len(affection)]"
+    if "map" in inventory and "rope" not in inventory:
+        "Has the map."
+    "[inventory] [affection]"
+    "[([1, 2] + [3])] [len([]) == 0] [max(affection['kai'], 4)]"
+    "[affection.get('nobody', 0)] [affection.keys()]"
+"#,
+    );
+    assert_eq!(
+        out,
+        [
+            "key map 2",
+            "5 2",
+            "Has the map.",
+            "['key', 'map'] {'eileen': 5, 'kai': 3}",
+            "[1, 2, 3] True 4",
+            "0 ['eileen', 'kai']",
+        ]
+    );
+}
+
+#[test]
+fn bad_indexes_name_the_problem() {
+    let p = program("default xs = [1]\nlabel start:\n    \"[xs[3]]\"\n");
+    let err = started(&p).advance().unwrap_err();
+    assert!(err.message.contains("index 3 is out of range"), "{}", err.message);
+    let p = program("default d = {}\nlabel start:\n    \"[d['k']]\"\n");
+    let err = started(&p).advance().unwrap_err();
+    assert!(err.message.contains("no key 'k'"), "{}", err.message);
+}
+
+#[test]
+fn lists_and_dicts_change_in_place_and_roll_back() {
+    let p = program(
+        r#"
+default inventory = []
+default stats = {"kai": {"affection": 0}}
+default persistent.gallery = []
+label start:
+    $ inventory.append("key")
+    $ inventory.extend(["map", "rope"])
+    $ inventory.insert(0, "coin")
+    $ inventory.remove("map")
+    $ stats["kai"]["affection"] += 2
+    $ stats["eileen"] = {"affection": 1}
+    $ persistent.gallery.append("cg_beach")
+    "[inventory] [stats['kai']['affection']] [len(stats)]"
+    $ inventory.pop()
+    $ inventory[0] = "gem"
+    $ stats.pop("eileen")
+    "[inventory] [stats.keys()] [persistent.gallery]"
+"#,
+    );
+    let mut vm = started(&p);
+    assert_eq!(say(vm.advance().unwrap()), "['coin', 'key', 'rope'] 2 2");
+    assert!(vm.take_persistent_changed());
+    assert_eq!(say(vm.advance().unwrap()), "['gem', 'key'] ['kai'] ['cg_beach']");
+    assert!(vm.rollback());
+    assert_eq!(say(vm.advance().unwrap()), "['coin', 'key', 'rope'] 2 2");
+}
+
+#[test]
+fn mutating_a_constant_or_using_a_mutating_method_as_a_value_fails() {
+    let p = program("define ROUTES = [\"a\"]\nlabel start:\n    $ ROUTES.append(\"b\")\n    \"x\"\n");
+    let err = started(&p).advance().unwrap_err();
+    assert!(err.message.contains("constant"), "{}", err.message);
+    let p = program("default xs = []\nlabel start:\n    \"[xs.append(1)]\"\n");
+    let err = started(&p).advance().unwrap_err();
+    assert!(err.message.contains("use it as its own statement"), "{}", err.message);
+}
+
+#[test]
+fn random_draws_replay_after_rollback_and_load() {
+    let p = program(
+        "default roll = 0\nlabel start:\n    $ roll = randint(1, 1000000)\n    \"[roll] [randint(1, 1000000)]\"\n    \"[choice(['a', 'b', 'c'])] [random() < 1.0] [randint(3, 3)]\"\n",
+    );
+    let seeded = |seed| {
+        let mut vm = Vm::new(p.clone()).unwrap();
+        vm.seed_random(seed);
+        vm.start("start").unwrap();
+        vm
+    };
+    let mut vm = seeded(7);
+    let first = say(vm.advance().unwrap());
+    let save = vm.save().unwrap();
+    let second = say(vm.advance().unwrap());
+    assert!(second.ends_with(" True 3"), "{second}");
+
+    assert!(vm.rollback());
+    assert_eq!(say(vm.advance().unwrap()), first);
+    assert_eq!(say(vm.advance().unwrap()), second);
+
+    let mut loaded = Vm::load(p.clone(), &save).unwrap();
+    assert_eq!(say(loaded.advance().unwrap()), first);
+    assert_eq!(say(loaded.advance().unwrap()), second);
+
+    assert_eq!(say(seeded(7).advance().unwrap()), first);
+    assert_ne!(say(seeded(8).advance().unwrap()), first);
+}
+
+#[test]
+fn unknown_functions_and_methods_are_compile_errors() {
+    let (stmts, _) = kairos_script::parse(
+        "default xs = []\nlabel start:\n    $ n = lenn(xs)\n    $ xs.apend(1)\n    if xs.sizes() > 0:\n        \"[randomint(1, 2)]\"\n    $ xs.append(len(xs))\n",
+    );
+    let (_, diags) = kairos_vm::compile(&[stmts]);
+    let messages: Vec<_> = diags.iter().map(|(_, d)| (d.line, d.message.clone())).collect();
+    assert_eq!(
+        messages,
+        [
+            (3, "there is no function `lenn`".to_string()),
+            (4, "there is no method `apend`".to_string()),
+            (5, "there is no method `sizes`".to_string()),
+            (6, "there is no function `randomint`".to_string()),
+        ]
+    );
+}
