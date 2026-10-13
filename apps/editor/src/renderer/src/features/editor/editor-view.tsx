@@ -185,6 +185,10 @@ export default function EditorView({ path }: { path: string | null }) {
       keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyK],
       run: () => appStore().getState().setPaletteOpen(true),
     });
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyZ, () => appStore().getState().undo());
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyZ, () =>
+      appStore().getState().redo(),
+    );
 
     const subs = [
       editor.onDidChangeModelContent(() => {

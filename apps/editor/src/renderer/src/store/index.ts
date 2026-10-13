@@ -4,6 +4,8 @@ import { createStore, type StoreApi } from "zustand/vanilla";
 
 import type { KairosApi, LayoutPrefs } from "@shared/types";
 
+import { createEditSlice } from "./edit-slice";
+import { createHistorySlice } from "./history-slice";
 import { createProjectSlice } from "./project-slice";
 import { createTabsSlice } from "./tabs-slice";
 import type { AnalysisSlice, AppState, PreviewSlice, SliceCreator, UiSlice } from "./types";
@@ -97,6 +99,8 @@ export function createAppStore(api: KairosApi): StoreApi<AppState> {
     ...createTabsSlice(set, get, api),
     ...createUiSlice(set, get, api),
     ...createPreviewSlice(set, get, api),
+    ...createHistorySlice(set, get, api),
+    ...createEditSlice(set, get, api),
   }));
 }
 

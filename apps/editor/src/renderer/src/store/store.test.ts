@@ -1,15 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { insertJump } from "@shared/edits";
-import type { Analysis, AnalyzeInput, KairosApi, ProjectEdit, ProjectSnapshot } from "@shared/types";
+import type { EditOp } from "@shared/edit-types";
+import type { Analysis, AnalyzeInput, KairosApi, ProjectSnapshot, SourceFile } from "@shared/types";
 
 import { ANALYZE_DELAY_MS, createAppStore, isDirty } from "./index";
 
 const SCRIPT = 'character e "Eileen"\nlabel start:\n    e "Hi."\nlabel end:\n    return\n';
 
-const unused = async (): Promise<never> => {
-  throw new Error("unused");
-};
+const insertJump = (source: string, from: string, to: string) =>
+  source.replace(new RegExp(`(label ${from}:\\n(?:    .*\\n)*)`), `$1    jump ${to}\n`);
 
 function fakeApi() {
   const disk = new Map<string, string>([
@@ -39,12 +38,6 @@ function fakeApi() {
       writeFile: vi.fn(async (path: string, content: string) => void disk.set(path, content)),
       importAsset: vi.fn(async () => null),
       renameAsset: vi.fn(async () => undefined),
-      applyEdit: vi.fn(async (edit: ProjectEdit) => {
-        const source = edit.source ?? disk.get(edit.path)!;
-        const next = edit.kind === "connect" ? insertJump(source, edit.from, edit.to)!.source : source;
-        disk.set(edit.path, next);
-        return { path: edit.path, source: next, changed: next !== source };
-      }),
       createFromTemplate: vi.fn(async () => null),
       pickExportFolder: vi.fn(async () => null),
       export: vi.fn(async () => "/p/export"),
@@ -70,13 +63,26 @@ function fakeApi() {
       }),
     },
     edit: {
-      blocks: vi.fn(unused),
-      apply: vi.fn(unused),
-      references: vi.fn(unused),
-      labelFromName: vi.fn(unused),
-      readLayout: vi.fn(unused),
-      writeLayout: vi.fn(unused),
-      setStart: vi.fn(unused),
+      blocks: vi.fn(async () => null),
+      apply: vi.fn(async (files: SourceFile[], ops: EditOp[]) => {
+        const op = ops[0]!;
+        if (op.op === "endScene" && op.label === "missing") throw new Error("there is no scene `missing`");
+        const file = files.find((f) => f.path === "script/a.kai")!;
+        if (op.op === "connect")
+          return {
+            files: [{ path: file.path, source: insertJump(file.source, op.from, op.to) }],
+            focus: { path: file.path, line: 3 },
+          };
+        return {
+          files: [{ path: file.path, source: `${file.source}# edited\n` }],
+          focus: { path: file.path, line: 1 },
+        };
+      }),
+      references: vi.fn(async () => []),
+      labelFromName: vi.fn(async (name: string) => name.toLowerCase().replace(/\W+/g, "_")),
+      readLayout: vi.fn(async () => ({ graph: { start: { x: 5, y: 6 } } })),
+      writeLayout: vi.fn(async () => undefined),
+      setStart: vi.fn(async () => undefined),
     },
     player: { status: vi.fn() },
     terminal: {} as KairosApi["terminal"],
@@ -134,16 +140,59 @@ describe("app store", () => {
     expect(store.getState().previewVersion).toBe(1);
   });
 
-  it("connects labels through the main-process edit, sending dirty buffers along", async () => {
-    store.getState().setSource("script/a.kai", SCRIPT.replace("Hi.", "Hello."));
-    expect(await store.getState().connectLabels("start", "end")).toBe(true);
-    const edit = env.api.project.applyEdit.mock.calls[0]![0];
-    expect(edit).toMatchObject({ kind: "connect", from: "start", to: "end" });
-    expect(edit.source).toContain("Hello.");
-    const buffer = store.getState().buffers["script/a.kai"]!;
-    expect(buffer.source).toContain('    e "Hello."\n    jump end\nlabel end:');
-    expect(isDirty(buffer)).toBe(false);
-    expect(await store.getState().connectLabels("start", "start")).toBe(false);
+  it("connects labels through a visual edit", async () => {
+    await store.getState().edit([{ op: "connect", from: "start", to: "end", choice: null }]);
+    expect(store.getState().buffers["script/a.kai"]!.source).toContain("jump end");
+  });
+
+  it("applies visual edits to buffers and undoes them with code edits in one history", async () => {
+    await store.getState().edit([{ op: "endScene", label: "start" }]);
+    expect(store.getState().buffers["script/a.kai"]!.source).toBe(`${SCRIPT}# edited\n`);
+    store.getState().setSource("script/a.kai", `${SCRIPT}# edited\n# typed\n`);
+    expect(store.getState().canUndo).toBe(true);
+    store.getState().undo();
+    expect(store.getState().buffers["script/a.kai"]!.source).toBe(`${SCRIPT}# edited\n`);
+    store.getState().undo();
+    expect(store.getState().buffers["script/a.kai"]!.source).toBe(SCRIPT);
+    store.getState().redo();
+    expect(store.getState().buffers["script/a.kai"]!.source).toBe(`${SCRIPT}# edited\n`);
+  });
+
+  it("coalesces typing into one history entry per pause", () => {
+    vi.useFakeTimers();
+    store.getState().setSource("script/a.kai", `${SCRIPT}a`);
+    store.getState().setSource("script/a.kai", `${SCRIPT}ab`);
+    vi.advanceTimersByTime(1500);
+    store.getState().setSource("script/a.kai", `${SCRIPT}abc`);
+    store.getState().undo();
+    expect(store.getState().buffers["script/a.kai"]!.source).toBe(`${SCRIPT}ab`);
+    store.getState().undo();
+    expect(store.getState().buffers["script/a.kai"]!.source).toBe(SCRIPT);
+  });
+
+  it("reports rejected edits without touching buffers", async () => {
+    expect(await store.getState().edit([{ op: "endScene", label: "missing" }])).toBeNull();
+    expect(store.getState().editError).toBe("there is no scene `missing`");
+    expect(store.getState().buffers["script/a.kai"]!.source).toBe(SCRIPT);
+  });
+
+  it("drops edits whose buffers changed while they were in flight", async () => {
+    const pending = store.getState().edit([{ op: "endScene", label: "start" }]);
+    store.getState().setSource("script/a.kai", `${SCRIPT}# typed meanwhile\n`);
+    expect(await pending).toBeNull();
+    expect(store.getState().buffers["script/a.kai"]!.source).toBe(`${SCRIPT}# typed meanwhile\n`);
+  });
+
+  it("loads and persists graph positions", async () => {
+    expect(store.getState().graphLayout.graph.start).toEqual({ x: 5, y: 6 });
+    store.getState().setNodePosition("end", 1, 2);
+    expect(env.api.edit.writeLayout).toHaveBeenCalledWith({ graph: { start: { x: 5, y: 6 }, end: { x: 1, y: 2 } } });
+  });
+
+  it("resets history when a project opens", async () => {
+    await store.getState().edit([{ op: "endScene", label: "start" }]);
+    await store.getState().openProject("/p");
+    expect(store.getState().canUndo).toBe(false);
   });
 
   it("opens, reveals and closes tabs", () => {

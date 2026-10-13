@@ -4,13 +4,12 @@ import { basename, join, resolve } from "node:path";
 import { BrowserWindow, Menu, app, dialog, ipcMain, shell, type MenuItemConstructorOptions } from "electron";
 
 import type { EditOp, EditorLayout } from "@shared/edit-types";
-import type { AnalyzeInput, ProjectEdit, Settings, SourceFile, TerminalSpawn } from "@shared/types";
+import type { AnalyzeInput, Settings, SourceFile, TerminalSpawn } from "@shared/types";
 
 import { analyze } from "./analysis";
 import { applyEdits, labelFromName, readLayout, references, sceneBlocks, setStartLabel, writeLayout } from "./edit";
 import { chooseExportFolder, exportProject } from "./export";
 import {
-  applyEdit,
   createFromTemplate,
   importProjectAsset,
   loadProject,
@@ -144,7 +143,6 @@ function registerIpc(): void {
     return attempt.path ?? null;
   });
   ipcMain.handle("project:asset-rename", (_e, path: string, name: string) => renameProjectAsset(path, name));
-  ipcMain.handle("project:edit", (_e, edit: ProjectEdit) => applyEdit(edit));
   ipcMain.handle("project:create", async (e) => {
     const win = BrowserWindow.fromWebContents(e.sender)!;
     const r = await dialog.showSaveDialog(win, {

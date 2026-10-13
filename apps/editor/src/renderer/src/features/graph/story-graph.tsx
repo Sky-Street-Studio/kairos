@@ -21,7 +21,7 @@ import { toast } from "sonner";
 
 import { useResolvedAppearance } from "@/hooks/use-theme";
 import { cn } from "@/lib/utils";
-import { useApp } from "@/store";
+import { appStore, useApp } from "@/store";
 import type { EdgeKind } from "@shared/types";
 
 import { NODE_HEIGHT, NODE_WIDTH, edgeId, layoutGraph, mergeEdges } from "./layout";
@@ -86,7 +86,7 @@ function Graph() {
   const diagnostics = useApp((s) => s.analysis.diagnostics);
   const start = useApp((s) => s.project?.manifest.start);
   const openFile = useApp((s) => s.openFile);
-  const connectLabels = useApp((s) => s.connectLabels);
+  const edit = useApp((s) => s.edit);
   const { fitView } = useReactFlow();
   const appearance = useResolvedAppearance();
 
@@ -136,12 +136,11 @@ function Graph() {
 
   const onConnect = async (c: Connection) => {
     if (!c.source || !c.target || c.source === c.target) return;
-    try {
-      const changed = await connectLabels(c.source, c.target);
-      if (changed) toast.success(`Added jump ${c.target} to the end of ${c.source}`);
-      else toast(`${c.source} already ends with jump ${c.target}`);
-    } catch (e) {
-      toast.error("Could not add the jump", { description: (e as Error).message });
+    if (await edit([{ op: "connect", from: c.source, to: c.target, choice: null }])) {
+      toast.success(`${c.source} now goes to ${c.target}`);
+    } else {
+      const error = appStore().getState().editError;
+      if (error) toast.error("Could not connect the scenes", { description: error });
     }
   };
 

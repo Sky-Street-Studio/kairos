@@ -1,7 +1,8 @@
 import type { ThemeConfig } from "@kairos/theme";
 import type { StoreApi } from "zustand";
 
-import type { Analysis, CharacterFields, KairosApi, LayoutPrefs, ProjectSnapshot } from "@shared/types";
+import type { EditOp, EditorLayout } from "@shared/edit-types";
+import type { Analysis, KairosApi, LayoutPrefs, ProjectSnapshot } from "@shared/types";
 
 export interface FileBuffer {
   path: string;
@@ -28,9 +29,33 @@ export interface ProjectSlice {
   setSource(path: string, source: string): void;
   save(path: string): Promise<void>;
   saveAll(): Promise<void>;
-  connectLabels(from: string, to: string): Promise<boolean>;
-  saveCharacter(character: CharacterFields, at?: { path: string; line?: number }): Promise<void>;
   insertAtCursor(statement: string, line?: number): boolean;
+}
+
+export interface HistoryEntry {
+  files: Record<string, { before: string; after: string }>;
+  kind: "visual" | "code";
+  at: number;
+}
+
+export interface HistorySlice {
+  past: HistoryEntry[];
+  future: HistoryEntry[];
+  canUndo: boolean;
+  canRedo: boolean;
+  record(entry: HistoryEntry, coalesce?: boolean): void;
+  undo(): void;
+  redo(): void;
+  clearHistory(): void;
+}
+
+export interface EditSlice {
+  editError: string | null;
+  graphLayout: EditorLayout;
+  edit(ops: EditOp[]): Promise<{ path: string; line: number } | null>;
+  loadGraphLayout(): Promise<void>;
+  setNodePosition(label: string, x: number, y: number): void;
+  resetGraphLayout(): void;
 }
 
 export interface AnalysisSlice {
@@ -93,7 +118,7 @@ export interface PreviewSlice {
   playFromLine(path: string, line: number, overrides?: Record<string, unknown>): void;
 }
 
-export type AppState = ProjectSlice & AnalysisSlice & TabsSlice & UiSlice & PreviewSlice;
+export type AppState = ProjectSlice & AnalysisSlice & TabsSlice & UiSlice & PreviewSlice & HistorySlice & EditSlice;
 
 export type SliceCreator<T> = (
   set: StoreApi<AppState>["setState"],

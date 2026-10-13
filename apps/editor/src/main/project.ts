@@ -6,17 +6,7 @@ import sharp from "sharp";
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 
 import { classifyAsset, escapeRegex } from "@shared/assets";
-import { addCharacter, insertJump, setCharacterLine } from "@shared/edits";
-import type {
-  AssetEntry,
-  EditResult,
-  Manifest,
-  ProjectEdit,
-  ProjectSnapshot,
-  SourceFile,
-  TreeNode,
-  TranslationFile,
-} from "@shared/types";
+import type { AssetEntry, Manifest, ProjectSnapshot, SourceFile, TreeNode, TranslationFile } from "@shared/types";
 
 import { templateDir, within } from "./paths";
 
@@ -313,25 +303,6 @@ export async function renameProjectAsset(rel: string, newName: string): Promise<
     }
   }
   await (await import("node:fs/promises")).rename(source, target);
-}
-
-export async function applyEdit(edit: ProjectEdit): Promise<EditResult> {
-  const abs = within(requireRoot(), edit.path);
-  const source = edit.source ?? (await readFile(abs, "utf8"));
-  let next: string;
-  if (edit.kind === "connect") {
-    const result = insertJump(source, edit.from, edit.to);
-    if (!result) throw new Error(`label ${edit.from} is not in ${edit.path}`);
-    next = result.source;
-  } else {
-    next =
-      edit.line === undefined
-        ? addCharacter(source, edit.character)
-        : setCharacterLine(source, edit.line, edit.character);
-  }
-  // A buffer sent from the renderer may differ from disk, so it is saved even if the edit was a no-op.
-  if (next !== source || edit.source !== undefined) await writeFile(abs, next, "utf8");
-  return { path: edit.path, source: next, changed: next !== source };
 }
 
 const TEMPLATE_SKIP = new Set(["inputs.txt", "expected.txt"]);

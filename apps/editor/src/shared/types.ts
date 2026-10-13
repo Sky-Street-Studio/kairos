@@ -112,16 +112,6 @@ export interface CharacterFields {
   color?: string;
 }
 
-export type ProjectEdit =
-  | { kind: "connect"; path: string; source?: string; from: string; to: string }
-  | { kind: "character"; path: string; source?: string; line?: number; character: CharacterFields };
-
-export interface EditResult {
-  path: string;
-  source: string;
-  changed: boolean;
-}
-
 export interface AnalyzeInput {
   files: SourceFile[];
   /** Project-relative asset paths, e.g. `assets/images/bg room.png`. */
@@ -181,7 +171,6 @@ export interface KairosApi {
     writeFile(path: string, content: string): Promise<void>;
     importAsset(sourcePath: string | null, folder: string, convertWebp?: boolean): Promise<string | null>;
     renameAsset(path: string, name: string): Promise<void>;
-    applyEdit(edit: ProjectEdit): Promise<EditResult>;
     createFromTemplate(): Promise<string | null>;
     pickExportFolder(): Promise<string | null>;
     export(target: ExportTarget, output: string): Promise<string>;
