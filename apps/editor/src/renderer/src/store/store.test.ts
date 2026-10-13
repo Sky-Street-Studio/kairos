@@ -51,6 +51,7 @@ function fakeApi() {
       writeFile: vi.fn(async (path: string, content: string) => void disk.set(path, content)),
       importAsset: vi.fn(async () => null),
       renameAsset: vi.fn(async () => undefined),
+      pickProjectLocation: vi.fn(async () => null),
       createFromTemplate: vi.fn(async () => null),
       pickExportFolder: vi.fn(async () => null),
       export: vi.fn(async () => "/p/export"),
@@ -107,7 +108,9 @@ function fakeApi() {
     shell: { reveal: vi.fn(async () => undefined) },
     terminal: {} as KairosApi["terminal"],
     settings: {
-      get: vi.fn(),
+      get: vi.fn(
+        async () => ({ hiddenCodeProjects: [], beginnerProjects: [], dismissedChecklistProjects: [] }) as never,
+      ),
       update: vi.fn(async () => ({}) as never),
       exportTheme: vi.fn(),
       importTheme: vi.fn(),

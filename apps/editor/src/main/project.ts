@@ -1,5 +1,5 @@
 import { copyFile, cp, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, extname, join } from "node:path";
+import { basename, dirname, extname, join, resolve } from "node:path";
 
 import sharp from "sharp";
 
@@ -8,7 +8,7 @@ import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import { classifyAsset, escapeRegex } from "@shared/assets";
 import type { AssetEntry, Manifest, ProjectSnapshot, SourceFile, TreeNode, TranslationFile } from "@shared/types";
 
-import { templateDir, within } from "./paths";
+import { within } from "./paths";
 
 const TOP_LEVEL = ["kairos.toml", "script", "assets", "ui"];
 
@@ -315,15 +315,30 @@ export async function renameProjectAsset(rel: string, newName: string): Promise<
 
 const TEMPLATE_SKIP = new Set(["inputs.txt", "expected.txt"]);
 
-/** Copies the starter project into `dest` and names it after the folder. */
-export async function createFromTemplate(dest: string): Promise<string> {
+export type StarterTemplate = "blank-story" | "kinetic-novel" | "branching-romance";
+
+export async function createFromTemplate(parent: string, name: string, template: StarterTemplate): Promise<string> {
+  if (!["blank-story", "kinetic-novel", "branching-romance"].includes(template)) {
+    throw new Error("Choose a starter template");
+  }
+  const folder = name.trim();
+  if (!folder || folder === "." || folder === ".." || /[\\/]/.test(folder)) {
+    throw new Error("Enter a project name without a folder path");
+  }
+  const dest = join(parent, folder);
   if (await exists(dest)) throw new Error(`${dest} already exists`);
-  const src = templateDir();
+  await mkdir(parent, { recursive: true });
+  const packaged =
+    typeof process.resourcesPath === "string" ? join(process.resourcesPath, "beginner-templates", template) : undefined;
+  const src =
+    packaged && (await exists(packaged))
+      ? packaged
+      : join(resolve(import.meta.dirname, "../../../.."), "examples/beginner-templates", template);
   await cp(src, dest, { recursive: true, filter: (p) => !TEMPLATE_SKIP.has(basename(p)) });
   for (const dir of ["assets/images", "assets/audio", "ui"]) await mkdir(join(dest, dir), { recursive: true });
   const manifestPath = join(dest, "kairos.toml");
   const manifest = parseToml(await readFile(manifestPath, "utf8"));
-  manifest.name = basename(dest);
+  manifest.name = folder;
   await writeFile(manifestPath, stringifyToml(manifest) + "\n", "utf8");
   return dest;
 }

@@ -8,13 +8,15 @@ import type { TreeNode } from "@shared/types";
 
 import { TreeRows } from "./sidebar";
 
-function filterTree(nodes: TreeNode[], query: string): TreeNode[] {
-  if (!query) return nodes;
+function filterTree(nodes: TreeNode[], query: string, showCode: boolean): TreeNode[] {
   const normalized = query.toLowerCase();
   return nodes.flatMap((node) => {
-    if (node.kind === "file") return node.name.toLowerCase().includes(normalized) ? [node] : [];
-    const children = filterTree(node.children ?? [], query);
-    return node.name.toLowerCase().includes(normalized) || children.length ? [{ ...node, children }] : [];
+    if (node.kind === "file") {
+      if (!showCode && node.path.endsWith(".kai")) return [];
+      return !query || node.name.toLowerCase().includes(normalized) ? [node] : [];
+    }
+    const children = filterTree(node.children ?? [], query, showCode);
+    return children.length || (query && node.name.toLowerCase().includes(normalized)) ? [{ ...node, children }] : [];
   });
 }
 
@@ -22,7 +24,8 @@ export function FilesPanel() {
   const tree = useApp((s) => s.project?.tree ?? []);
   const refreshTree = useApp((s) => s.refreshTree);
   const [query, setQuery] = useState("");
-  const visible = useMemo(() => filterTree(tree, query.trim()), [tree, query]);
+  const showCode = useApp((s) => s.showCode);
+  const visible = useMemo(() => filterTree(tree, query.trim(), showCode), [tree, query, showCode]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">

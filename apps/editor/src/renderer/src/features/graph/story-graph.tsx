@@ -32,6 +32,7 @@ import { appStore, useApp } from "@/store";
 import { findChoiceOption, ghostTargets, positionsFor, withSelection } from "./graph-model";
 import { edgeId, mergeEdges, NODE_HEIGHT, NODE_WIDTH } from "./layout";
 import { edgeOps, SceneDialogs, useSceneActions } from "./scene-actions";
+import { GuidedChecklist } from "../shell/guided-checklist";
 
 type LabelData = {
   label: string;
@@ -634,6 +635,7 @@ export default function StoryGraphView() {
       <ReactFlowProvider>
         <Graph />
       </ReactFlowProvider>
+      <GuidedChecklist />
     </div>
   );
 }

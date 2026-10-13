@@ -155,15 +155,22 @@ function registerIpc(): void {
     return attempt.path ?? null;
   });
   ipcMain.handle("project:asset-rename", (_e, path: string, name: string) => renameProjectAsset(path, name));
-  ipcMain.handle("project:create", async (e) => {
-    const win = BrowserWindow.fromWebContents(e.sender)!;
-    const r = await dialog.showSaveDialog(win, {
-      title: "New Kairos project",
-      buttonLabel: "Create project",
-      nameFieldLabel: "Project folder",
-      defaultPath: "my-story",
+  ipcMain.handle("project:pick-location", async (e) => {
+    const r = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender)!, {
+      title: "Choose project location",
+      buttonLabel: "Use this folder",
+      properties: ["openDirectory", "createDirectory"],
     });
-    return r.canceled || !r.filePath ? null : createFromTemplate(r.filePath);
+    return r.canceled ? null : (r.filePaths[0] ?? null);
+  });
+  ipcMain.handle("project:create", async (_e, template: string, name: string, parent: string) => {
+    const root = await createFromTemplate(parent, name, template as Parameters<typeof createFromTemplate>[2]);
+    const { hiddenCodeProjects, beginnerProjects } = await getSettings();
+    await updateSettings({
+      hiddenCodeProjects: [...new Set([...hiddenCodeProjects, root])],
+      beginnerProjects: [...new Set([...beginnerProjects, root])],
+    });
+    return root;
   });
 
   ipcMain.handle("analysis:analyze", (_e, input: AnalyzeInput) => analyze(input));

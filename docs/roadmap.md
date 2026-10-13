@@ -32,9 +32,9 @@ A declarative way to build interactive UI, with layout, buttons, text and images
 - Unlocks phone and messaging systems, stat screens, maps, custom save/load and settings screens, and simple minigames.
 - Resolve the open questions in `custom-screens.md` before starting the runtime implementation.
 
-## 3c. Beginner path
+## 3c. Beginner path (done)
 
-Templates, a guided first project and code hidden until wanted.
+Templates, a guided first project and code hidden until wanted. Contract: `beginner-path.md`.
 
 Items 3 and 4 can swap. Take export first if you want a game on Steam early. Take screens first if the next milestone is a demo that shows off custom UI.
 
