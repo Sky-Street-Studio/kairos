@@ -10,12 +10,12 @@ import { assetUrl, fileKind, SNAPSHOT_TEXT_FIELDS } from "@shared/assets";
 import { defineTheme, monaco } from "../editor/monaco";
 
 function Footer({ path, detail }: { path: string; detail?: string }) {
-  const openView = useApp((s) => s.openView);
+  const showAsset = useApp((s) => s.showAsset);
   return (
     <footer className="flex h-9 shrink-0 items-center gap-3 border-t px-3 text-xs text-muted-foreground">
       <span className="truncate font-mono">{path}</span>
       {detail && <span className="tabular">{detail}</span>}
-      <Button variant="ghost" size="sm" className="ml-auto" onClick={() => openView("assets")}>
+      <Button variant="ghost" size="sm" className="ml-auto" onClick={() => showAsset(path)}>
         <Boxes />
         Show in Assets
       </Button>
