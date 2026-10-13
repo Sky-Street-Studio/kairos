@@ -1,6 +1,7 @@
 import { Boxes, Clapperboard, Network, Settings2, UsersRound, X } from "lucide-react";
 import { lazy, Suspense } from "react";
 
+import { ViewBoundary } from "@/components/view-boundary";
 import { cn } from "@/lib/utils";
 import { basename } from "@/lib/utils";
 import { isDirty, useApp, type Tab } from "@/store";
@@ -120,25 +121,38 @@ export function Workspace() {
         ))}
       </div>
       <div className="relative flex min-h-0 flex-1">
-        <Suspense fallback={null}>
-          {hasScriptTab && (
-            <div
-              className={cn("absolute inset-0 flex", !isScript(active) && "pointer-events-none invisible opacity-0")}
-            >
-              <EditorView path={isScript(active) ? active.path : null} />
-            </div>
-          )}
-          {preview && (
-            <div className="absolute inset-0 flex bg-panel">
-              <FilePreview path={preview} />
-            </div>
-          )}
-          {active?.kind === "graph" && <StoryGraphView />}
-        </Suspense>
-        {active?.kind === "characters" && <CharacterManager />}
-        {active?.kind === "settings" && <SettingsView />}
-        {active?.kind === "assets" && <AssetsManager />}
-        {active?.kind === "scene" && <SceneView label={active.label} />}
+        {hasScriptTab && (
+          <div className={cn("absolute inset-0 flex", !isScript(active) && "pointer-events-none invisible opacity-0")}>
+            <ViewBoundary name="The code editor">
+              <Suspense fallback={null}>
+                <EditorView path={isScript(active) ? active.path : null} />
+              </Suspense>
+            </ViewBoundary>
+          </div>
+        )}
+        {preview && (
+          <div className="absolute inset-0 flex bg-panel">
+            <ViewBoundary key={preview} name="The file preview">
+              <Suspense fallback={null}>
+                <FilePreview path={preview} />
+              </Suspense>
+            </ViewBoundary>
+          </div>
+        )}
+        {active && active.kind !== "file" && (
+          <ViewBoundary
+            key={active.id}
+            name={active.kind === "scene" ? `Scene ${active.label}` : VIEW_META[active.kind].title}
+          >
+            <Suspense fallback={null}>
+              {active.kind === "graph" && <StoryGraphView />}
+              {active.kind === "characters" && <CharacterManager />}
+              {active.kind === "settings" && <SettingsView />}
+              {active.kind === "assets" && <AssetsManager />}
+              {active.kind === "scene" && <SceneView label={active.label} />}
+            </Suspense>
+          </ViewBoundary>
+        )}
         {!active && <EmptyWorkspace />}
       </div>
     </section>
