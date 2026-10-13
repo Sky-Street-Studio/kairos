@@ -5,4 +5,8 @@
 #[allow(dead_code)]
 mod text;
 
+// Later edit modules are the callers of the tree; drop this once they land.
+#[allow(dead_code)]
+mod tree;
+
 pub use text::label_from_name;

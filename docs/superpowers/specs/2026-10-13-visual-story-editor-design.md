@@ -25,23 +25,23 @@ The script is line- and indentation-based, so a statement spans from its first l
 
 `scene_blocks(source, label) -> Vec<Block>`
 
-- `Block { id, kind, fields, range: (first_line, last_line), children }`.
+- `Block { line, end_line, kind, fields, children }`.
 - `line` is the block's 1-based first line in the source it was read from. Every edit is applied to that exact source, so a line identifies a statement.
 - `children` holds the bodies of choices and `if` branches.
 - Statements without a friendly block come back as `kind: Code` with their exact text.
 
-`apply(source, base, ops) -> Result<Applied, EditError>`
+`apply(source, ops) -> Result<Applied, EditError>`
 
 - The store detects staleness: if the buffers changed while an edit was in flight, the edit is dropped and the scene tab reloads its blocks.
 - Ops:
-  - Statements: `insert { after, block }`, `replace { id, block }`, `move { id, after }`, `delete { id }`.
+  - Statements: `insert { after, block }`, `replace { line, block }`, `move { line, after }`, `delete { line }`.
   - Scenes: `add_scene { name, after_label }`, `rename_scene { from, to }`, `delete_scene { label, remove_references }`, `duplicate_scene { label, name }`.
-  - Links: `connect { from, to, as: Jump | Choice { text } }`, `set_choice_text { id, index, text }`, `end_scene { label }`.
+  - Links: `connect { from, to, as: Jump | Choice { text } }`, `set_choice_text { line, index, text }`, `end_scene { label }`.
   - Characters: `set_character { id, name, color }`, which updates the `character` line for `id` or adds one after the last `character` line (or at the top of the file).
 - `Applied { source, focus }`, where `focus` is the line of the edited or inserted block.
 - Edits change only the affected lines. Comments, blank lines and unrelated lines stay byte-for-byte identical. Indentation follows the surrounding block.
 - The result is reparsed before returning. An edit that adds a parse error not present before fails with `EditError::WouldBreak(message)` and changes nothing.
-- Scene ops that touch other files take every project file and return every changed file: `apply_project(files, base_hashes, ops) -> Vec<(path, source)>`.
+- Scene ops that touch other files take every project file and return every changed file: `apply_project(files, ops) -> Vec<(path, source)>`.
 
 `references(files, label) -> Vec<Reference { path, line, kind: Jump | Call | Choice }>` supports delete and rename confirmations.
 
@@ -126,7 +126,7 @@ Blocks use plain words: "Kai says…", "Change background", "Only if…".
 - **Rust**
   - Round-trip tests per op: comments, blank lines and unrelated lines survive byte-for-byte.
   - The Code-block fallback is covered for every statement kind.
-  - `Stale` and `WouldBreak` cases.
+  - `WouldBreak` cases.
   - `label_from_name` cases.
   - A property test applies random insert, move and delete sequences to the example scripts and checks that the result always parses and that `scene_blocks` describes what was inserted.
 - **napi.** One shape test per export.
