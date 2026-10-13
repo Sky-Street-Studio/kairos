@@ -217,11 +217,11 @@ fn delete_scene_can_remove_links_to_it() {
     assert_eq!(out[0], "label a:\n    \"Hi\"\n    menu:\n        \"Stay\":\n            \"Ok\"\n");
     assert_eq!(out[1], "");
     let out = run_all(&fs, vec![Op::DeleteScene { label: "x".into(), remove_references: false }]);
-    assert!(out[0].contains("jump x"));
+    assert_eq!(out, [fs[0].source.clone(), String::new()]);
 
     let fs = files("label a:\n    jump x\n", "label x:\n    return\n");
     let out = run_all(&fs, vec![Op::DeleteScene { label: "x".into(), remove_references: true }]);
-    assert_eq!(out[0], "label a:\n    pass\n");
+    assert_eq!(out[0], "label a:\n    return\n");
 }
 
 #[test]
@@ -240,12 +240,103 @@ fn connect_adds_jumps_and_choices_and_remove_link_undoes_them() {
     );
     let fs2 = files(&out[0], "");
     let out = run_all(&fs2, vec![Op::RemoveLink { from: "a".into(), to: "b".into(), choice: Some("To B".into()) }]);
-    assert!(!out[0].contains("To B") && out[0].contains("To C"));
+    assert_eq!(
+        out[0],
+        "label a:\n    \"Hi\"\n    menu:\n        \"To C\":\n            jump c\nlabel b:\n    return\nlabel c:\n    return\n"
+    );
     let out = run_all(
         &fs,
         vec![Op::Connect { from: "a".into(), to: "b".into(), choice: None }, Op::EndScene { label: "b".into() }],
     );
-    assert!(out[0].starts_with("label a:\n    \"Hi\"\n    jump b\n"));
+    assert_eq!(out[0], "label a:\n    \"Hi\"\n    jump b\nlabel b:\n    return\nlabel c:\n    return\n");
+}
+
+fn add_a() -> Op {
+    Op::AddScene { path: "script/a.kai".into(), name: "a".into(), after: None }
+}
+
+#[test]
+fn connecting_a_new_scene_replaces_its_return() {
+    let fs = files("label b:\n    return\nlabel c:\n    return\n", "");
+    let added = "label b:\n    return\nlabel c:\n    return\n\nlabel a:\n    \"\"\n";
+    let out = run_all(&fs, vec![add_a(), Op::Connect { from: "a".into(), to: "b".into(), choice: None }]);
+    assert_eq!(out[0], format!("{added}    jump b\n"));
+    let out = run_all(
+        &fs,
+        vec![
+            add_a(),
+            Op::Connect { from: "a".into(), to: "b".into(), choice: Some("Go".into()) },
+            Op::Connect { from: "a".into(), to: "c".into(), choice: Some("Wait".into()) },
+        ],
+    );
+    assert_eq!(
+        out[0],
+        format!(
+            "{added}    menu:\n        \"Go\":\n            jump b\n        \"Wait\":\n            jump c\n    return\n"
+        )
+    );
+    let out = run_all(&fs, vec![add_a(), Op::EndScene { label: "a".into() }]);
+    assert_eq!(out[0], format!("{added}    return\n"));
+}
+
+#[test]
+fn connect_refuses_a_second_exit_and_unknown_scenes() {
+    let fs = files("label a:\n    jump b\nlabel b:\n    return\nlabel c:\n    return\n", "");
+    let err = apply(&fs, &[Op::Connect { from: "a".into(), to: "c".into(), choice: None }]).unwrap_err();
+    assert_eq!(
+        err,
+        EditError::Invalid(
+            "This scene already ends by going to `b`. Add it as a choice, or remove that arrow first.".into()
+        )
+    );
+    let err = apply(&fs, &[Op::Connect { from: "a".into(), to: "nowhere".into(), choice: None }]).unwrap_err();
+    assert!(matches!(err, EditError::NotFound(_)));
+    assert_eq!(apply(&fs, &[Op::Connect { from: "a".into(), to: "b".into(), choice: None }]).unwrap().files, []);
+}
+
+#[test]
+fn inserting_a_scene_never_captures_a_fall_through() {
+    let fs = files("label start:\n    \"Hi\"\nlabel day:\n    return\n", "");
+    let out = run_all(
+        &fs,
+        vec![Op::AddScene { path: "script/a.kai".into(), name: "beach".into(), after: Some("start".into()) }],
+    );
+    assert_eq!(
+        out[0],
+        "label start:\n    \"Hi\"\n    jump day\n\nlabel beach:\n    \"\"\n    return\nlabel day:\n    return\n"
+    );
+    let fs = files("label a:\n    \"Hi\"\n", "label b:\n    return\n");
+    let out = run_all(&fs, vec![Op::AddScene { path: "script/a.kai".into(), name: "n".into(), after: None }]);
+    assert_eq!(out[0], "label a:\n    \"Hi\"\n    jump b\n\nlabel n:\n    \"\"\n    return\n");
+    let err = apply(&fs, &[Op::AddScene { path: "script/a.kai".into(), name: "n".into(), after: Some("zzz".into()) }]);
+    assert!(matches!(err, Err(EditError::NotFound(_))));
+}
+
+#[test]
+fn remove_link_prefers_a_plain_jump_and_ends_an_emptied_scene() {
+    let fs = files(
+        "label a:\n    menu:\n        \"Go\":\n            jump b\n        \"Stay\":\n            pass\n    jump b\nlabel b:\n    return\n",
+        "",
+    );
+    let out = run_all(&fs, vec![Op::RemoveLink { from: "a".into(), to: "b".into(), choice: None }]);
+    assert_eq!(
+        out[0],
+        "label a:\n    menu:\n        \"Go\":\n            jump b\n        \"Stay\":\n            pass\nlabel b:\n    return\n"
+    );
+    let fs = files("label a:\n    jump b\nlabel b:\n    return\n", "");
+    let out = run_all(&fs, vec![Op::RemoveLink { from: "a".into(), to: "b".into(), choice: None }]);
+    assert_eq!(out[0], "label a:\n    return\nlabel b:\n    return\n");
+}
+
+#[test]
+fn rename_handles_extra_spaces_and_delete_focus_stays_in_the_file() {
+    let fs = files("label day:\n    return\nlabel x:\n    jump  day\n", "");
+    let out = run_all(&fs, vec![Op::RenameScene { from: "day".into(), to: "morning".into() }]);
+    assert_eq!(out[0], "label morning:\n    return\nlabel x:\n    jump  morning\n");
+    let fs = files("label a:\n    return\n\nlabel x:\n    return\n", "");
+    let applied = apply(&fs, &[Op::DeleteScene { label: "x".into(), remove_references: false }]).unwrap();
+    assert_eq!(applied.files[0].source, "label a:\n    return\n");
+    assert_eq!(applied.focus.map(|f| f.line), Some(2));
 }
 
 #[test]
@@ -266,7 +357,7 @@ fn duplicate_and_set_character() {
     );
     assert_eq!(
         out[0],
-        "character e \"Eve\" color=\"#ffcc00\"\ncharacter k \"Kai\"\nlabel a:\n    e \"Hi\"\n\nlabel a_copy:\n    e \"Hi\"\n"
+        "character e \"Eve\" color=\"#ffcc00\"\ncharacter k \"Kai\"\nlabel a:\n    e \"Hi\"\n    return\n\nlabel a_copy:\n    e \"Hi\"\n    return\n"
     );
 }
 
