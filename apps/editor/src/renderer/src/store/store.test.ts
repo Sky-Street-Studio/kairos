@@ -57,6 +57,7 @@ function fakeApi() {
               { label: "end", path: "script/a.kai", line: 4 },
             ],
             edges: [],
+            missing: [],
           },
           assetUsage: {},
         };

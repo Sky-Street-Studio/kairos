@@ -13,7 +13,12 @@ import type { AnalysisSlice, AppState, PreviewSlice, SliceCreator, UiSlice } fro
 export type { AppState, FileBuffer, Tab, ViewKind } from "./types";
 export { isDirty } from "./project-slice";
 
-export const EMPTY_ANALYSIS = { diagnostics: [], outlines: {}, graph: { nodes: [], edges: [] }, assetUsage: {} };
+export const EMPTY_ANALYSIS = {
+  diagnostics: [],
+  outlines: {},
+  graph: { nodes: [], edges: [], missing: [] },
+  assetUsage: {},
+};
 export const ANALYZE_DELAY_MS = 250;
 
 export const DEFAULT_LAYOUT: LayoutPrefs = {

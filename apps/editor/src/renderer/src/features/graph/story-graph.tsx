@@ -15,7 +15,7 @@ import {
   type Node,
   type NodeProps,
 } from "@xyflow/react";
-import { CircleAlert, Flag } from "lucide-react";
+import { CircleAlert, Flag, Wand2 } from "lucide-react";
 import { useEffect, useMemo } from "react";
 import { toast } from "sonner";
 
@@ -24,7 +24,8 @@ import { cn } from "@/lib/utils";
 import { appStore, useApp } from "@/store";
 import type { EdgeKind } from "@shared/types";
 
-import { NODE_HEIGHT, NODE_WIDTH, edgeId, layoutGraph, mergeEdges } from "./layout";
+import { ghostTargets, positionsFor } from "./graph-model";
+import { NODE_HEIGHT, NODE_WIDTH, edgeId, mergeEdges } from "./layout";
 
 type LabelData = { label: string; path: string; line: number; start: boolean; problems: number };
 type LabelNodeType = Node<LabelData, "label">;
@@ -63,7 +64,26 @@ function LabelNode({ data, selected }: NodeProps<LabelNodeType>) {
   );
 }
 
-const nodeTypes = { label: LabelNode };
+type GhostData = { label: string };
+type GhostNodeType = Node<GhostData, "ghost">;
+type GraphNodeType = LabelNodeType | GhostNodeType;
+
+const GHOST_OFFSET_Y = 160;
+
+function GhostNode({ data }: NodeProps<GhostNodeType>) {
+  return (
+    <div
+      style={{ width: NODE_WIDTH, height: NODE_HEIGHT }}
+      className="relative flex items-center justify-center rounded-lg border border-dashed border-destructive/70 bg-card/60 px-3 text-center"
+      data-testid="graph-ghost"
+    >
+      <Handle type="target" position={Position.Top} className="!h-2 !w-2 !border-2 opacity-0" />
+      <span className="truncate text-2xs text-destructive">Missing scene: {data.label}</span>
+    </div>
+  );
+}
+
+const nodeTypes = { label: LabelNode, ghost: GhostNode };
 
 const EDGE_STYLE: Record<EdgeKind, { stroke: string; dash?: string; width: number }> = {
   jump: { stroke: "color-mix(in oklab, var(--foreground) 50%, transparent)", width: 1.5 },
@@ -87,11 +107,14 @@ function Graph() {
   const start = useApp((s) => s.project?.manifest.start);
   const openFile = useApp((s) => s.openFile);
   const edit = useApp((s) => s.edit);
+  const graphLayout = useApp((s) => s.graphLayout);
+  const setNodePosition = useApp((s) => s.setNodePosition);
+  const resetGraphLayout = useApp((s) => s.resetGraphLayout);
   const { fitView } = useReactFlow();
   const appearance = useResolvedAppearance();
 
   const flow = useMemo(() => {
-    const positions = layoutGraph(graph);
+    const positions = positionsFor(graph, graphLayout.graph);
     const labelLines = new Map(graph.nodes.map((n) => [n.label, n]));
     const problems = (label: string) => {
       const n = labelLines.get(label)!;
@@ -100,12 +123,37 @@ function Graph() {
         .reduce((min, m) => Math.min(min, m.line), Infinity);
       return diagnostics.filter((d) => d.path === n.path && d.line >= n.line && d.line < later).length;
     };
-    const flowNodes: LabelNodeType[] = graph.nodes.map((n) => ({
+    const labelNodes: LabelNodeType[] = graph.nodes.map((n) => ({
       id: n.label,
       type: "label",
       position: positions.get(n.label) ?? { x: 0, y: 0 },
       data: { ...n, start: n.label === start, problems: problems(n.label) },
     }));
+    const ghostsPerSource = new Map<string, number>();
+    const ghostNodes: GhostNodeType[] = ghostTargets(graph, graph.missing).map((label) => {
+      const source = graph.missing.find((e) => e.to === label)!.from;
+      const slot = ghostsPerSource.get(source) ?? 0;
+      ghostsPerSource.set(source, slot + 1);
+      const from = positions.get(source) ?? { x: 0, y: 0 };
+      return {
+        id: `missing:${label}`,
+        type: "ghost",
+        position: { x: from.x + slot * (NODE_WIDTH + 24), y: from.y + GHOST_OFFSET_Y },
+        data: { label },
+        draggable: false,
+        selectable: false,
+        connectable: false,
+      };
+    });
+    const ghostEdges: Edge[] = mergeEdges(graph.missing).map((e, i) => ({
+      id: `missing-${edgeId(e, i)}`,
+      source: e.from,
+      target: `missing:${e.to}`,
+      style: { stroke: "var(--destructive)", strokeWidth: 1.5, strokeDasharray: "5 4" },
+      markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: "var(--destructive)" },
+      selectable: false,
+    }));
+    const flowNodes: GraphNodeType[] = [...labelNodes, ...ghostNodes];
     const flowEdges: Edge[] = mergeEdges(graph.edges).map((e, i) => {
       const style = EDGE_STYLE[e.kind];
       return {
@@ -121,10 +169,10 @@ function Graph() {
         data: { kind: e.kind },
       };
     });
-    return { nodes: flowNodes, edges: flowEdges };
-  }, [graph, diagnostics, start]);
+    return { nodes: flowNodes, edges: [...flowEdges, ...ghostEdges] };
+  }, [graph, diagnostics, start, graphLayout]);
 
-  const [rfNodes, setNodes, onNodesChange] = useNodesState<LabelNodeType>(flow.nodes);
+  const [rfNodes, setNodes, onNodesChange] = useNodesState<GraphNodeType>(flow.nodes);
   useEffect(() => setNodes(flow.nodes), [flow.nodes, setNodes]);
 
   const shape = graph.nodes.map((n) => n.label).join("|");
@@ -133,6 +181,15 @@ function Graph() {
     const id = requestAnimationFrame(() => void fitView({ padding: 0.18, duration: 240, maxZoom: 1.1 }));
     return () => cancelAnimationFrame(id);
   }, [shape, fitView]);
+
+  const tidyUp = () => {
+    resetGraphLayout();
+    requestAnimationFrame(() => void fitView({ padding: 0.18, duration: 240, maxZoom: 1.1 }));
+  };
+
+  const saveDragged = (dragged: Node[]) => {
+    for (const n of dragged) if (n.type === "label") setNodePosition(n.id, n.position.x, n.position.y);
+  };
 
   const onConnect = async (c: Connection) => {
     if (!c.source || !c.target || c.source === c.target) return;
@@ -159,7 +216,12 @@ function Graph() {
       edges={flow.edges}
       nodeTypes={nodeTypes}
       onConnect={(c) => void onConnect(c)}
-      onNodeClick={(_, n) => openFile(n.data.path, n.data.line)}
+      onNodeClick={(_, n) => n.type === "label" && openFile(n.data.path, n.data.line)}
+      onNodeDragStop={(_, node, nodes) => saveDragged(nodes.length > 0 ? nodes : [node])}
+      onSelectionDragStop={(_, nodes) => saveDragged(nodes)}
+      selectionOnDrag
+      multiSelectionKeyCode="Shift"
+      panOnDrag={[1, 2]}
       nodesConnectable
       nodesDraggable
       minZoom={0.25}
@@ -202,6 +264,14 @@ function Graph() {
           </span>
         ))}
         <span className="border-l pl-3">Drag from a node’s bottom handle to add a jump</span>
+        <button
+          type="button"
+          onClick={tidyUp}
+          className="ml-1 flex items-center gap-1 rounded border px-1.5 py-0.5 text-foreground hover:bg-accent"
+        >
+          <Wand2 className="size-3" />
+          Tidy up
+        </button>
       </div>
     </ReactFlow>
   );

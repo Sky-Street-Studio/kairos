@@ -106,4 +106,5 @@ export declare function storyGraph(files: Array<SourceFile>): StoryGraph
 export interface StoryGraph {
   nodes: Array<GraphNode>
   edges: Array<GraphEdge>
+  missing: Array<GraphEdge>
 }

@@ -16,6 +16,7 @@ const graph: StoryGraph = {
     { from: "about", to: "end", kind: "jump" },
     { from: "end", to: "end", kind: "jump" },
   ],
+  missing: [],
 };
 
 describe("graph layout", () => {

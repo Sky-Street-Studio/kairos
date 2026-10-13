@@ -48,6 +48,7 @@ export interface GraphEdge {
 export interface StoryGraph {
   nodes: GraphNode[];
   edges: GraphEdge[];
+  missing: GraphEdge[];
 }
 
 export interface Manifest {
