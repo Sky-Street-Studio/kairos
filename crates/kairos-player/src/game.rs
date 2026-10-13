@@ -128,20 +128,33 @@ impl Game {
 
     /// Starts with fresh variables at an instruction, for "play from this line".
     pub fn start_at(&mut self, pc: usize) {
+        if let Err(e) = self.start_at_with_overrides(pc, &BTreeMap::new()) {
+            self.shown = Shown::Error(e.to_string());
+        }
+    }
+
+    pub fn start_at_with_overrides(
+        &mut self,
+        pc: usize,
+        overrides: &BTreeMap<String, kairos_vm::Value>,
+    ) -> Result<(), RuntimeError> {
         match Vm::new(self.program.clone()) {
             Ok(mut vm) => {
                 vm.set_translations(self.translations.get(&self.language).cloned().unwrap_or_default());
+                for (name, value) in overrides {
+                    vm.set_variable(name, value.clone())?;
+                }
                 self.vm = vm;
             }
             Err(e) => {
-                self.shown = Shown::Error(e.to_string());
-                return;
+                return Err(e);
             }
         }
         self.vm.start_at(pc);
         self.reset();
         self.signals.push(Signal::Resync);
         self.step();
+        Ok(())
     }
 
     pub fn stage(&self) -> &Stage {
@@ -191,6 +204,41 @@ impl Game {
 
     pub fn can_rollback(&self) -> bool {
         self.vm.can_rollback()
+    }
+
+    pub fn debug_variables(&self) -> std::collections::BTreeMap<String, kairos_vm::Value> {
+        self.vm.variables()
+    }
+
+    pub fn debug_pc(&self) -> usize {
+        self.vm.last_pc()
+    }
+
+    pub fn debug_call_stack(&self) -> &[usize] {
+        self.vm.call_stack()
+    }
+
+    pub fn debug_history_len(&self) -> usize {
+        self.vm.history_len()
+    }
+
+    pub fn debug_set_variable(&mut self, name: &str, value: kairos_vm::Value) -> Result<(), RuntimeError> {
+        self.vm.set_variable(name, value)
+    }
+
+    pub fn debug_rollback_to(&mut self, position: usize) -> bool {
+        if !self.vm.rollback_to(position) {
+            return false;
+        }
+        self.backlog.truncate(*self.marks.get(position).unwrap_or(&0));
+        self.marks.truncate(position);
+        self.mode = Mode::Normal;
+        self.signals.push(Signal::Resync);
+        self.step();
+        if let Shown::Say { revealed, len, .. } = &mut self.shown {
+            *revealed = *len as f32;
+        }
+        true
     }
 
     pub fn take_signals(&mut self) -> Vec<Signal> {
@@ -409,6 +457,34 @@ label start:
         game.proceed();
         game.proceed();
         assert!(matches!(game.shown, Shown::Menu { .. }), "{:?}", game.shown);
+    }
+
+    #[test]
+    fn debug_overrides_apply_before_start_and_history_rolls_back_to_an_exact_position() {
+        let project = kairos_project::Project::from_sources(
+            "name = \"t\"",
+            [(
+                PathBuf::from("script/a.kai"),
+                r#"default n = 0
+label start:
+    "Value [n]"
+    "Next"
+"#
+                .into(),
+            )],
+        )
+        .unwrap();
+        let mut game = Game::new(project.program).unwrap();
+        let overrides = BTreeMap::from([("n".into(), kairos_vm::Value::Int(3))]);
+        game.start_at_with_overrides(0, &overrides).unwrap();
+        assert_eq!(text(&game), "Value 3");
+        game.proceed();
+        game.proceed();
+        assert_eq!(text(&game), "Next");
+        assert!(game.debug_rollback_to(0));
+        assert_eq!(text(&game), "Value 3");
+        assert_eq!(game.debug_history_len(), 1);
+        assert!(game.debug_set_variable("missing", kairos_vm::Value::None).is_err());
     }
 
     #[test]
