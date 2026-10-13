@@ -84,7 +84,10 @@ fn code(n: &Node, lines: &Lines) -> BlockKind {
     let text = (n.line..=n.end)
         .map(|l| {
             let t = lines.text(l);
-            if t.len() >= n.indent && t[..n.indent].trim().is_empty() { &t[n.indent..] } else { t.trim_start() }
+            match t.get(..n.indent).filter(|p| p.trim().is_empty()) {
+                Some(_) => &t[n.indent..],
+                None => t.trim_start(),
+            }
         })
         .collect::<Vec<_>>()
         .join("\n");
@@ -379,6 +382,14 @@ mod tests {
             let src = format!("label start:\n{}\n", render(&kind, 4, 4).join("\n"));
             assert_eq!(kinds(&src), [kind]);
         }
+    }
+
+    #[test]
+    fn non_ascii_comment_inside_a_statement_does_not_split_a_char() {
+        let src = "label start:\n    menu:\n# 日本語\n        \"Caption\"\n        \"Only\":\n            pass\n";
+        let blocks = kinds(src);
+        let [BlockKind::Code { text }] = blocks.as_slice() else { panic!() };
+        assert!(text.contains("# 日本語"), "{text}");
     }
 
     #[test]
