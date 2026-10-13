@@ -123,22 +123,47 @@ pub fn parse_text_markup(text: &str) -> Result<TextMarkup, String> {
     if let Some((tag, _)) = stack.last() {
         return Err(format!("unclosed text tag `{{{tag}}}`"));
     }
+    let mut boundaries: Vec<usize> =
+        ruby.iter().flat_map(|(base, reading)| [base.start, base.end, reading.start, reading.end]).collect();
+    boundaries.sort_unstable();
+    boundaries.dedup();
+    let spans = spans
+        .into_iter()
+        .flat_map(|span| {
+            let mut start = span.range.start;
+            boundaries
+                .iter()
+                .copied()
+                .filter(move |&boundary| boundary > span.range.start && boundary < span.range.end)
+                .chain([span.range.end])
+                .map(move |end| {
+                    let piece = TextSpan { range: start..end, style: span.style };
+                    start = end;
+                    piece
+                })
+        })
+        .collect();
     Ok(TextMarkup { plain, visible_chars, spans, waits, ruby })
+}
+
+pub fn normalize_text_for_id(text: &str) -> String {
+    parse_text_markup(text).map_or_else(|_| text.to_string(), |markup| markup.plain)
 }
 
 fn append(text: &str, style: TextStyle, plain: &mut String, spans: &mut Vec<TextSpan>, visible_chars: &mut usize) {
     if text.is_empty() {
         return;
     }
+    let unescaped = text.replace("}}", "}");
     let start = plain.len();
-    plain.push_str(text);
+    plain.push_str(&unescaped);
     let end = plain.len();
     if let Some(last) = spans.last_mut().filter(|span| span.range.end == start && span.style == style) {
         last.range.end = end;
     } else {
         spans.push(TextSpan { range: start..end, style });
     }
-    *visible_chars += text.chars().count();
+    *visible_chars += unescaped.chars().count();
 }
 
 fn kairos_color(value: &str) -> bool {
@@ -168,5 +193,17 @@ mod tests {
         for text in ["{bad}x", "{b}x", "{/b}x", "{color=#xyz}x{/color}", "{size=0}x"] {
             assert!(parse_text_markup(text).is_err(), "{text}");
         }
+    }
+
+    #[test]
+    fn escaped_opening_and_closing_braces_are_unescaped() {
+        let parsed = parse_text_markup("{{open}} and {{close}}").unwrap();
+        assert_eq!(parsed.plain, "{open} and {close}");
+    }
+
+    #[test]
+    fn ruby_ranges_are_split_into_styling_spans() {
+        let parsed = parse_text_markup("A{rb}漢{/rb}{rt}kan{/rt}Z").unwrap();
+        assert_eq!(parsed.spans.iter().map(|span| span.range.clone()).collect::<Vec<_>>(), [0..1, 1..4, 4..7, 7..8]);
     }
 }

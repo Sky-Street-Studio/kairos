@@ -198,6 +198,18 @@ mod tests {
     }
 
     #[test]
+    fn ruby_readings_use_half_size_glyphs() {
+        let mut fonts = Fonts::new();
+        let spec = TextSpec { text: "A{rb}漢{/rb}{rt}kan{/rt}Z".into(), size: 24.0, ..TextSpec::default() };
+        let buffer = fonts.layout(&spec, None, 1.0);
+        let glyphs: Vec<_> = buffer.layout_runs().flat_map(|run| run.glyphs.iter()).collect();
+        let base = glyphs.iter().find(|glyph| glyph.start == 1).unwrap();
+        let reading = glyphs.iter().find(|glyph| glyph.start == 4).unwrap();
+        assert_eq!(base.font_size, 24.0);
+        assert_eq!(reading.font_size, 12.0);
+    }
+
+    #[test]
     fn typewriter_reveal_keeps_the_full_layout() {
         let mut fonts = Fonts::new();
         let text = "alpha beta gamma delta epsilon zeta eta theta";

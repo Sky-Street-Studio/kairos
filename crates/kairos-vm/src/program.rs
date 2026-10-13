@@ -186,7 +186,7 @@ struct Compiler {
 
 impl Compiler {
     fn emit(&mut self, instr: Instr, line: usize, source: &str) -> usize {
-        let hash = fnv1a(source);
+        let hash = fnv1a(&kairos_script::normalize_text_for_id(source));
         let n = self.occurrences.entry((self.label.clone(), hash)).or_default();
         self.program.ids.push(format!("{}:{hash:016x}:{n}", self.label));
         *n += 1;
@@ -399,4 +399,28 @@ impl Compiler {
 
 fn fnv1a(s: &str) -> u64 {
     s.bytes().fold(0xcbf29ce484222325, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn id_for(source: &str) -> String {
+        let (statements, diagnostics) = kairos_script::parse(source);
+        assert!(diagnostics.is_empty());
+        let (program, diagnostics) = compile(&[statements]);
+        assert!(diagnostics.is_empty());
+        program.ids[0].clone()
+    }
+
+    #[test]
+    fn markup_free_statement_ids_keep_their_existing_value() {
+        assert_eq!(id_for("label start:\n    \"Hello\"\n"), "start:1662743877464d4b:0");
+    }
+
+    #[test]
+    fn markup_only_edits_keep_statement_ids() {
+        assert_eq!(id_for("label start:\n    \"Hello\"\n"), id_for("label start:\n    \"{b}Hello{/b}\"\n"));
+        assert_ne!(id_for("label start:\n    \"Hello\"\n"), id_for("label start:\n    \"Goodbye\"\n"));
+    }
 }

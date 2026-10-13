@@ -8,7 +8,7 @@ Bold, italic, color, size, inline waits and small inline ruby readings use the s
 
 ## Text
 
-Dialogue supports `{b}`, `{i}`, `{color=#rrggbb}`, `{size=N}`, `{w=seconds}`, `{shake}`, `{/b}`, `{/i}`, `{/color}`, `{/size}`, `{/shake}`, and `{rb}base{/rb}{rt}reading{/rt}`. Style tags nest and affect only their enclosed text. Ruby keeps its base and reading together. Wait and shake tags do not display; waits pause typewriter reveal at their position, while shake animation remains unimplemented. Tags remain in source and translation values, and statement IDs continue to derive from the original statement source. Typewriter progress counts visible Unicode characters, excluding tags. Invalid, malformed, mismatched, or unclosed tags produce project diagnostics with source file and line; literal braces are written `{{` and `}}`.
+Dialogue supports `{b}`, `{i}`, `{color=#rrggbb}`, `{size=N}`, `{w=seconds}`, `{shake}`, `{/b}`, `{/i}`, `{/color}`, `{/size}`, `{/shake}`, and `{rb}base{/rb}{rt}reading{/rt}`. Style tags nest and affect only their enclosed text. Ruby keeps its base and reading together. Wait and shake tags do not display; waits pause typewriter reveal at their position, while shake animation remains unimplemented. Tags remain in source and translation values, while statement IDs hash markup-normalized source so markup-only edits preserve existing IDs. Markup-free lines keep their existing IDs. Typewriter progress counts visible Unicode characters, excluding tags. Invalid, malformed, mismatched, or unclosed tags produce project diagnostics with source file and line; literal braces are written `{{` and `}}`.
 
 `nvl on` switches dialogue to full-screen narration; `nvl off` returns to the textbox. NVL lines accumulate until `nvl clear`. A character may opt into NVL with its `nvl` flag. The visible page is derived from VM state, so rollback and saves restore its mode and contents; backlog records every line once.
 
@@ -22,7 +22,7 @@ Per-image shaders are deferred. The current renderer has one shared WebGPU/WGPU 
 
 ## Decisions
 
-- Tags are parsed from localized text at render time, so translators can reorder markup while stable statement IDs remain tied to script source.
+- Tags are parsed from localized text at render time, so translators can reorder markup while stable statement IDs remain tied to markup-normalized script source. Literal braces are unescaped for display and ID derivation.
 - Ruby readings render smaller than their base text and count as visible typewriter characters; annotation positioning remains deferred.
 - NVL page state is VM state, not a separate player presentation cache.
 - Native players use installed system CJK fonts when available; web projects provide fallback fonts through the theme because browsers cannot read local system font files.

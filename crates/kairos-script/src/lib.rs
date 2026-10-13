@@ -8,7 +8,7 @@ mod text;
 
 pub use ast::*;
 pub use parser::{parse, parse_expr};
-pub use text::{TextMarkup, TextSpan, TextStyle, parse_text_markup};
+pub use text::{TextMarkup, TextSpan, TextStyle, normalize_text_for_id, parse_text_markup};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
