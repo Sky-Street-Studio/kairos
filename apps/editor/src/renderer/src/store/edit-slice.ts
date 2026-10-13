@@ -9,6 +9,7 @@ export const createEditSlice: SliceCreator<EditSlice> = (set, get, api) => ({
   graphLayout: EMPTY_LAYOUT,
 
   async edit(ops) {
+    set({ editError: null });
     const sent = Object.values(get().buffers).map(({ path, source }) => ({ path, source }));
     let applied: Applied;
     try {
@@ -28,7 +29,7 @@ export const createEditSlice: SliceCreator<EditSlice> = (set, get, api) => ({
         files[file.path] = { before: buffer.source, after: file.source };
         next[file.path] = { ...buffer, source: file.source };
       }
-      return { buffers: next, editError: null };
+      return { buffers: next };
     });
     if (Object.keys(files).length > 0) get().record({ files, kind: "visual", at: Date.now() });
     get().scheduleAnalyze();

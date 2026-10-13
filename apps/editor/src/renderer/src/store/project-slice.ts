@@ -4,6 +4,29 @@ import type { FileBuffer, ProjectSlice, SliceCreator } from "./types";
 
 const withoutScripts = ({ scripts: _scripts, ...rest }: ProjectSnapshot) => rest;
 
+const isBlank = (line: string) => /^\s*(#.*)?$/.test(line);
+
+/**
+ * Puts `statement` after 1-based `line` (default: the last line), indented like the nearest non-blank
+ * line at or above it, one level deeper when that line opens a block. A blank target line takes the
+ * statement in its place so the blank line stays below it.
+ */
+function insertStatement(source: string, line: number | undefined, statement: string) {
+  const eol = source.includes("\r\n") ? "\r\n" : "\n";
+  const trailing = source.endsWith("\n");
+  const lines = source.split(/\r?\n/);
+  if (trailing) lines.pop();
+  const target = Math.min(Math.max(line ?? lines.length, 1), Math.max(lines.length, 1));
+  let anchor = target;
+  while (anchor > 1 && isBlank(lines[anchor - 1] ?? "")) anchor--;
+  const ref = lines[anchor - 1] ?? "";
+  const code = ref.replace(/\s+#.*$/, "").trimEnd();
+  const indent = (ref.match(/^\s*/)?.[0] ?? "") + (code.endsWith(":") ? "    " : "");
+  const after = isBlank(lines[target - 1] ?? "") ? target - 1 : target;
+  lines.splice(after, 0, indent + statement);
+  return { source: lines.join(eol) + (trailing || lines.length > 0 ? eol : ""), line: after + 1 };
+}
+
 export const isDirty = (b: FileBuffer | undefined) => !!b && b.source !== b.saved;
 
 export const createProjectSlice: SliceCreator<ProjectSlice> = (set, get, api) => ({
@@ -84,13 +107,9 @@ export const createProjectSlice: SliceCreator<ProjectSlice> = (set, get, api) =>
     const path = active?.kind === "file" ? active.path : cursor?.path;
     const buffer = path ? buffers[path] : undefined;
     if (!path || !buffer) return false;
-    const lines = buffer.source.split("\n");
-    const at = Math.min(line ?? (cursor?.path === path ? cursor.line : lines.length), lines.length);
-    const ref = lines[at - 1] ?? "";
-    const indent = (ref.match(/^\s*/)?.[0] ?? "") + (ref.trimEnd().endsWith(":") ? "    " : "");
-    lines.splice(at, 0, indent + statement);
-    get().setSource(path, lines.join("\n"));
-    get().openFile(path, at + 1);
+    const next = insertStatement(buffer.source, line ?? (cursor?.path === path ? cursor.line : undefined), statement);
+    get().setSource(path, next.source);
+    get().openFile(path, next.line);
     return true;
   },
 });

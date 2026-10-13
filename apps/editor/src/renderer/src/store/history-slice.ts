@@ -2,9 +2,22 @@ import type { HistoryEntry, HistorySlice, SliceCreator } from "./types";
 
 const LIMIT = 200;
 const TYPING_PAUSE_MS = 1000;
+const OUTSIDE_CHANGE = "The script changed outside the editor, so undo history was cleared.";
 
 export const createHistorySlice: SliceCreator<HistorySlice> = (set, get) => {
+  const flags = (past: HistoryEntry[], future: HistoryEntry[]) => ({
+    past,
+    future,
+    canUndo: past.length > 0,
+    canRedo: future.length > 0,
+  });
   const restore = (entry: HistoryEntry, side: "before" | "after") => {
+    const expected = side === "before" ? "after" : "before";
+    const current = get().buffers;
+    if (Object.entries(entry.files).some(([path, change]) => current[path]?.source !== change[expected])) {
+      set({ ...flags([], []), editError: OUTSIDE_CHANGE });
+      return false;
+    }
     set((s) => {
       const buffers = { ...s.buffers };
       for (const [path, change] of Object.entries(entry.files)) {
@@ -14,13 +27,8 @@ export const createHistorySlice: SliceCreator<HistorySlice> = (set, get) => {
       return { buffers };
     });
     get().scheduleAnalyze();
+    return true;
   };
-  const flags = (past: HistoryEntry[], future: HistoryEntry[]) => ({
-    past,
-    future,
-    canUndo: past.length > 0,
-    canRedo: future.length > 0,
-  });
 
   return {
     past: [],
@@ -52,13 +60,13 @@ export const createHistorySlice: SliceCreator<HistorySlice> = (set, get) => {
     undo() {
       const entry = get().past.at(-1);
       if (!entry) return;
-      restore(entry, "before");
+      if (!restore(entry, "before")) return;
       set((s) => flags(s.past.slice(0, -1), [...s.future, entry]));
     },
     redo() {
       const entry = get().future.at(-1);
       if (!entry) return;
-      restore(entry, "after");
+      if (!restore(entry, "after")) return;
       set((s) => flags([...s.past, entry], s.future.slice(0, -1)));
     },
     clearHistory() {

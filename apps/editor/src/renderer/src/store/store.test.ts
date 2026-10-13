@@ -218,6 +218,57 @@ describe("app store", () => {
     expect(store.getState().reveal).toMatchObject({ path: "script/a.kai", line: 4 });
   });
 
+  it("inserts at the end of a file with no cursor, keeping the final newline", () => {
+    expect(store.getState().insertAtCursor("scene bg room")).toBe(true);
+    expect(store.getState().buffers["script/a.kai"]!.source).toBe(`${SCRIPT}    scene bg room\n`);
+    expect(store.getState().reveal).toMatchObject({ path: "script/a.kai", line: 6 });
+  });
+
+  it("inserts on a blank line using the indentation above", () => {
+    const s = store.getState();
+    s.setSource("script/b.kai", "label a:\n    pass\n\nlabel b:\n");
+    s.openFile("script/b.kai");
+    expect(s.insertAtCursor("scene bg x", 3)).toBe(true);
+    expect(store.getState().buffers["script/b.kai"]!.source).toBe("label a:\n    pass\n    scene bg x\n\nlabel b:\n");
+    expect(store.getState().reveal).toMatchObject({ path: "script/b.kai", line: 3 });
+  });
+
+  it("keeps CRLF line endings when inserting", () => {
+    const s = store.getState();
+    s.setSource("script/b.kai", "label a:\r\n    pass\r\n");
+    s.openFile("script/b.kai");
+    expect(s.insertAtCursor("scene bg x", 2)).toBe(true);
+    expect(store.getState().buffers["script/b.kai"]!.source).toBe("label a:\r\n    pass\r\n    scene bg x\r\n");
+  });
+
+  it("indents under a block header that has a trailing comment", () => {
+    const s = store.getState();
+    s.setSource("script/b.kai", "label a:  # note\n    pass\n");
+    s.openFile("script/b.kai");
+    expect(s.insertAtCursor("scene bg x", 1)).toBe(true);
+    expect(store.getState().buffers["script/b.kai"]!.source).toBe("label a:  # note\n    scene bg x\n    pass\n");
+  });
+
+  it("clears an earlier rejection when a later edit goes stale", async () => {
+    await store.getState().edit([{ op: "endScene", label: "missing" }]);
+    const pending = store.getState().edit([{ op: "endScene", label: "start" }]);
+    store.getState().setSource("script/a.kai", `${SCRIPT}# typed meanwhile\n`);
+    expect(await pending).toBeNull();
+    expect(store.getState().editError).toBeNull();
+  });
+
+  it("clears history instead of undoing over a file changed on disk", async () => {
+    await store.getState().edit([{ op: "endScene", label: "start" }]);
+    await store.getState().save("script/a.kai");
+    env.disk.set("script/a.kai", "label start:\n    return\n");
+    await store.getState().refreshTree();
+    store.getState().undo();
+    expect(store.getState().buffers["script/a.kai"]!.source).toBe("label start:\n    return\n");
+    expect(store.getState().editError).toBe("The script changed outside the editor, so undo history was cleared.");
+    expect(store.getState().canUndo).toBe(false);
+    expect(store.getState().canRedo).toBe(false);
+  });
+
   it("toggles panels, persists layout and opens the preview on play", () => {
     const s = store.getState();
     s.togglePanel("bottom");

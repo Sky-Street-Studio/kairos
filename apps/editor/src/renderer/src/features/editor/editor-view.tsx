@@ -189,6 +189,7 @@ export default function EditorView({ path }: { path: string | null }) {
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyZ, () =>
       appStore().getState().redo(),
     );
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyY, () => appStore().getState().redo());
 
     const subs = [
       editor.onDidChangeModelContent(() => {
