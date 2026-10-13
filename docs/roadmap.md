@@ -4,19 +4,19 @@ What Kairos needs before a studio can ship a game the size of Camp Buddy or Stei
 
 ## Where the engine stands
 
-The player has rollback, skip, auto mode, text speed, save slots, layered sprites, localization keyed by stable line IDs and a debugger. It exports to the web and to macOS. The VM holds scalar values only (none, bool, int, float, string).
+The player has rollback, skip, auto mode, text speed, save slots, layered sprites, localization keyed by stable line IDs and a debugger. It exports to the web and to macOS. Script values include none, bool, int, float, string, lists and string-keyed dictionaries. Built-in functions and seeded random draws replay through rollback and saves.
 
-## 1. Persistent data, seen lines and save migration
+## 1. Persistent data, seen lines and save migration (done, `f4112eb`)
 
-A `persistent` store that survives across playthroughs and lives outside save slots, plus a record of every line ID the player has seen.
+The `persistent` store survives across playthroughs outside save slots and records each dialogue line the player has seen.
 
-- Unlocks CG galleries, endings lists, route locks (a true route that opens after the other endings) and replay menus.
-- Lets skip stop at unread text. Skip passes over every line today.
-- Save migration ships with it, because this item and the next both change what a save holds. `SaveData` already carries a version number, but postcard cannot read an older layout, so each version bump needs an explicit upgrade from the previous one. A save also fails with `MissingStatement` when a patch rewords the saved line. Fix that by falling back to the nearest surviving statement in the same label, and report the fallback to the player.
+- Supports CG galleries, endings lists, route locks and replay menus.
+- Skip can stop at unread text; the player can also skip all text.
+- Versioned saves upgrade older layouts. If a patch rewords the saved line, loading resumes after the nearest surviving statement in the same label and reports the fallback to the player.
 
-## 2. Script data types
+## 2. Script data types (done, `5c77c2b`)
 
-Lists, dictionaries, functions and a seeded random source in the script language and VM.
+Lists, dictionaries, built-in functions and seeded random draws in the script language and VM.
 
 - Unlocks affection and stat systems, inventories, unlockable glossaries (Steins;Gate's TIPS) and randomized events.
 - Random draws must replay identically under rollback, so the seed belongs in VM state and in saves.
@@ -27,10 +27,10 @@ Build and edit a branching story from the visual flow and block editors, with th
 
 ## 3b. Custom screens
 
-A declarative way to build interactive UI, with layout, buttons, text and images bound to script variables. Today the customization surface is `ui/theme.toml` and `ui/title.toml`.
+A declarative way to build interactive UI, with layout, buttons, text and images bound to script variables. Today the customization surface is `ui/theme.toml` and `ui/title.toml`. Contract: `custom-screens.md`.
 
 - Unlocks phone and messaging systems, stat screens, maps, custom save/load and settings screens, and simple minigames.
-- This item needs the most design work. Write a contract doc before building it, the same way `creator-toolkit.md` came first.
+- Resolve the open questions in `custom-screens.md` before starting the runtime implementation.
 
 ## 3c. Beginner path
 
