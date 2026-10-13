@@ -103,7 +103,11 @@ impl App {
             (size.width, size.height),
             gpu.size(),
         );
-        let assets = Assets::dir(self.project.assets_dir(), self.project.manifest.assets.packing_key.as_deref())?;
+        let assets = Assets::dir(
+            self.project.assets_dir(),
+            self.project.manifest.assets.packing_key.as_deref(),
+            renderer.max_texture_size(),
+        )?;
         let saves = SaveStore::for_project(&self.project.manifest.name);
         let mut player = Player::new(renderer, &self.project, self.theme.clone(), assets, saves, true)?;
         player.start_audio();

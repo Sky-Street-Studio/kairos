@@ -44,10 +44,19 @@ pub struct Loaded {
     pub request: Request,
     pub bytes: Option<Vec<u8>>,
     pub resolved_path: Option<String>,
+    pub decoded_image: Option<Result<image::RgbaImage, String>>,
 }
 
 pub struct Assets {
+    #[cfg(not(target_arch = "wasm32"))]
+    sender: Option<std::sync::mpsc::Sender<Request>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    ready: std::sync::mpsc::Receiver<Loaded>,
+    #[cfg(not(target_arch = "wasm32"))]
+    worker: Option<std::thread::JoinHandle<()>>,
+    #[cfg(target_arch = "wasm32")]
     source: Source,
+    #[cfg(target_arch = "wasm32")]
     ready: std::rc::Rc<std::cell::RefCell<Vec<Loaded>>>,
 }
 
@@ -73,16 +82,39 @@ enum Source {
 
 impl Assets {
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn dir(dir: std::path::PathBuf, key: Option<&str>) -> Result<Assets, String> {
+    pub fn dir(dir: std::path::PathBuf, key: Option<&str>, max_texture_size: u32) -> Result<Assets, String> {
         let pack_path = dir.parent().unwrap_or(&dir).join(kairos_project::assets::PACK_FILE);
-        if pack_path.is_file() {
+        let source = if pack_path.is_file() {
             let index = kairos_project::assets::PackIndex::open(&pack_path, key)
                 .map_err(|error| format!("{}: {error}", pack_path.display()))?;
             let assets = AssetIndex::new(index.paths());
-            return Ok(Assets { source: Source::Pack { index, assets }, ready: Default::default() });
-        }
-        let index = collect_paths(&dir).map(AssetIndex::new).unwrap_or_default();
-        Ok(Assets { source: Source::Dir { root: dir, index }, ready: Default::default() })
+            Source::Pack { index, assets }
+        } else {
+            let index = collect_paths(&dir).map(AssetIndex::new).unwrap_or_default();
+            Source::Dir { root: dir, index }
+        };
+        let (sender, requests) = std::sync::mpsc::channel();
+        let (results, ready) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            while let Ok(request) = requests.recv() {
+                let (resolved_path, bytes) = match &source {
+                    Source::Dir { root, index } => read_request(root, index, &request),
+                    Source::Pack { index, assets } => read_pack_request(index, assets, &request),
+                }
+                .unzip();
+                let decoded_image = match (&request, bytes.as_deref()) {
+                    (Request::Image(_), Some(bytes)) => {
+                        Some(decode_image(bytes, max_texture_size).map_err(|e| e.to_string()))
+                    }
+                    _ => None,
+                };
+                let bytes = if matches!(&request, Request::Image(_)) { None } else { bytes };
+                if results.send(Loaded { request, bytes, resolved_path, decoded_image }).is_err() {
+                    break;
+                }
+            }
+        });
+        Ok(Assets { sender: Some(sender), ready, worker: Some(worker) })
     }
 
     /// Fetches `base` + the asset path, e.g. `kairos-asset://project/` + `images/bg room.png`.
@@ -93,26 +125,43 @@ impl Assets {
     }
 
     pub fn request(&mut self, request: Request) {
-        match &self.source {
-            #[cfg(not(target_arch = "wasm32"))]
-            Source::Dir { root, index } => {
-                let (resolved_path, bytes) = read_request(root, index, &request).unzip();
-                self.ready.borrow_mut().push(Loaded { request, bytes, resolved_path });
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            Source::Pack { index, assets } => {
-                let (resolved_path, bytes) = read_pack_request(index, assets, &request).unzip();
-                self.ready.borrow_mut().push(Loaded { request, bytes, resolved_path });
-            }
-            #[cfg(target_arch = "wasm32")]
-            Source::Url { base, index, pack } => {
-                fetch_request(base.clone(), index.clone(), pack.clone(), request, self.ready.clone())
-            }
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(sender) = &self.sender {
+            let _ = sender.send(request);
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let Source::Url { base, index, pack } = &self.source;
+            fetch_request(base.clone(), index.clone(), pack.clone(), request, self.ready.clone());
         }
     }
 
     pub fn poll(&mut self) -> Vec<Loaded> {
+        #[cfg(not(target_arch = "wasm32"))]
+        return self.ready.try_iter().collect();
+        #[cfg(target_arch = "wasm32")]
         std::mem::take(&mut *self.ready.borrow_mut())
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn decode_image(bytes: &[u8], max: u32) -> Result<image::RgbaImage, image::ImageError> {
+    let image = image::load_from_memory(bytes)?;
+    let image = if image.width() > max || image.height() > max {
+        image.resize(max, max, image::imageops::FilterType::Triangle)
+    } else {
+        image
+    };
+    Ok(image.into_rgba8())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for Assets {
+    fn drop(&mut self) {
+        self.sender.take();
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
     }
 }
 
@@ -200,7 +249,7 @@ fn fetch_request(
             _ => fetch_paths(&base, &request.candidates(&index), pack.as_ref()).await,
         };
         let (resolved_path, bytes) = found.unzip();
-        ready.borrow_mut().push(Loaded { request, bytes, resolved_path });
+        ready.borrow_mut().push(Loaded { request, bytes, resolved_path, decoded_image: None });
     });
 }
 
@@ -300,6 +349,19 @@ async fn fetch_bytes(url: &str) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{Duration, Instant};
+
+    fn poll_until(assets: &mut Assets, count: usize) -> Vec<Loaded> {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let loaded = assets.poll();
+            if loaded.len() >= count {
+                return loaded;
+            }
+            assert!(Instant::now() < deadline, "asset worker did not complete");
+            std::thread::yield_now();
+        }
+    }
 
     #[test]
     fn image_requests_follow_the_shared_naming_rule() {
@@ -334,9 +396,9 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("kairos-assets-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("images/backgrounds")).unwrap();
         std::fs::create_dir_all(dir.join("audio/music")).unwrap();
-        std::fs::write(dir.join("images/backgrounds/bg room.jpg"), b"jpg").unwrap();
+        std::fs::write(dir.join("images/backgrounds/bg room.jpg"), b"invalid image").unwrap();
         std::fs::write(dir.join("audio/music/theme.ogg"), b"ogg").unwrap();
-        let mut assets = Assets::dir(dir.clone(), None).unwrap();
+        let mut assets = Assets::dir(dir.clone(), None, 4096).unwrap();
         assets.request(Request::Image("bg room".into()));
         assets.request(Request::Audio {
             channel: "music".into(),
@@ -345,11 +407,27 @@ mod tests {
             queue: false,
             fadein: None,
         });
-        let loaded = assets.poll();
-        assert_eq!(loaded[0].bytes.as_deref(), Some(&b"jpg"[..]));
+        let loaded = poll_until(&mut assets, 2);
+        assert!(loaded[0].decoded_image.as_ref().unwrap().is_err());
         assert_eq!(loaded[0].resolved_path.as_deref(), Some("images/backgrounds/bg room.jpg"));
         assert_eq!(loaded[1].bytes.as_deref(), Some(&b"ogg"[..]));
         assert_eq!(loaded[1].resolved_path.as_deref(), Some("audio/music/theme.ogg"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn native_requests_complete_through_nonblocking_poll() {
+        let dir = std::env::temp_dir().join(format!("kairos-poll-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let bytes = vec![42; 8 * 1024 * 1024];
+        std::fs::write(dir.join("font.ttf"), &bytes).unwrap();
+        let mut assets = Assets::dir(dir.clone(), None, 4096).unwrap();
+        assets.request(Request::Font { dialogue: false, path: "font.ttf".into() });
+        let started = Instant::now();
+        let _ = assets.poll();
+        assert!(started.elapsed() < Duration::from_millis(100));
+        let loaded = poll_until(&mut assets, 1).remove(0);
+        assert_eq!(loaded.bytes.as_deref(), Some(bytes.as_slice()));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -359,7 +437,7 @@ mod tests {
         std::fs::create_dir_all(root.join("assets")).unwrap();
         std::fs::write(root.join("assets/images.png"), b"loose fallback").unwrap();
         std::fs::write(root.join(kairos_project::assets::PACK_FILE), b"not a pack").unwrap();
-        let result = Assets::dir(root.join("assets"), None);
+        let result = Assets::dir(root.join("assets"), None, 4096);
         assert!(result.err().unwrap().contains("corrupt kpak archive"));
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -373,9 +451,11 @@ mod tests {
         kairos_project::assets::pack(&assets_dir, &root.join(kairos_project::assets::PACK_FILE), Some("paper-key"))
             .unwrap();
         std::fs::remove_dir_all(&assets_dir).unwrap();
-        let mut assets = Assets::dir(assets_dir, Some("paper-key")).unwrap();
+        let mut assets = Assets::dir(assets_dir, Some("paper-key"), 4096).unwrap();
         assets.request(Request::Image("bg room".into()));
-        assert_eq!(assets.poll()[0].bytes.as_deref(), Some(&b"packed image"[..]));
+        let loaded = poll_until(&mut assets, 1).remove(0);
+        assert_eq!(loaded.resolved_path.as_deref(), Some("images/bg room.png"));
+        assert!(loaded.decoded_image.unwrap().is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -397,10 +477,9 @@ mod tests {
             let image = image::RgbaImage::from_pixel(1, 1, color);
             image.save(dir.join(path)).unwrap();
         }
-        let mut assets = Assets::dir(dir.clone(), None).unwrap();
+        let mut assets = Assets::dir(dir.clone(), None, 4096).unwrap();
         assets.request(Request::Image("e happy".into()));
-        let bytes = assets.poll().remove(0).bytes.unwrap();
-        let composed = image::load_from_memory(&bytes).unwrap().into_rgba8();
+        let composed = poll_until(&mut assets, 1).remove(0).decoded_image.unwrap().unwrap();
         assert_eq!(composed.get_pixel(0, 0), &image::Rgba([127, 0, 128, 254]));
         std::fs::remove_dir_all(dir).unwrap();
     }
