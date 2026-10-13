@@ -14,7 +14,7 @@ export function SettingsCard({
   children: ReactNode;
 }) {
   return (
-    <section className="@container rounded-xl border bg-card/60 px-5 pt-5 pb-3 @2xl:px-6">
+    <section className="@container rounded-lg border bg-card px-5 pt-4 pb-2 @2xl:px-6">
       <header className="flex flex-col items-start justify-between gap-3 pb-2 @sm:flex-row @sm:gap-4">
         <div>
           <h2 className="text-sm font-semibold">{title}</h2>
@@ -41,7 +41,7 @@ export function SettingRow({
   return (
     <div
       className={cn(
-        "py-3.5",
+        "py-3.5 [&+&]:border-t",
         stacked
           ? "space-y-3"
           : "flex flex-col items-start gap-3 @sm:flex-row @sm:items-center @sm:justify-between @sm:gap-8",

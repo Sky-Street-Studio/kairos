@@ -104,6 +104,7 @@ function fakeApi() {
       setStart: vi.fn(async () => undefined),
     },
     player: { status: vi.fn() },
+    shell: { reveal: vi.fn(async () => undefined) },
     terminal: {} as KairosApi["terminal"],
     settings: {
       get: vi.fn(),
@@ -236,6 +237,27 @@ describe("app store", () => {
     store.getState().openScene("start");
     expect(store.getState().tabs.filter((t) => t.id === "scene:start")).toHaveLength(1);
     expect(store.getState().activeId).toBe("scene:start");
+  });
+
+  it("toggles settings outside the tab list", () => {
+    expect(store.getState().settingsOpen).toBe(false);
+    store.getState().toggleSettings();
+    expect(store.getState().settingsOpen).toBe(true);
+    expect(store.getState().tabs.some((tab) => tab.id === "settings")).toBe(false);
+  });
+
+  it("closes other tabs and tabs to the right", () => {
+    const s = store.getState();
+    s.openFile("script/b.kai");
+    s.openView("characters");
+    s.openView("assets");
+    s.closeOtherTabs("characters");
+    expect(store.getState().tabs.map((tab) => tab.id)).toEqual(["characters"]);
+    s.openFile("script/b.kai");
+    s.openView("assets");
+    s.closeTabsToRight("script/b.kai");
+    expect(store.getState().tabs.map((tab) => tab.id)).toEqual(["characters", "script/b.kai"]);
+    expect(store.getState().activeId).toBe("script/b.kai");
   });
 
   it("opens, reveals and closes tabs", () => {

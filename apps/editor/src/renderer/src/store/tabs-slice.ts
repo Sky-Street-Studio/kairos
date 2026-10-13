@@ -52,6 +52,19 @@ export const createTabsSlice: SliceCreator<TabsSlice> = (set, get) => ({
     });
   },
 
+  closeOtherTabs(id) {
+    set((s) => ({ tabs: s.tabs.filter((tab) => tab.id === id), activeId: id }));
+  },
+
+  closeTabsToRight(id) {
+    set((s) => {
+      const index = s.tabs.findIndex((tab) => tab.id === id);
+      if (index < 0) return s;
+      const tabs = s.tabs.slice(0, index + 1);
+      return { tabs, activeId: s.activeId && tabs.some((tab) => tab.id === s.activeId) ? s.activeId : id };
+    });
+  },
+
   setActive(id) {
     set({ activeId: id });
   },

@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogFooter } from "@/components/ui/dialog";
 import { useApp } from "@/store";
 
 export function ExportDialog({ open, onClose }: { open: boolean; onClose(): void }) {
@@ -9,8 +10,6 @@ export function ExportDialog({ open, onClose }: { open: boolean; onClose(): void
   const [output, setOutput] = useState<string | null>(null);
   const [result, setResult] = useState<{ path?: string; error?: string } | null>(null);
   const [busy, setBusy] = useState(false);
-
-  if (!open) return null;
 
   const chooseFolder = async () => {
     const path = await window.kairos.project.pickExportFolder();
@@ -35,23 +34,14 @@ export function ExportDialog({ open, onClose }: { open: boolean; onClose(): void
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 grid place-items-center bg-black/45 p-5"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
+    <Dialog
+      open={open}
+      onOpenChange={(value) => !value && onClose()}
+      title="Export game"
+      description="Choose a build target and output folder."
     >
-      <section
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="export-title"
-        className="w-full max-w-md rounded-xl border bg-popover p-5 text-popover-foreground shadow-[0_24px_64px_-12px_rgb(0_0_0/0.55)]"
-      >
-        <h2 id="export-title" className="text-sm font-semibold">
-          Export game
-        </h2>
-        <p className="mt-1 text-xs text-muted-foreground">Choose a build target and output folder.</p>
-        <label className="mt-5 block text-xs font-medium" htmlFor="export-target">
+      <div>
+        <label className="block text-xs font-medium" htmlFor="export-target">
           Target
         </label>
         <select
@@ -85,13 +75,15 @@ export function ExportDialog({ open, onClose }: { open: boolean; onClose(): void
             {result.error}
           </pre>
         )}
-        <footer className="mt-5 flex justify-end gap-2">
-          <Button onClick={onClose}>Close</Button>
+        <DialogFooter>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
           <Button variant="primary" disabled={!output || busy} onClick={() => void runExport()}>
             {busy ? "Exporting…" : "Export"}
           </Button>
-        </footer>
-      </section>
-    </div>
+        </DialogFooter>
+      </div>
+    </Dialog>
   );
 }

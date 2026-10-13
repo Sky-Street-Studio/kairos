@@ -203,6 +203,9 @@ export interface KairosApi {
     onData(listener: (id: number, data: string) => void): () => void;
     onExit(listener: (id: number, code: number) => void): () => void;
   };
+  shell: {
+    reveal(path: string): Promise<void>;
+  };
   settings: {
     get(): Promise<Settings>;
     update(patch: Partial<Settings>): Promise<Settings>;

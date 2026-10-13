@@ -1,14 +1,5 @@
-import {
-  MAX_STOPS,
-  MIN_STOPS,
-  PRESETS,
-  parseThemeJson,
-  themeVariables,
-  type Appearance,
-  type Gradient,
-  type ThemeConfig,
-} from "@kairos/theme";
-import { Download, Laptop, Moon, Plus, RotateCcw, Sun, Trash2, Upload } from "lucide-react";
+import { PRESETS, parseThemeJson, themeVariables, type Appearance, type ThemeConfig } from "@kairos/theme";
+import { Download, Laptop, Moon, RotateCcw, Sun, Upload } from "lucide-react";
 import type { ReactNode } from "react";
 import { toast } from "sonner";
 
@@ -21,79 +12,22 @@ import { useApp } from "@/store";
 
 import { Range, SettingRow, SettingsCard } from "./primitives";
 
-function GradientEditor({ label, value, onChange }: { label: string; value: Gradient; onChange(g: Gradient): void }) {
-  const setStop = (i: number, patch: Partial<Gradient["stops"][number]>) =>
-    onChange({ ...value, stops: value.stops.map((s, j) => (j === i ? { ...s, ...patch } : s)) });
-  const sorted = (stops: Gradient["stops"]) => stops.toSorted((a, b) => a.position - b.position);
+function ColorField({ label, value, onChange }: { label: string; value: string; onChange(color: string): void }) {
   return (
-    <div className="space-y-3">
-      <div
-        className="h-9 rounded-md border"
-        style={{
-          background: `linear-gradient(${value.angle}deg, ${value.stops.map((s) => `${s.color} ${s.position}%`).join(", ")})`,
-        }}
+    <div className="flex items-center gap-2">
+      <input
+        type="color"
+        aria-label={`${label} color`}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="size-7 shrink-0 cursor-pointer"
       />
-      <Range
-        label={`${label} angle`}
-        value={value.angle}
-        min={0}
-        max={360}
-        unit="°"
-        onChange={(angle) => onChange({ ...value, angle })}
+      <Input
+        aria-label={`${label} hex`}
+        value={value}
+        onChange={(e) => /^#[0-9a-fA-F]{6}$/.test(e.target.value) && onChange(e.target.value.toLowerCase())}
+        className="w-28 font-mono"
       />
-      <div className="space-y-1.5">
-        {value.stops.map((stop, i) => (
-          <div key={i} className="flex items-center gap-2">
-            <input
-              type="color"
-              aria-label={`${label} stop ${i + 1} color`}
-              value={stop.color}
-              onChange={(e) => setStop(i, { color: e.target.value })}
-              className="size-7 shrink-0 cursor-pointer"
-            />
-            <Input
-              aria-label={`${label} stop ${i + 1} hex`}
-              value={stop.color}
-              onChange={(e) =>
-                /^#[0-9a-fA-F]{6}$/.test(e.target.value) && setStop(i, { color: e.target.value.toLowerCase() })
-              }
-              className="w-24 font-mono"
-            />
-            <input
-              type="range"
-              aria-label={`${label} stop ${i + 1} position`}
-              min={0}
-              max={100}
-              value={stop.position}
-              onChange={(e) => setStop(i, { position: Number(e.target.value) })}
-              onPointerUp={() => onChange({ ...value, stops: sorted(value.stops) })}
-              className="h-1 flex-1 accent-[var(--primary)]"
-            />
-            <span className="w-9 text-right text-xs text-muted-foreground tabular">{stop.position}%</span>
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label={`Remove stop ${i + 1}`}
-              disabled={value.stops.length <= MIN_STOPS}
-              onClick={() => onChange({ ...value, stops: value.stops.filter((_, j) => j !== i) })}
-            >
-              <Trash2 />
-            </Button>
-          </div>
-        ))}
-      </div>
-      <Button
-        size="sm"
-        variant="ghost"
-        disabled={value.stops.length >= MAX_STOPS}
-        onClick={() => {
-          const last = value.stops.at(-1)!;
-          onChange({ ...value, stops: sorted([...value.stops, { color: last.color, position: 100 }]) });
-        }}
-      >
-        <Plus />
-        Add stop
-      </Button>
     </div>
   );
 }
@@ -110,13 +44,13 @@ function PresetCard({ preset, active, onPick }: { preset: ThemeConfig; active: b
         active ? "border-primary shadow-[0_0_0_3px_var(--selection)]" : "hover:border-foreground/30",
       )}
     >
-      <div className="relative h-16 p-2" style={{ background: `${v["app-gradient"]}, ${v.background}` }}>
+      <div className="relative h-16 p-2" style={{ background: v.background }}>
         <div className="flex h-full gap-1">
           <div className="w-1/4 rounded-sm" style={{ background: v.sidebar }} />
           <div className="flex-1 rounded-sm p-1.5" style={{ background: v.card }}>
             <div className="h-1 w-3/5 rounded-full" style={{ background: v.foreground, opacity: 0.6 }} />
             <div className="mt-1 h-1 w-2/5 rounded-full" style={{ background: v["muted-foreground"], opacity: 0.6 }} />
-            <div className="mt-1.5 h-1.5 w-8 rounded-full" style={{ background: v["accent-gradient"] }} />
+            <div className="mt-1.5 h-1.5 w-8 rounded-full" style={{ background: v.primary }} />
           </div>
         </div>
       </div>
@@ -224,38 +158,18 @@ export function AppearancePage() {
             className="w-60"
           />
         </SettingRow>
-        <SettingRow
-          title="Background"
-          description="Stops set the hue. Lightness is fitted to light or dark mode so text stays readable."
-          stacked
-        >
-          <GradientEditor
-            label="Background"
-            value={theme.background}
-            onChange={(background) => patch({ background })}
-          />
+        <SettingRow title="Background" description="The canvas color, adjusted for readable contrast." stacked>
+          <ColorField label="Background" value={theme.background} onChange={(background) => patch({ background })} />
         </SettingRow>
-        <SettingRow title="Background strength" stacked>
-          <Range
-            label="Background strength"
-            value={theme.backgroundIntensity}
-            min={0}
-            max={100}
-            unit="%"
-            onChange={(backgroundIntensity) => patch({ backgroundIntensity })}
-          />
-        </SettingRow>
-        <SettingRow title="Accent" description="Buttons, the active tab and story-flow choices." stacked>
-          <GradientEditor label="Accent" value={theme.accent} onChange={(accent) => patch({ accent })} />
+        <SettingRow title="Accent" description="Buttons, active tabs and story-flow choices." stacked>
+          <ColorField label="Accent" value={theme.accent} onChange={(accent) => patch({ accent })} />
         </SettingRow>
         <SettingRow title="Surface tint" description="Shifts panels toward a color." stacked>
           <div className="flex items-center gap-3">
-            <input
-              type="color"
-              aria-label="Surface tint color"
+            <ColorField
+              label="Surface tint"
               value={theme.surfaceTint.color}
-              onChange={(e) => patch({ surfaceTint: { ...theme.surfaceTint, color: e.target.value } })}
-              className="size-7 shrink-0 cursor-pointer"
+              onChange={(color) => patch({ surfaceTint: { ...theme.surfaceTint, color } })}
             />
             <div className="flex-1">
               <Range

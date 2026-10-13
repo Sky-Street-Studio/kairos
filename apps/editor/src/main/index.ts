@@ -1,5 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { realpath } from "node:fs/promises";
 
 import { BrowserWindow, Menu, app, dialog, ipcMain, shell, type MenuItemConstructorOptions } from "electron";
 
@@ -71,6 +72,15 @@ const requireOpenRoot = (): string =>
 
 function registerIpc(): void {
   ipcMain.handle("project:initial", async () => initialProjectArg() ?? (await getSettings()).recentProjects[0] ?? null);
+  ipcMain.handle("shell:reveal", async (_e, path: string) => {
+    const root = await realpath(requireOpenRoot());
+    const target = await realpath(resolve(root, path));
+    const relativePath = relative(root, target);
+    if (relativePath === ".." || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
+      throw new Error("Path is outside the project");
+    }
+    shell.showItemInFolder(target);
+  });
   ipcMain.handle("project:pick", async (e) => {
     const win = BrowserWindow.fromWebContents(e.sender)!;
     const r = await dialog.showOpenDialog(win, {

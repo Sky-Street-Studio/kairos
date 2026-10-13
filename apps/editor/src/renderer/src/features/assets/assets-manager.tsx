@@ -2,6 +2,7 @@ import { Boxes, FolderInput, Music2, Pencil, Play, Search, Square, Upload } from
 import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { appStore, useApp } from "@/store";
@@ -175,6 +176,8 @@ export function AssetsManager() {
   const [playingPath, setPlayingPath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [revealedPath, setRevealedPath] = useState<string | null>(null);
+  const [confirmDescription, setConfirmDescription] = useState<string | null>(null);
+  const confirmResolver = useRef<((value: boolean) => void) | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const characters = useMemo(
     () => [
@@ -237,14 +240,24 @@ export function AssetsManager() {
     };
   }, [playingPath, project]);
 
+  const confirmConversion = (description: string) =>
+    new Promise<boolean>((resolve) => {
+      confirmResolver.current = resolve;
+      setConfirmDescription(description);
+    });
+  const resolveConversion = (value: boolean) => {
+    confirmResolver.current?.(value);
+    confirmResolver.current = null;
+    setConfirmDescription(null);
+  };
+
   const importFiles = async (files: File[], folder: string) => {
     setError(null);
     const media = files.filter((file) => Boolean((file as File & { path?: string }).path));
     if (!media.length) return;
     for (const file of media) {
       const image = /\.(png|jpe?g|webp)$/i.test(file.name);
-      const convertWebp =
-        image && window.confirm(`Import ${file.name} as WebP? Choose Cancel to keep its current format.`);
+      const convertWebp = image && (await confirmConversion(`Import ${file.name} as WebP?`));
       const result = await window.kairos.project.importAsset(
         (file as File & { path: string }).path,
         folder,
@@ -266,8 +279,7 @@ export function AssetsManager() {
     setError(null);
     const canContainImages = !folder.startsWith("assets/audio/");
     const convertWebp =
-      canContainImages &&
-      window.confirm("Convert imported images to WebP? Choose Cancel to keep their current format.");
+      canContainImages && (await confirmConversion("Convert imported images to WebP before adding them?"));
     try {
       if (await window.kairos.project.importAsset(null, folder, convertWebp)) await refreshTree();
     } catch (cause) {
@@ -457,6 +469,14 @@ export function AssetsManager() {
           {otherAssets.length ? otherAssets.map(row) : undefined}
         </Section>
       </div>
+      <ConfirmDialog
+        open={confirmDescription !== null}
+        title="Convert to WebP?"
+        description={confirmDescription ?? ""}
+        confirmLabel="Convert"
+        onOpenChange={(open) => !open && resolveConversion(false)}
+        onConfirm={() => resolveConversion(true)}
+      />
     </div>
   );
 }

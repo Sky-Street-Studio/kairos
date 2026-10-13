@@ -1,14 +1,31 @@
-import { ChevronRight, Folder, FolderOpen, Music, Images, Plus, RefreshCw, UserRound } from "lucide-react";
+import {
+  ChevronRight,
+  CircleHelp,
+  Folder,
+  FolderOpen,
+  Images,
+  Music,
+  Network,
+  PanelBottom,
+  PanelLeft,
+  Plus,
+  Search,
+  Settings2,
+  UserRound,
+} from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { isMac, modKey } from "@/lib/utils";
 import { isDirty, useApp } from "@/store";
 import { assetUrl, fileKind } from "@shared/assets";
 import type { TreeNode } from "@shared/types";
 
 import { startAssetDrag } from "../stage/asset-drag";
+import { copyPath, revealPath } from "../shell/path-actions";
 import { FileIcon } from "./file-icon";
 
 function Section({
@@ -49,8 +66,9 @@ function Section({
   );
 }
 
-function TreeRows({ nodes, depth }: { nodes: TreeNode[]; depth: number }) {
+export function TreeRows({ nodes, depth, filter = "" }: { nodes: TreeNode[]; depth: number; filter?: string }) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const project = useApp((s) => s.project);
   const activeId = useApp((s) => s.activeId);
   const buffers = useApp((s) => s.buffers);
   const openFile = useApp((s) => s.openFile);
@@ -60,48 +78,77 @@ function TreeRows({ nodes, depth }: { nodes: TreeNode[]; depth: number }) {
       {nodes.map((n) => {
         const pad = { paddingLeft: 8 + depth * 12 };
         if (n.kind === "dir") {
-          const isOpen = !collapsed[n.path];
+          const isOpen = Boolean(filter) || !collapsed[n.path];
           return (
-            <div key={n.path}>
-              <button
-                type="button"
-                style={pad}
-                onClick={() => setCollapsed({ ...collapsed, [n.path]: isOpen })}
-                className="flex h-6 w-full items-center gap-1.5 pr-2 text-xs text-muted-foreground hover:bg-accent hover:text-foreground [&_svg]:size-3.5"
-              >
-                {isOpen ? <FolderOpen /> : <Folder />}
-                <span className="truncate">{n.name}</span>
-              </button>
-              {isOpen && n.children && <TreeRows nodes={n.children} depth={depth + 1} />}
-            </div>
+            <ContextMenu key={n.path}>
+              <ContextMenuTrigger asChild>
+                <button
+                  type="button"
+                  style={pad}
+                  onClick={() => setCollapsed({ ...collapsed, [n.path]: isOpen })}
+                  className="flex h-6 w-full items-center gap-1.5 pr-2 text-xs text-muted-foreground hover:bg-accent hover:text-foreground [&_svg]:size-3.5"
+                >
+                  {isOpen ? <FolderOpen /> : <Folder />}
+                  <span className="truncate">{n.name}</span>
+                </button>
+              </ContextMenuTrigger>
+              <ContextMenuContent>
+                <ContextMenuItem onSelect={() => project && void revealPath(`${project.root}/${n.path}`)}>
+                  Reveal in Finder
+                </ContextMenuItem>
+                <ContextMenuItem onSelect={() => project && void copyPath(project.root, n.path)}>
+                  Copy path
+                </ContextMenuItem>
+                <ContextMenuItem onSelect={() => project && void copyPath(project.root, n.path, true)}>
+                  Copy relative path
+                </ContextMenuItem>
+              </ContextMenuContent>
+              {isOpen && n.children && <TreeRows nodes={n.children} depth={depth + 1} filter={filter} />}
+            </ContextMenu>
           );
         }
         const kind = fileKind(n.path);
         const openable = kind === "script" ? n.path in buffers : kind !== null;
         const errors = diagnostics.filter((d) => d.path === n.path).length;
         return (
-          <button
-            key={n.path}
-            type="button"
-            style={pad}
-            disabled={!openable}
-            onClick={() => openFile(n.path)}
-            className={cn(
-              "flex h-6 w-full items-center gap-1.5 pr-2 text-xs hover:bg-accent disabled:cursor-default disabled:text-muted-foreground disabled:hover:bg-transparent [&_svg]:size-3.5 [&_svg]:shrink-0",
-              activeId === n.path && "bg-accent font-medium text-foreground",
-            )}
-          >
-            <FileIcon path={n.path} className={cn(kind === "script" && "text-primary")} />
-            <span className="truncate">{n.name}</span>
-            {isDirty(buffers[n.path]) && (
-              <span
-                className="size-1.5 shrink-0 rounded-full bg-foreground/70"
-                role="status"
-                aria-label="Unsaved changes"
-              />
-            )}
-            {errors > 0 && <span className="ml-auto text-2xs text-destructive tabular">{errors}</span>}
-          </button>
+          <ContextMenu key={n.path}>
+            <ContextMenuTrigger asChild>
+              <button
+                type="button"
+                style={pad}
+                aria-disabled={!openable}
+                onClick={() => openable && openFile(n.path)}
+                className={cn(
+                  "flex h-6 w-full items-center gap-1.5 pr-2 text-xs hover:bg-accent aria-disabled:cursor-default aria-disabled:text-muted-foreground aria-disabled:hover:bg-transparent [&_svg]:size-3.5 [&_svg]:shrink-0",
+                  activeId === n.path && "bg-accent font-medium text-foreground",
+                )}
+                data-testid="file-tree-row"
+              >
+                <FileIcon path={n.path} className={cn(kind === "script" && "text-primary")} />
+                <span className="truncate">{n.name}</span>
+                {isDirty(buffers[n.path]) && (
+                  <span
+                    className="size-1.5 shrink-0 rounded-full bg-foreground/70"
+                    role="status"
+                    aria-label="Unsaved changes"
+                  />
+                )}
+                {errors > 0 && <span className="ml-auto text-2xs text-destructive tabular">{errors}</span>}
+              </button>
+            </ContextMenuTrigger>
+            <ContextMenuContent>
+              {openable && <ContextMenuItem onSelect={() => openFile(n.path)}>Open</ContextMenuItem>}
+              <ContextMenuItem onSelect={() => project && void revealPath(`${project.root}/${n.path}`)}>
+                Reveal in Finder
+              </ContextMenuItem>
+              <ContextMenuItem onSelect={() => project && void copyPath(project.root, n.path)}>
+                Copy path
+              </ContextMenuItem>
+              <ContextMenuItem onSelect={() => project && void copyPath(project.root, n.path, true)}>
+                Copy relative path
+              </ContextMenuItem>
+            </ContextMenuContent>
+          </ContextMenu>
         );
       })}
     </>
@@ -227,32 +274,152 @@ function Assets() {
 }
 
 export function Sidebar({ width }: { width: number }) {
-  const tree = useApp((s) => s.project?.tree ?? []);
-  const refreshTree = useApp((s) => s.refreshTree);
+  const project = useApp((s) => s.project);
+  const layout = useApp((s) => s.layout);
+  const tabs = useApp((s) => s.tabs);
+  const activeId = useApp((s) => s.activeId);
+  const setActive = useApp((s) => s.setActive);
+  const openView = useApp((s) => s.openView);
+  const setPaletteOpen = useApp((s) => s.setPaletteOpen);
+  const togglePanel = useApp((s) => s.togglePanel);
+  const toggleSettings = useApp((s) => s.toggleSettings);
+  const settingsOpen = useApp((s) => s.settingsOpen);
+  const openProject = useApp((s) => s.openProject);
+  const navigation = [
+    { id: "graph", label: "Story graph", icon: Network },
+    { id: "characters", label: "Characters", icon: UserRound },
+    { id: "assets", label: "Assets", icon: Images },
+  ] as const;
+  const activeIndex = tabs.findIndex((tab) => tab.id === activeId);
+
   return (
     <aside
       style={{ width }}
-      className="flex shrink-0 flex-col overflow-hidden rounded-lg border border-sidebar-border bg-sidebar text-sidebar-foreground"
+      className="flex min-h-0 shrink-0 flex-col overflow-hidden border-r bg-sidebar text-sidebar-foreground"
     >
-      <Section
-        title="Project"
-        actions={
-          <>
-            <Tooltip content="New script">
-              <NewScriptButton />
-            </Tooltip>
-            <Tooltip content="Refresh">
-              <Button variant="ghost" size="icon" aria-label="Refresh files" onClick={() => void refreshTree()}>
-                <RefreshCw />
-              </Button>
-            </Tooltip>
-          </>
-        }
+      <header className={`drag-region flex h-11 shrink-0 items-center gap-2 pr-2 ${isMac() ? "pl-[78px]" : "pl-3"}`}>
+        <span className="truncate text-xs font-semibold">Kairos</span>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Toggle sidebar"
+          className="no-drag ml-auto"
+          onClick={() => togglePanel("sidebar")}
+        >
+          <PanelLeft />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Previous tab"
+          className="no-drag"
+          disabled={activeIndex <= 0}
+          onClick={() => setActive(tabs[activeIndex - 1]?.id ?? "")}
+        >
+          <ChevronRight className="rotate-180" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Next tab"
+          className="no-drag"
+          disabled={activeIndex < 0 || activeIndex >= tabs.length - 1}
+          onClick={() => setActive(tabs[activeIndex + 1]?.id ?? "")}
+        >
+          <ChevronRight />
+        </Button>
+      </header>
+      <button
+        type="button"
+        onClick={() => setPaletteOpen(true)}
+        className="mx-2 mb-2 flex h-8 shrink-0 items-center gap-2 rounded-md bg-background px-2 text-xs text-muted-foreground hover:text-foreground"
       >
-        <TreeRows nodes={tree} depth={0} />
-      </Section>
+        <Search className="size-3.5" />
+        <span className="flex-1 text-left">Search</span>
+        <span className="text-2xs">{modKey()}K</span>
+      </button>
+      <nav aria-label="Project navigation" className="shrink-0 px-1.5 pb-2">
+        {navigation.map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => openView(id)}
+            className={cn(
+              "flex h-7 w-full items-center gap-2 rounded-md px-2 text-xs",
+              activeId === id
+                ? "bg-accent text-foreground"
+                : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+            )}
+          >
+            <Icon className="size-3.5" />
+            {label}
+          </button>
+        ))}
+      </nav>
+      <div className="group flex h-8 shrink-0 items-center gap-1 border-t px-2">
+        <ContextMenu>
+          <ContextMenuTrigger asChild>
+            <button
+              type="button"
+              className="flex min-w-0 flex-1 items-center gap-2 text-left text-xs hover:text-foreground"
+            >
+              <Folder className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className="truncate font-medium">{project?.manifest.name ?? "Project"}</span>
+            </button>
+          </ContextMenuTrigger>
+          <ContextMenuContent>
+            {project && (
+              <ContextMenuItem onSelect={() => void revealPath(project.root)}>Reveal in Finder</ContextMenuItem>
+            )}
+            {project && <ContextMenuItem onSelect={() => void copyPath(project.root, "")}>Copy path</ContextMenuItem>}
+          </ContextMenuContent>
+        </ContextMenu>
+        <NewScriptButton />
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Open project folder"
+          onClick={async () => {
+            const root = await window.kairos.project.pick();
+            if (root) await openProject(root);
+          }}
+        >
+          <FolderOpen />
+        </Button>
+      </div>
+      {project && (
+        <p className="truncate px-2 pb-2 text-2xs text-muted-foreground" title={project.root}>
+          {project.root}
+        </p>
+      )}
       <Characters />
       <Assets />
+      <footer className="mt-auto flex h-9 shrink-0 items-center justify-between border-t px-1.5">
+        <div className="flex gap-0.5">
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Settings"
+            title={`Settings (${modKey()},)`}
+            aria-pressed={settingsOpen}
+            onClick={() => toggleSettings()}
+          >
+            <Settings2 />
+          </Button>
+          <Button variant="ghost" size="icon" aria-label="Help">
+            <CircleHelp />
+          </Button>
+        </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Toggle terminal"
+          aria-pressed={layout.bottom}
+          onClick={() => togglePanel("bottom")}
+        >
+          <PanelBottom />
+        </Button>
+      </footer>
     </aside>
   );
 }

@@ -11,14 +11,4 @@ export {
   type ThemeVariable,
   type ThemeVariables,
 } from "./resolve";
-export {
-  MAX_STOPS,
-  MIN_STOPS,
-  parseThemeJson,
-  validateTheme,
-  type Appearance,
-  type Gradient,
-  type GradientStop,
-  type ThemeConfig,
-  type ValidationResult,
-} from "./schema";
+export { parseThemeJson, validateTheme, type Appearance, type ThemeConfig, type ValidationResult } from "./schema";

@@ -54,6 +54,9 @@ const api: KairosApi = {
     onData: (listener) => subscribe("terminal:data", listener),
     onExit: (listener) => subscribe("terminal:exit", listener),
   },
+  shell: {
+    reveal: (path) => invokeEdit("shell:reveal", path),
+  },
   settings: {
     get: () => ipcRenderer.invoke("settings:get"),
     update: (patch) => ipcRenderer.invoke("settings:update", patch),
