@@ -23,7 +23,7 @@ Lists, dictionaries, functions and a seeded random source in the script language
 
 ## 3a. Visual story editor (done)
 
-Build and edit a branching story from the visual flow and block editors, with the script available for direct edits.
+Build and edit a branching story from the visual flow and block editors, with the script available for direct edits. Design: `visual-story-editor.md`.
 
 ## 3b. Custom screens
 
