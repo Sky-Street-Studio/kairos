@@ -326,6 +326,15 @@ describe("app store", () => {
     expect(store.getState().canRedo).toBe(false);
   });
 
+  it("requests a preview seek without starting playback", () => {
+    store.getState().previewAt("script/a.kai", 3);
+    expect(store.getState().playRequest).toMatchObject({
+      path: "script/a.kai",
+      line: 3,
+      mode: "seek",
+    });
+  });
+
   it("toggles panels, persists layout and opens the preview on play", () => {
     const s = store.getState();
     s.togglePanel("bottom");

@@ -92,6 +92,27 @@ pub(crate) fn sprite_rects(
         .collect()
 }
 
+pub(crate) fn sprite_hit_rects(
+    screen: Screen,
+    stage: &kairos_vm::Stage,
+    image: &dyn Fn(&str) -> ImageInfo,
+    size: (f32, f32),
+) -> Vec<(String, Rect)> {
+    if screen == Screen::Title {
+        return Vec::new();
+    }
+    stage
+        .sprites
+        .iter()
+        .zip(sprite_rects(stage, image, size))
+        .filter_map(|(sprite, (tag, rect))| {
+            let mut words = vec![sprite.tag.clone()];
+            words.extend(sprite.attrs.iter().cloned());
+            (!matches!(image(&image_name(&words)), ImageInfo::Loading)).then_some((tag, rect))
+        })
+        .collect()
+}
+
 /// The texture name for an image's words, e.g. `bg room`.
 pub fn image_name(words: &[String]) -> String {
     words.join(" ")
@@ -835,6 +856,26 @@ mod tests {
     fn long_slot_previews_are_shortened() {
         assert_eq!(ellipsize("short", 10), "short");
         assert_eq!(ellipsize("a much longer preview", 8), "a much…");
+    }
+
+    #[test]
+    fn sprite_hit_rects_include_only_drawn_sprites_on_the_game_screen() {
+        let stage = kairos_vm::Stage {
+            background: None,
+            sprites: vec![
+                kairos_vm::Sprite { tag: "e".into(), attrs: vec!["happy".into()], at: Some("left".into()) },
+                kairos_vm::Sprite { tag: "k".into(), attrs: vec![], at: Some("right".into()) },
+                kairos_vm::Sprite { tag: "m".into(), attrs: vec![], at: Some("center".into()) },
+            ],
+        };
+        let image = |name: &str| match name {
+            "e happy" => ImageInfo::Ready(400, 800),
+            "k" => ImageInfo::Missing,
+            _ => ImageInfo::Loading,
+        };
+        assert!(sprite_hit_rects(Screen::Title, &stage, &image, (1280.0, 720.0)).is_empty());
+        let rects = sprite_hit_rects(Screen::Game, &stage, &image, (1280.0, 720.0));
+        assert_eq!(rects.iter().map(|(tag, _)| tag.as_str()).collect::<Vec<_>>(), ["e", "k"]);
     }
 
     #[test]

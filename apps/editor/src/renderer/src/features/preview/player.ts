@@ -6,6 +6,8 @@ export interface WebPlayer {
   load(projectJson: string, onDebug: (state: string) => void): void;
   start(): void;
   playFromLine(path: string, line: number, overrides?: string): void;
+  previewAt(path: string, line: number): void;
+  spriteAt(x: number, y: number): string | undefined;
   debugState(): string;
   setVariable(name: string, json: string): void;
   rollbackTo(position: number): void;

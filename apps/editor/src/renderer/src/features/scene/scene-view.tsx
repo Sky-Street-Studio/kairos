@@ -1,4 +1,5 @@
-import type { Block, Scene } from "@shared/edit-types";
+import type { Block, Place, Scene } from "@shared/edit-types";
+import type { AssetEntry } from "@shared/types";
 import {
   AudioLines,
   Braces,
@@ -19,7 +20,7 @@ import {
   VolumeX,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -38,6 +39,8 @@ import { blockDiagnostics, blockTitle, variableSummary } from "./block-labels";
 import { insertOp, stripBlock, type BlockContext } from "./block-ops";
 import { dropPlace, type DropRow } from "./drop-target";
 import { flushPendingEdits, resolveBlock, type BlockPosition } from "./pending-edits";
+import { ASSET_MIME } from "../stage/asset-drag";
+import { assetToBlock } from "./stage-drop";
 import { useScene } from "./use-scene";
 
 function blockIcon(block: Block): LucideIcon {
@@ -163,6 +166,40 @@ function sceneDropRows(blocks: Block[], header: number, prefix: BlockPosition = 
   });
 }
 
+function placeForDrop(root: HTMLDivElement, scene: Scene, pointerY: number): Place | null {
+  const elements = new Map(
+    [...root.querySelectorAll<HTMLElement>("[data-block-position]")].map((element) => [
+      element.dataset.blockPosition,
+      element,
+    ]),
+  );
+  const listElements = new Map(
+    [root, ...root.querySelectorAll<HTMLElement>("[data-scene-list-position]")].map((element) => [
+      element.dataset.sceneListPosition,
+      element,
+    ]),
+  );
+  const emptyLists = sceneDropLists(scene.blocks, scene.line)
+    .filter((list) => list.empty)
+    .map((list) => ({ list, element: listElements.get(JSON.stringify(list.position)) ?? null }))
+    .filter((item): item is { list: DropListTarget; element: HTMLElement } => item.element !== null);
+  const emptyTarget = emptyLists
+    .filter(({ element }) => {
+      const rect = element.getBoundingClientRect();
+      return pointerY >= rect.top && pointerY <= rect.bottom;
+    })
+    .toSorted((a, b) => b.list.depth - a.list.depth)[0];
+  const visibleRows = sceneDropRows(scene.blocks, scene.line)
+    .map(({ row, position }) => ({ row, element: elements.get(JSON.stringify(position)) }))
+    .filter((item): item is { row: DropRow; element: HTMLElement } => item.element !== undefined);
+  if (emptyTarget) return { at: "start", header: emptyTarget.list.header };
+  return dropPlace(
+    visibleRows.map(({ row }) => row),
+    pointerY,
+    visibleRows.map(({ element }) => element.getBoundingClientRect()),
+  );
+}
+
 function BlockList({
   blocks,
   path,
@@ -188,15 +225,46 @@ function BlockList({
   const [dropY, setDropY] = useState<number | null>(null);
   const isRootList = positionPrefix.length === 0;
   const onDragOver = (event: React.DragEvent<HTMLDivElement>) => {
-    if (!event.dataTransfer.types.includes("application/x-kairos-block")) return;
+    const blockDrag = event.dataTransfer.types.includes("application/x-kairos-block");
+    const assetDrag = isRootList && event.dataTransfer.types.includes(ASSET_MIME);
+    if (!blockDrag && !assetDrag) return;
     event.preventDefault();
     setDropY(event.clientY - (listRef.current?.getBoundingClientRect().top ?? 0));
   };
   const onDrop = (event: React.DragEvent<HTMLDivElement>) => {
-    if (!event.dataTransfer.types.includes("application/x-kairos-block")) return;
+    const blockDrag = event.dataTransfer.types.includes("application/x-kairos-block");
+    const assetDrag = isRootList && event.dataTransfer.types.includes(ASSET_MIME);
+    if (!blockDrag && !assetDrag) return;
     event.preventDefault();
     setDropY(null);
     const pointerY = event.clientY;
+    const root = listRef.current;
+    if (assetDrag) {
+      let asset: AssetEntry;
+      try {
+        asset = JSON.parse(event.dataTransfer.getData(ASSET_MIME)) as AssetEntry;
+      } catch {
+        toast.error("Could not add this asset.");
+        return;
+      }
+      const rect = root?.getBoundingClientRect();
+      const block = assetToBlock(asset, rect ? (event.clientX - rect.left) / rect.width : 0.5);
+      if (!block) return;
+      void (async () => {
+        await flushPendingEdits();
+        const source = appStore().getState().buffers[path]?.source;
+        const latestScene = source ? await window.kairos.edit.blocks(source, sceneLabel) : null;
+        if (!latestScene || !root) {
+          toast.error("Could not add this asset because the scene changed.");
+          return;
+        }
+        const place = placeForDrop(root, latestScene, pointerY) ?? { at: "start", header: latestScene.line };
+        const focus = await edit([insertOp(path, place, block)]);
+        if (focus) selectBlock(focus);
+        else toast.error(appStore().getState().editError ?? "Could not add this asset.");
+      })();
+      return;
+    }
     const positionData = event.dataTransfer.getData("application/x-kairos-block-position");
     let draggedPosition: BlockPosition;
     try {
@@ -208,46 +276,13 @@ function BlockList({
     void (async () => {
       await flushPendingEdits();
       const source = appStore().getState().buffers[path]?.source;
-      const latestScene: Scene | null = source ? await window.kairos.edit.blocks(source, sceneLabel) : null;
+      const latestScene = source ? await window.kairos.edit.blocks(source, sceneLabel) : null;
       const dragged = latestScene ? resolveBlock(latestScene.blocks, draggedPosition) : null;
-      const root = listRef.current;
       if (!latestScene || !dragged || !root) {
         toast.error("Could not move this block because the scene changed.");
         return;
       }
-      const elements = new Map(
-        [...root.querySelectorAll<HTMLElement>("[data-block-position]")].map((element) => [
-          element.dataset.blockPosition,
-          element,
-        ]),
-      );
-      const listElements = new Map(
-        [root, ...root.querySelectorAll<HTMLElement>("[data-scene-list-position]")].map((element) => [
-          element.dataset.sceneListPosition,
-          element,
-        ]),
-      );
-      const emptyLists = sceneDropLists(latestScene.blocks, latestScene.line)
-        .filter((list) => list.empty)
-        .map((list) => ({ list, element: listElements.get(JSON.stringify(list.position)) ?? null }))
-        .filter((item): item is { list: DropListTarget; element: HTMLElement } => item.element !== null);
-      const emptyTarget = emptyLists
-        .filter(({ element }) => {
-          const rect = element.getBoundingClientRect();
-          return pointerY >= rect.top && pointerY <= rect.bottom;
-        })
-        .toSorted((a, b) => b.list.depth - a.list.depth)[0];
-      const visibleRows = sceneDropRows(latestScene.blocks, latestScene.line)
-        .map(({ row, position }) => ({ row, element: elements.get(JSON.stringify(position)) }))
-        .filter((item): item is { row: DropRow; element: HTMLElement } => item.element !== undefined);
-      const rects = visibleRows.map(({ element }) => element.getBoundingClientRect());
-      const place = emptyTarget
-        ? { at: "start" as const, header: emptyTarget.list.header }
-        : dropPlace(
-            visibleRows.map(({ row }) => row),
-            pointerY,
-            rects,
-          );
+      const place = placeForDrop(root, latestScene, pointerY);
       if (!place) return;
       const focus = await edit([{ op: "move", path, line: dragged.line, place }]);
       if (!focus) toast.error(appStore().getState().editError ?? "Could not move this block.");
@@ -460,6 +495,19 @@ export function SceneView({ label }: { label: string }) {
     project?.assets.filter((asset) => asset.category === "background").map((asset) => asset.name.split(/\s+/)) ?? [];
   const music = project?.assets.filter((asset) => asset.category === "music").map((asset) => asset.name) ?? [];
   const ctx: BlockContext = { characters: characters.map((character) => character.id), backgrounds, music, scenes };
+  const selectedBlock = useApp((state) => state.selectedBlock);
+  const previewAt = useApp((state) => state.previewAt);
+
+  useEffect(() => {
+    if (
+      !scene ||
+      selectedBlock?.path !== path ||
+      !sceneDropRows(scene.blocks, scene.line).some(({ row }) => row.line === selectedBlock.line)
+    )
+      return;
+    const timer = setTimeout(() => previewAt(path, selectedBlock.line), 150);
+    return () => clearTimeout(timer);
+  }, [path, previewAt, scene, selectedBlock]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">

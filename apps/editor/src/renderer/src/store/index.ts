@@ -91,7 +91,13 @@ const createPreviewSlice: SliceCreator<PreviewSlice> = (set) => ({
   },
   playFromLine(path, line, overrides) {
     set((s) => ({
-      playRequest: { path, line, overrides, nonce: ++playNonce },
+      playRequest: { path, line, overrides, nonce: ++playNonce, mode: "play" },
+      layout: { ...s.layout, preview: true },
+    }));
+  },
+  previewAt(path, line) {
+    set((s) => ({
+      playRequest: { path, line, nonce: ++playNonce, mode: "seek" },
       layout: { ...s.layout, preview: true },
     }));
   },

@@ -197,7 +197,7 @@ impl Player {
         let images = &self.images;
         let lookup = |name: &str| images.get(name).copied().unwrap_or(ImageInfo::Loading);
         let (x, y) = self.renderer.letterbox().to_virtual(x, y);
-        view::sprite_rects(self.game.stage(), &lookup, self.renderer.virtual_size())
+        view::sprite_hit_rects(self.game.screen, self.game.stage(), &lookup, self.renderer.virtual_size())
             .into_iter()
             .rev()
             .find(|(_, r)| r.contains(x, y))

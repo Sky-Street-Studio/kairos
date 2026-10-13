@@ -116,12 +116,13 @@ export interface DebugControl {
 export interface PreviewSlice {
   /** Bumped after every save so the preview reloads the project. */
   previewVersion: number;
-  playRequest: (Reveal & { overrides?: Record<string, unknown> }) | null;
+  playRequest: (Reveal & { mode: "play" | "seek"; overrides?: Record<string, unknown> }) | null;
   debugState: DebugState | null;
   debugControl: DebugControl | null;
   setDebugState(state: DebugState | null): void;
   setDebugControl(control: DebugControl | null): void;
   playFromLine(path: string, line: number, overrides?: Record<string, unknown>): void;
+  previewAt(path: string, line: number): void;
 }
 
 export type AppState = ProjectSlice & AnalysisSlice & TabsSlice & UiSlice & PreviewSlice & HistorySlice & EditSlice;
