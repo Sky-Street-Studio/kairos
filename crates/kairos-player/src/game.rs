@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use kairos_vm::{Effect, Event, LoadError, Program, RuntimeError, Stage, Vm};
+use kairos_vm::{Effect, Event, LoadError, Persistent, Program, RuntimeError, Stage, Vm};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Shown {
@@ -61,6 +61,8 @@ pub struct Settings {
     pub music: f32,
     pub sound: f32,
     pub voice: f32,
+    /// Skip runs through lines the player has never read instead of stopping at them.
+    pub skip_unseen: bool,
 }
 
 impl Settings {
@@ -69,7 +71,7 @@ impl Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { text_speed: 45.0, auto_delay: 1.2, music: 0.8, sound: 0.8, voice: 0.8 }
+        Settings { text_speed: 45.0, auto_delay: 1.2, music: 0.8, sound: 0.8, voice: 0.8, skip_unseen: false }
     }
 }
 
@@ -140,6 +142,7 @@ impl Game {
     ) -> Result<(), RuntimeError> {
         match Vm::new(self.program.clone()) {
             Ok(mut vm) => {
+                vm.set_persistent(self.vm.persistent().clone());
                 vm.set_translations(self.translations.get(&self.language).cloned().unwrap_or_default());
                 for (name, value) in overrides {
                     vm.seed_variable(name, value.clone());
@@ -296,12 +299,28 @@ impl Game {
     }
 
     pub fn load(&mut self, bytes: &[u8]) -> Result<(), LoadError> {
-        self.vm = Vm::load(self.program.clone(), bytes)?;
+        let mut vm = Vm::load(self.program.clone(), bytes)?;
+        vm.set_persistent(self.vm.persistent().clone());
+        self.vm = vm;
         self.vm.set_translations(self.translations.get(&self.language).cloned().unwrap_or_default());
         self.reset();
         self.signals.push(Signal::Resync);
         self.step();
         Ok(())
+    }
+
+    /// Whether the last [`Game::load`] resumed near the saved line because a patch changed it.
+    pub fn load_relocated(&self) -> bool {
+        self.vm.relocated()
+    }
+
+    pub fn set_persistent(&mut self, persistent: Persistent) {
+        self.vm.set_persistent(persistent);
+    }
+
+    /// Persistent data to write out, if it changed since the last call.
+    pub fn take_persistent(&mut self) -> Option<Vec<u8>> {
+        self.vm.take_persistent_changed().then(|| self.vm.persistent().to_bytes())
     }
 
     pub fn toggle(&mut self, mode: Mode) {
@@ -315,6 +334,10 @@ impl Game {
         }
         if self.mode == Mode::Skip {
             self.skip_timer += dt;
+            if matches!(self.shown, Shown::Say { .. }) && !self.settings.skip_unseen && !self.vm.line_seen() {
+                self.mode = Mode::Normal;
+                return;
+            }
             match self.shown {
                 Shown::Say { .. } | Shown::Pause { .. } if self.skip_timer >= SKIP_INTERVAL => {
                     self.skip_timer = 0.0;
@@ -599,12 +622,34 @@ label start:
     #[test]
     fn skip_mode_runs_to_the_next_menu_and_stops() {
         let mut game = game();
+        game.settings.skip_unseen = true;
         game.toggle(Mode::Skip);
         for _ in 0..10 {
             game.tick(0.1);
         }
         assert!(matches!(game.shown, Shown::Menu { .. }));
         assert_eq!(game.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn skip_stops_at_unread_lines_until_a_playthrough_has_read_them() {
+        let mut first = game();
+        assert!(first.take_persistent().is_none());
+        first.toggle(Mode::Skip);
+        first.tick(0.1);
+        assert_eq!(text(&first), "Hello there.");
+        assert_eq!(first.mode, Mode::Normal);
+
+        to_menu(&mut first);
+        let saved = first.take_persistent().expect("reading lines changes persistent data");
+        let mut second = Game::new(first.program.clone()).unwrap();
+        second.set_persistent(Persistent::from_bytes(&saved).unwrap());
+        second.start("start");
+        second.toggle(Mode::Skip);
+        for _ in 0..10 {
+            second.tick(0.1);
+        }
+        assert!(matches!(second.shown, Shown::Menu { .. }), "{:?}", second.shown);
     }
 
     #[test]

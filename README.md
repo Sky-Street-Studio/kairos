@@ -68,9 +68,30 @@ The preview pane loads the WebAssembly player from `crates/kairos-player/pkg` an
 
 ## Playing
 
-Click, space or enter advances; the first press finishes the typewriter. Number keys or clicks pick menu choices. Mouse wheel up or PageUp rolls back. Escape or right-click opens the menu with Save, Load, History, Settings (text speed, auto delay, volumes and language), Auto, Skip, Restart and Main menu. `A` toggles auto, Tab toggles skip.
+Click, space or enter advances; the first press finishes the typewriter. Number keys or clicks pick menu choices. Mouse wheel up or PageUp rolls back. Escape or right-click opens the menu with Save, Load, History, Settings (text speed, auto delay, volumes, skip and language), Auto, Skip, Restart and Main menu. `A` toggles auto, Tab toggles skip. Skip stops at lines you have not read yet, in this playthrough or an earlier one; set Skip to All text in Settings to run through everything.
 
 Saves go to the platform data directory, e.g. `~/Library/Application Support/Kairos/saves/<project name>/slot-N.ksav` on macOS. In the browser they go to `localStorage`. The selected language is stored in player preferences, separately from save files.
+
+If an update rewords or removes the line a save points to, loading resumes after the nearest earlier line that still exists in the same label and says so. A save fails to load only when its whole label is gone.
+
+### Persistent data
+
+Variables named `persistent.*` belong to the player, not to a playthrough. They keep their values across new games, loads and rollback, and they are stored next to the save slots in `persistent.kper` (or `localStorage` in the browser), together with the record of read lines. Use them for galleries, endings and route locks.
+
+```
+default persistent.endings_seen = 0
+
+label good_end:
+    $ persistent.endings_seen += 1
+    $ persistent.true_route_open = True
+    return
+
+label start:
+    if persistent.true_route_open:
+        jump true_route
+```
+
+`default` sets a starting value only the first time the game runs. A `persistent.*` name that was never set reads as `None`.
 
 ## Project layout
 

@@ -117,6 +117,12 @@ impl ApplicationHandler for App {
         }
     }
 
+    fn exiting(&mut self, _: &ActiveEventLoop) {
+        if let Some(r) = &mut self.running {
+            r.player.flush_persistent();
+        }
+    }
+
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
         let Some(r) = &mut self.running else { return };
         match event {

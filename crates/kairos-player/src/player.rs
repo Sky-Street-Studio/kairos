@@ -5,13 +5,15 @@ use std::collections::HashMap;
 use kairos_audio::{Audio, Bus, Sound};
 use kairos_project::{AudioLoop, AudioMetadata, Project, parse_audio_metadata};
 use kairos_render::{Fonts, Renderer, TransitionKind};
-use kairos_vm::Effect;
+use kairos_vm::{Effect, Persistent, PersistentError};
 
 use crate::assets::{Assets, Loaded, Request};
 use crate::game::{Game, Screen, Shown, Signal};
 use crate::saves::SaveStore;
 use crate::theme::{Theme, Title};
 use crate::view::{self, Action, Hotspot, ImageInfo, SLOTS, ViewInput, image_name};
+
+const PERSISTENT_INTERVAL: f32 = 2.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Button {
@@ -58,6 +60,11 @@ pub struct Player {
     back_to: Screen,
     backlog_scroll: usize,
     notice: Option<(String, f32)>,
+    /// Persistent data waiting to be written; reading a line changes it, so writes are batched.
+    persistent_pending: Option<Vec<u8>>,
+    persistent_timer: f32,
+    /// Off when the stored persistent data came from a newer engine, so it is never overwritten.
+    persistent_writable: bool,
     can_quit: bool,
     quit: bool,
 }
@@ -75,6 +82,15 @@ impl Player {
         let saved_language = saves.language().unwrap_or_default();
         let mut game = Game::new(project.program.clone()).map_err(|e| e.to_string())?;
         game.set_localizations(project.translations.clone(), &saved_language);
+        let mut persistent_writable = true;
+        match saves.persistent().map(|bytes| Persistent::from_bytes(&bytes)) {
+            Some(Ok(persistent)) => game.set_persistent(persistent),
+            Some(Err(e)) => {
+                log(&format!("persistent data ignored: {e}"));
+                persistent_writable = !matches!(e, PersistentError::UnsupportedVersion(_));
+            }
+            None => {}
+        }
         let mut assets = assets;
         let audio_metadata_ready = !cfg!(target_arch = "wasm32");
         if !audio_metadata_ready {
@@ -111,6 +127,9 @@ impl Player {
             back_to: Screen::Game,
             backlog_scroll: 0,
             notice: None,
+            persistent_pending: None,
+            persistent_timer: 0.0,
+            persistent_writable,
             can_quit,
             quit: false,
         };
@@ -218,6 +237,32 @@ impl Player {
         self.quit
     }
 
+    /// Writes persistent data now instead of waiting for the next batch, e.g. before the
+    /// window closes.
+    pub fn flush_persistent(&mut self) {
+        if let Some(bytes) = self.game.take_persistent() {
+            self.persistent_pending = Some(bytes);
+        }
+        self.persistent_timer = 0.0;
+        let Some(bytes) = self.persistent_pending.take() else { return };
+        if !self.persistent_writable {
+            return;
+        }
+        if let Err(e) = self.saves.write_persistent(&bytes) {
+            self.notify(format!("Could not save progress: {e}"));
+        }
+    }
+
+    fn batch_persistent(&mut self, dt: f32) {
+        if let Some(bytes) = self.game.take_persistent() {
+            self.persistent_pending = Some(bytes);
+        }
+        self.persistent_timer += dt;
+        if self.persistent_pending.is_some() && self.persistent_timer >= PERSISTENT_INTERVAL {
+            self.flush_persistent();
+        }
+    }
+
     pub fn resize(&mut self, width: u32, height: u32) {
         self.renderer.resize((width, height));
     }
@@ -239,6 +284,10 @@ impl Player {
             Shown::Quit if self.can_quit => self.quit = true,
             Shown::Quit => self.game.proceed(),
             _ => {}
+        }
+        self.batch_persistent(dt);
+        if self.quit {
+            self.flush_persistent();
         }
         self.renderer.tick(dt);
         self.audio.update();
@@ -357,7 +406,10 @@ impl Player {
                     _ => String::new(),
                 };
                 match self.saves.write(slot, &bytes, &preview) {
-                    Ok(()) => self.notify(format!("Saved to slot {}", slot + 1)),
+                    Ok(()) => {
+                        self.notify(format!("Saved to slot {}", slot + 1));
+                        self.flush_persistent();
+                    }
                     Err(e) => self.notify(format!("Could not save: {e}")),
                 }
                 self.slots = (0..SLOTS).map(|i| self.saves.preview(i)).collect();
@@ -365,7 +417,7 @@ impl Player {
             Action::Load(slot) => {
                 let Some(bytes) = self.saves.read(slot) else { return };
                 match self.game.load(&bytes) {
-                    Ok(()) => self.notify(format!("Loaded slot {}", slot + 1)),
+                    Ok(()) => self.notify_loaded(slot),
                     Err(e) => self.notify(format!("Could not load: {e}")),
                 }
             }
@@ -378,7 +430,7 @@ impl Player {
                         self.notify(format!("Could not load: {e}"));
                     } else {
                         self.game.screen = Screen::Game;
-                        self.notify(format!("Loaded slot {}", slot + 1));
+                        self.notify_loaded(slot);
                     }
                 }
             }
@@ -407,6 +459,17 @@ impl Player {
 
     fn notify(&mut self, message: String) {
         self.notice = Some((message, 2.5));
+    }
+
+    fn notify_loaded(&mut self, slot: usize) {
+        if self.game.load_relocated() {
+            self.notice = Some((
+                format!("Loaded slot {}. The story changed since this save, so it resumed nearby.", slot + 1),
+                5.0,
+            ));
+        } else {
+            self.notify(format!("Loaded slot {}", slot + 1));
+        }
     }
 
     fn apply_volumes(&mut self) {

@@ -12,6 +12,7 @@ pub enum SaveStore {
     Memory {
         slots: HashMap<usize, (Vec<u8>, String, u128)>,
         language: Option<String>,
+        persistent: Option<Vec<u8>>,
     },
 }
 
@@ -21,7 +22,7 @@ impl SaveStore {
     pub fn for_project(name: &str) -> SaveStore {
         match directories::ProjectDirs::from("", "", "Kairos") {
             Some(dirs) => SaveStore::Dir(dirs.data_dir().join("saves").join(sanitize(name))),
-            None => SaveStore::Memory { slots: HashMap::new(), language: None },
+            None => SaveStore::Memory { slots: HashMap::new(), language: None, persistent: None },
         }
     }
 
@@ -41,8 +42,9 @@ impl SaveStore {
             #[cfg(target_arch = "wasm32")]
             SaveStore::Local(prefix) => {
                 let storage = local_storage().ok_or("localStorage is unavailable")?;
-                let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-                storage.set_item(&format!("{prefix}{slot}"), &hex).map_err(|_| "storage is full".to_string())?;
+                storage
+                    .set_item(&format!("{prefix}{slot}"), &to_hex(bytes))
+                    .map_err(|_| "storage is full".to_string())?;
                 storage
                     .set_item(&format!("{prefix}{slot}:preview"), preview)
                     .map_err(|_| "storage is full".to_string())?;
@@ -62,10 +64,7 @@ impl SaveStore {
             #[cfg(not(target_arch = "wasm32"))]
             SaveStore::Dir(dir) => std::fs::read(dir.join(format!("slot-{slot}.ksav"))).ok(),
             #[cfg(target_arch = "wasm32")]
-            SaveStore::Local(prefix) => {
-                let hex = local_storage()?.get_item(&format!("{prefix}{slot}")).ok()??;
-                (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(hex.get(i..i + 2)?, 16).ok()).collect()
-            }
+            SaveStore::Local(prefix) => from_hex(&local_storage()?.get_item(&format!("{prefix}{slot}")).ok()??),
             SaveStore::Memory { slots, .. } => slots.get(&slot).map(|s| s.0.clone()),
         }
     }
@@ -94,6 +93,36 @@ impl SaveStore {
                 .map_err(|_| "storage is full".into()),
             SaveStore::Memory { language: saved, .. } => {
                 *saved = Some(language.to_string());
+                Ok(())
+            }
+        }
+    }
+
+    /// Data shared by every playthrough; see [`kairos_vm::Persistent`].
+    pub fn persistent(&self) -> Option<Vec<u8>> {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            SaveStore::Dir(dir) => std::fs::read(dir.join("persistent.kper")).ok(),
+            #[cfg(target_arch = "wasm32")]
+            SaveStore::Local(prefix) => from_hex(&local_storage()?.get_item(&format!("{prefix}persistent")).ok()??),
+            SaveStore::Memory { persistent, .. } => persistent.clone(),
+        }
+    }
+
+    pub fn write_persistent(&mut self, bytes: &[u8]) -> Result<(), String> {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            SaveStore::Dir(dir) => {
+                std::fs::create_dir_all(&*dir).map_err(|e| e.to_string())?;
+                std::fs::write(dir.join("persistent.kper"), bytes).map_err(|e| e.to_string())
+            }
+            #[cfg(target_arch = "wasm32")]
+            SaveStore::Local(prefix) => local_storage()
+                .ok_or("localStorage is unavailable")?
+                .set_item(&format!("{prefix}persistent"), &to_hex(bytes))
+                .map_err(|_| "storage is full".into()),
+            SaveStore::Memory { persistent, .. } => {
+                *persistent = Some(bytes.to_vec());
                 Ok(())
             }
         }
@@ -167,6 +196,16 @@ fn timestamp() -> u128 {
 }
 
 #[cfg(target_arch = "wasm32")]
+fn to_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn from_hex(hex: &str) -> Option<Vec<u8>> {
+    (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(hex.get(i..i + 2)?, 16).ok()).collect()
+}
+
+#[cfg(target_arch = "wasm32")]
 fn local_storage() -> Option<web_sys::Storage> {
     web_sys::window()?.local_storage().ok()?
 }
@@ -182,7 +221,7 @@ mod tests {
 
     #[test]
     fn language_preference_is_separate_from_save_slots() {
-        let mut store = SaveStore::Memory { slots: HashMap::new(), language: None };
+        let mut store = SaveStore::Memory { slots: HashMap::new(), language: None, persistent: None };
         store.write(0, b"save", "preview").unwrap();
         assert_eq!(store.language(), None);
         store.set_language("ja").unwrap();
@@ -199,7 +238,7 @@ mod tests {
 
     #[test]
     fn newest_memory_slot_tracks_write_order() {
-        let mut store = SaveStore::Memory { slots: HashMap::new(), language: None };
+        let mut store = SaveStore::Memory { slots: HashMap::new(), language: None, persistent: None };
         store.write(4, b"first", "first").unwrap();
         store.write(1, b"newest", "newest").unwrap();
         assert_eq!(store.newest(), Some(1));
@@ -215,8 +254,12 @@ mod tests {
         assert_eq!(store.preview(0).as_deref(), Some("Eileen: Hi."));
         assert_eq!(store.read(1), None);
         store.set_language("ja").unwrap();
+        assert_eq!(store.persistent(), None);
+        store.write_persistent(b"KPERdata").unwrap();
         let loaded = SaveStore::Dir(dir.clone());
         assert_eq!(loaded.language().as_deref(), Some("ja"));
+        assert_eq!(loaded.persistent().as_deref(), Some(&b"KPERdata"[..]));
+        assert_eq!(loaded.newest(), Some(0), "persistent data is not a save slot");
         assert_eq!(loaded.read(0).as_deref(), Some(&b"KSAVdata"[..]));
         std::fs::remove_dir_all(dir).unwrap();
     }

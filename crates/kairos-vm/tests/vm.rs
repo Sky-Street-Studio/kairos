@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use kairos_vm::{Event, LoadError, Program, Vm};
+use kairos_vm::{Event, LoadError, Persistent, Program, Value, Vm};
 use proptest::prelude::*;
 
 fn program(src: &str) -> Arc<Program> {
@@ -145,11 +145,37 @@ label side:
 "#,
     );
     let mut vm = Vm::load(v2, &bytes).unwrap();
+    assert!(!vm.relocated());
     assert_eq!(say(vm.advance().unwrap()), "Two.");
     assert_eq!(say(vm.advance().unwrap()), "Three.");
 
-    let v3 = program("label start:\n    \"One.\"\n    call side\nlabel side:\n    \"Renamed two.\"\n    return\n");
+    let v3 = program("label start:\n    \"One.\"\n");
     assert!(matches!(Vm::load(v3, &bytes), Err(LoadError::MissingStatement(_))));
+}
+
+#[test]
+fn a_reworded_saved_line_resumes_at_its_replacement_without_rerunning_earlier_lines() {
+    let v1 = program(
+        "default n = 0\nlabel start:\n    \"One.\"\n    $ n += 1\n    \"Two.\"\n    call side\n    \"Four.\"\nlabel side:\n    \"Three.\"\n    return\n",
+    );
+    let mut vm = started(&v1);
+    vm.advance().unwrap();
+    assert_eq!(say(vm.advance().unwrap()), "Two.");
+    let at_two = vm.save().unwrap();
+    assert_eq!(say(vm.advance().unwrap()), "Three.");
+    let in_call = vm.save().unwrap();
+
+    let v2 = program(
+        "default n = 0\nlabel start:\n    \"One.\"\n    $ n += 1\n    \"Two, reworded.\"\n    call  side\n    \"Four.\"\nlabel side:\n    \"Three, reworded.\"\n    return\n",
+    );
+    let mut vm = Vm::load(v2.clone(), &at_two).unwrap();
+    assert!(vm.relocated());
+    assert_eq!(say(vm.advance().unwrap()), "Two, reworded.");
+    assert_eq!(vm.variables()["n"], Value::Int(1));
+
+    let mut vm = Vm::load(v2, &in_call).unwrap();
+    assert_eq!(say(vm.advance().unwrap()), "Three, reworded.");
+    assert_eq!(say(vm.advance().unwrap()), "Four.");
 }
 
 #[test]
@@ -186,4 +212,62 @@ fn unknown_labels_and_characters_are_compile_errors() {
     let (_, diags) = kairos_vm::compile(&[stmts]);
     let messages: Vec<_> = diags.iter().map(|(_, d)| (d.line, d.message.clone())).collect();
     assert_eq!(messages, [(2, "unknown character `zed`".to_string()), (3, "unknown label `nowhere`".to_string())]);
+}
+
+#[test]
+fn persistent_values_survive_rollback_saves_and_new_games() {
+    let p = program(
+        "default persistent.endings = 0\nlabel start:\n    \"One\"\n    $ persistent.endings += 1\n    $ persistent.true_end = True\n    \"Two\"\n",
+    );
+    let mut vm = started(&p);
+    assert_eq!(vm.variables()["persistent.endings"], Value::Int(0));
+    say(vm.advance().unwrap());
+    let save = vm.save().unwrap();
+    say(vm.advance().unwrap());
+    assert!(vm.take_persistent_changed());
+    assert!(vm.rollback());
+    say(vm.advance().unwrap());
+    assert_eq!(vm.persistent().values["persistent.endings"], Value::Int(1));
+
+    let mut loaded = Vm::load(p.clone(), &save).unwrap();
+    loaded.set_persistent(vm.persistent().clone());
+    assert_eq!(loaded.variables()["persistent.endings"], Value::Int(1));
+
+    let mut fresh = Vm::new(p.clone()).unwrap();
+    fresh.set_persistent(Persistent::from_bytes(&vm.persistent().to_bytes()).unwrap());
+    assert_eq!(fresh.variables()["persistent.true_end"], Value::Bool(true));
+}
+
+#[test]
+fn undeclared_persistent_names_read_as_none() {
+    let p = program("label start:\n    if persistent.unlocked:\n        \"Secret\"\n    \"Normal\"\n");
+    let mut vm = started(&p);
+    assert_eq!(say(vm.advance().unwrap()), "Normal");
+    assert!(!vm.take_persistent_changed());
+}
+
+#[test]
+fn a_line_counts_as_seen_once_the_player_moves_past_it() {
+    let p = program("label start:\n    \"One\"\n    \"Two\"\n    jump start\n");
+    let mut vm = started(&p);
+    say(vm.advance().unwrap());
+    assert!(!vm.line_seen());
+    say(vm.advance().unwrap());
+    assert!(!vm.line_seen());
+    assert!(vm.take_persistent_changed());
+    say(vm.advance().unwrap());
+    assert!(vm.line_seen(), "One was read on the first pass");
+    say(vm.advance().unwrap());
+    assert!(vm.line_seen(), "Two was read on the first pass");
+
+    let mut next_playthrough = started(&p);
+    next_playthrough.set_persistent(vm.persistent().clone());
+    say(next_playthrough.advance().unwrap());
+    assert!(next_playthrough.line_seen());
+}
+
+#[test]
+fn persistent_files_reject_other_data() {
+    assert!(Persistent::from_bytes(b"KSAV").is_err());
+    assert!(Persistent::from_bytes(&[]).is_err());
 }

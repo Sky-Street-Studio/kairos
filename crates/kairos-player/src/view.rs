@@ -14,6 +14,7 @@ pub enum Setting {
     Music,
     Sound,
     Voice,
+    Skip,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -519,6 +520,7 @@ impl Builder<'_, '_> {
             ("Music volume", percent(s.music), Setting::Music),
             ("Sound volume", percent(s.sound), Setting::Sound),
             ("Voice volume", percent(s.voice), Setting::Voice),
+            ("Skip", if s.skip_unseen { "All text" } else { "Read text" }.to_string(), Setting::Skip),
         ];
         let left = (w - 640.0) / 2.0;
         let mut y = 130.0;
@@ -588,6 +590,7 @@ pub fn adjust(settings: &mut Settings, setting: Setting, direction: i8) {
         Setting::Music => settings.music = step_volume(settings.music, d),
         Setting::Sound => settings.sound = step_volume(settings.sound, d),
         Setting::Voice => settings.voice = step_volume(settings.voice, d),
+        Setting::Skip => settings.skip_unseen = !settings.skip_unseen,
     }
 }
 
@@ -802,6 +805,10 @@ mod tests {
         assert_eq!(s.text_speed, Settings::INSTANT);
         adjust(&mut s, Setting::TextSpeed, -1);
         assert_eq!(s.text_speed, 180.0);
+        adjust(&mut s, Setting::Skip, -1);
+        assert!(s.skip_unseen);
+        adjust(&mut s, Setting::Skip, 1);
+        assert!(!s.skip_unseen);
     }
 
     #[test]
