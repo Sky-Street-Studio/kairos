@@ -33,7 +33,6 @@ export function useScene(label: string) {
     };
   }, [source, label, request]);
 
-  const scene =
-    loaded && loaded.source === source && loaded.label === label && loaded.request === request ? loaded.scene : null;
+  const scene = loaded?.label === label ? loaded.scene : null;
   return { path: node?.path ?? "", scene, refresh: () => setRequest((value) => value + 1) };
 }
