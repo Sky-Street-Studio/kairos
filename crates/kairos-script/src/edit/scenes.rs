@@ -156,16 +156,22 @@ fn choice_link(nodes: &[Node], to: &str, choice: Option<&str>) -> Option<(usize,
     })
 }
 
-/// Removes `first..=last`. An emptied scene gets `return` so it ends rather than falling into the
-/// next scene; an emptied choice or branch gets `pass` so it still parses.
+/// Removes `first..=last`. A scene that loses its last statement gets `return` unless what is left
+/// already ends it, so it ends rather than falling into the next scene; an emptied choice or branch
+/// gets `pass` so it still parses.
 fn cut(lines: &mut Lines, nodes: &[Node], first: usize, last: usize) {
-    let emptied = tree::parent_body(nodes, first)
-        .filter(|b| b.nodes.iter().all(|c| (first..=last).contains(&c.line)))
-        .map(|b| tree::owner(nodes, b.header).is_some_and(|o| matches!(o.stmt.kind, StmtKind::Label { .. })));
-    let filler = match emptied {
-        Some(scene) => vec![format!("{}{}", " ".repeat(lines.indent(first)), if scene { "return" } else { "pass" })],
-        None => Vec::new(),
-    };
+    let filler = tree::parent_body(nodes, first).and_then(|b| {
+        let kept = b.nodes.iter().take_while(|c| c.line < first).count();
+        let owner = tree::owner(nodes, b.header)?;
+        match &owner.stmt.kind {
+            StmtKind::Label { body, .. } if b.nodes.last().is_some_and(|l| l.line <= last) => {
+                (!terminates(&body[..kept])).then_some("return")
+            }
+            _ if b.nodes.iter().all(|c| (first..=last).contains(&c.line)) => Some("pass"),
+            _ => None,
+        }
+    });
+    let filler = filler.map(|f| format!("{}{f}", " ".repeat(lines.indent(first)))).into_iter().collect();
     lines.splice(first, last, filler);
 }
 
@@ -191,9 +197,9 @@ fn terminates(stmts: &[Stmt]) -> bool {
     }
 }
 
-/// The label `label` falls into when it runs off its end: the next label in compile order, which is
-/// file order within a file and path order across files.
-fn successor(ws: &Workspace, label: &str) -> Option<String> {
+/// Labels in compile order, which is file order within a file and path order across files, for the
+/// files that `keep` accepts.
+fn label_order(ws: &Workspace, keep: impl Fn(&str) -> bool) -> Vec<String> {
     fn collect(stmts: &[Stmt], out: &mut Vec<String>) {
         for s in stmts {
             if let StmtKind::Label { name, body } = &s.kind {
@@ -202,12 +208,18 @@ fn successor(ws: &Workspace, label: &str) -> Option<String> {
             }
         }
     }
-    let mut files: Vec<&SourceFile> = ws.files.iter().collect();
+    let mut files: Vec<&SourceFile> = ws.files.iter().filter(|f| keep(&f.path)).collect();
     files.sort_by(|a, b| a.path.cmp(&b.path));
     let mut order = Vec::new();
     for f in files {
         collect(&crate::parse(&f.source).0, &mut order);
     }
+    order
+}
+
+/// The label `label` falls into when it runs off its end.
+fn successor(ws: &Workspace, label: &str) -> Option<String> {
+    let order = label_order(ws, |_| true);
     order.iter().position(|l| l == label).and_then(|i| order.get(i + 1).cloned())
 }
 
@@ -256,7 +268,7 @@ pub(crate) fn apply_scene_op(ws: &mut Workspace, op: &Op) -> Result<Option<Focus
             let before = match after {
                 Some(a) if labels.contains(a) => Some(a.clone()),
                 Some(a) => return Err(EditError::NotFound(format!("there is no scene `{a}` in {path}"))),
-                None => labels.last().cloned(),
+                None => labels.last().cloned().or_else(|| label_order(ws, |p| p < path.as_str()).pop()),
             };
             if let Some(b) = &before {
                 seal(ws, b)?;

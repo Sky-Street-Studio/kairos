@@ -321,11 +321,35 @@ fn remove_link_prefers_a_plain_jump_and_ends_an_emptied_scene() {
     let out = run_all(&fs, vec![Op::RemoveLink { from: "a".into(), to: "b".into(), choice: None }]);
     assert_eq!(
         out[0],
-        "label a:\n    menu:\n        \"Go\":\n            jump b\n        \"Stay\":\n            pass\nlabel b:\n    return\n"
+        "label a:\n    menu:\n        \"Go\":\n            jump b\n        \"Stay\":\n            pass\n    return\nlabel b:\n    return\n"
     );
     let fs = files("label a:\n    jump b\nlabel b:\n    return\n", "");
     let out = run_all(&fs, vec![Op::RemoveLink { from: "a".into(), to: "b".into(), choice: None }]);
     assert_eq!(out[0], "label a:\n    return\nlabel b:\n    return\n");
+    let fs = files("label a:\n    \"Hi\"\n    jump b\nlabel b:\n    return\n", "");
+    let out = run_all(&fs, vec![Op::RemoveLink { from: "a".into(), to: "b".into(), choice: None }]);
+    assert_eq!(out[0], "label a:\n    \"Hi\"\n    return\nlabel b:\n    return\n");
+    let fs = files("label a:\n    \"Hi\"\n    return\n    jump b\nlabel b:\n    return\n", "");
+    let out = run_all(&fs, vec![Op::RemoveLink { from: "a".into(), to: "b".into(), choice: None }]);
+    assert_eq!(out[0], "label a:\n    \"Hi\"\n    return\nlabel b:\n    return\n");
+}
+
+#[test]
+fn adding_a_scene_to_an_empty_file_keeps_the_previous_file_flowing_on() {
+    let fs = vec![
+        SourceFile { path: "script/a.kai".into(), source: "label x:\n    \"Hi\"\n".into() },
+        SourceFile { path: "script/b.kai".into(), source: String::new() },
+        SourceFile { path: "script/c.kai".into(), source: "label y:\n    return\n".into() },
+    ];
+    let out = run_all(&fs, vec![Op::AddScene { path: "script/b.kai".into(), name: "n".into(), after: None }]);
+    assert_eq!(
+        out,
+        [
+            "label x:\n    \"Hi\"\n    jump y\n".to_string(),
+            "label n:\n    \"\"\n    return\n".to_string(),
+            "label y:\n    return\n".to_string(),
+        ]
+    );
 }
 
 #[test]
