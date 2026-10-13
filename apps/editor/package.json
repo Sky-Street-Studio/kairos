@@ -8,6 +8,7 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
+    "package": "electron-vite build && electron-builder --mac dir",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "test:e2e": "electron-vite build && playwright test"
@@ -40,6 +41,7 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "electron": "^44.7.0",
+    "electron-builder": "^26.0.12",
     "electron-vite": "^5.0.0",
     "lucide-react": "^1.55.0",
     "monaco-editor": "^0.57.0",
@@ -52,6 +54,45 @@
     "vite": "^7.3.0",
     "vitest": "^4.0.0",
     "zustand": "^5.0.15"
+  },
+  "build": {
+    "appId": "studio.skystreet.kairos",
+    "productName": "Kairos",
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "mac": {
+      "target": [
+        "dir"
+      ],
+      "icon": "build/icon.icns"
+    },
+    "extraResources": [
+      {
+        "from": "../../crates/kairos-player/pkg",
+        "to": "kairos-player"
+      },
+      {
+        "from": "../../examples/hello-kairos",
+        "to": "template"
+      },
+      {
+        "from": "../../crates/kairos-napi",
+        "to": "kairos-napi",
+        "filter": [
+          "index.js",
+          "package.json",
+          "*.node",
+          "*.wasm",
+          "*.cjs"
+        ]
+      }
+    ],
+    "asarUnpack": [
+      "**/node_modules/node-pty/**",
+      "**/node_modules/sharp/**"
+    ]
   },
   "productName": "Kairos"
 }

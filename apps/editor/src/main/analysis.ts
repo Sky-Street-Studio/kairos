@@ -1,4 +1,7 @@
 import { createRequire } from "node:module";
+import { join } from "node:path";
+
+import { app } from "electron";
 
 import type { Analysis, Outline, SourceFile, StoryGraph } from "@shared/types";
 
@@ -11,7 +14,9 @@ interface Addon {
 let addon: Addon | undefined;
 
 function load(): Addon {
-  addon ??= createRequire(import.meta.url)("@kairos/napi") as Addon;
+  addon ??= createRequire(import.meta.url)(
+    app.isPackaged ? join(process.resourcesPath, "kairos-napi", "index.js") : "@kairos/napi",
+  ) as Addon;
   return addon;
 }
 
