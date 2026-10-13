@@ -83,7 +83,7 @@ function AssetRow({
         </div>
       )}
       <span className="w-14 shrink-0 text-right text-2xs tabular-nums text-muted-foreground" title="Script references">
-        {usage} uses
+        {usage === 1 ? "1 use" : `${usage} uses`}
       </span>
       <Button variant="ghost" size="icon" aria-label={`Rename ${asset.name}`} onClick={onRename}>
         <Pencil />

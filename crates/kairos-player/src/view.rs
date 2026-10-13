@@ -302,6 +302,7 @@ impl Builder<'_, '_> {
             let active = match action {
                 Action::Toggle(m) => self.input.game.mode == m,
                 Action::Rollback => self.input.game.can_rollback(),
+                Action::Open(Screen::Save) => self.input.game.save().is_some(),
                 _ => true,
             };
             let hovered = r.contains(self.input.mouse.0, self.input.mouse.1);
@@ -312,7 +313,9 @@ impl Builder<'_, '_> {
                 (_, true, false) => gray(0.7),
             };
             layer.push(self.ui_text(label, r, 17.0, color, TextAlign::Center));
-            self.hotspots.push(Hotspot { rect: r, action });
+            if active || action != Action::Open(Screen::Save) {
+                self.hotspots.push(Hotspot { rect: r, action });
+            }
             x += item_w;
         }
     }
@@ -762,6 +765,18 @@ mod tests {
         };
         let (_, hotspots) = build(&input, &mut Fonts::new());
         assert!(!hotspots.iter().any(|h| h.action == Action::Continue));
+    }
+
+    #[test]
+    fn quick_menu_save_is_inert_while_saving_is_disabled() {
+        let sources = [(PathBuf::from("script/a.kai"), "label splashscreen:\n    \"Splash\"\n".to_string())];
+        let project = kairos_project::Project::from_sources("name = \"t\"", sources).unwrap();
+        let mut splash = Game::new(project.program).unwrap();
+        splash.start("splashscreen");
+        let (_, hotspots) = view(&splash, (0.0, 0.0));
+        assert!(!hotspots.iter().any(|h| h.action == Action::Open(Screen::Save)));
+        let (_, hotspots) = view(&game(), (0.0, 0.0));
+        assert!(hotspots.iter().any(|h| h.action == Action::Open(Screen::Save)));
     }
 
     #[test]
