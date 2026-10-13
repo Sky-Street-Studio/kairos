@@ -13,6 +13,8 @@ pub(crate) struct Node<'a> {
 pub(crate) struct Body<'a> {
     pub header: usize,
     pub nodes: Vec<Node<'a>>,
+    // Read by the scene operations in Task 5; drop this allow once they land.
+    #[allow(dead_code)]
     pub end: usize,
 }
 

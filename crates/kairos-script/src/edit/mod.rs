@@ -2,14 +2,10 @@
 //! the lines they touch.
 
 mod blocks;
-
-// `quote`, `Lines::splice` and the tree lookups are still waiting for the ops module; drop this once it lands.
-#[allow(dead_code)]
+mod ops;
 mod text;
-
-// `find`, `find_body` and `Body::end` are still waiting for the ops module; drop this once it lands.
-#[allow(dead_code)]
 mod tree;
 
 pub use blocks::{Block, BlockKind, ChoiceOption, IfBranch, Scene, SetOp, scene_blocks};
+pub use ops::{Applied, EditError, Focus, Op, Place, SourceFile, apply};
 pub use text::label_from_name;

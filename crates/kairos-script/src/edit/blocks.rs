@@ -192,13 +192,10 @@ fn kind(n: &Node, lines: &Lines) -> BlockKind {
     }
 }
 
-// `render` and `number` are still waiting for the ops module; drop this once it lands.
-#[allow(dead_code)]
 fn number(n: f64) -> String {
     if n.fract() == 0.0 { format!("{}", n as i64) } else { n.to_string() }
 }
 
-#[allow(dead_code)]
 pub(crate) fn render(kind: &BlockKind, indent: usize, step: usize) -> Vec<String> {
     let pad = " ".repeat(indent);
     let body = |blocks: &[Block], out: &mut Vec<String>| {
