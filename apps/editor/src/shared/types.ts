@@ -120,10 +120,19 @@ export interface EditResult {
   changed: boolean;
 }
 
+export interface AnalyzeInput {
+  files: SourceFile[];
+  /** Project-relative asset paths, e.g. `assets/images/bg room.png`. */
+  assets: string[];
+  spriteLayers: Record<string, Pick<SpriteLayerConfig, "order" | "defaults">>;
+}
+
 export interface Analysis {
   diagnostics: FileDiagnostic[];
   outlines: Record<string, Outline>;
   graph: StoryGraph;
+  /** References per asset path, counting only the file the player would load. */
+  assetUsage: Record<string, number>;
 }
 
 export interface PlayerStatus {
@@ -176,7 +185,7 @@ export interface KairosApi {
     export(target: ExportTarget, output: string): Promise<string>;
   };
   analysis: {
-    analyze(files: SourceFile[]): Promise<Analysis>;
+    analyze(input: AnalyzeInput): Promise<Analysis>;
   };
   player: {
     status(): Promise<PlayerStatus>;

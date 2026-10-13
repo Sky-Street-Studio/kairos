@@ -25,7 +25,7 @@ const api: KairosApi = {
     export: (target, output) => ipcRenderer.invoke("project:export", target, output),
   },
   analysis: {
-    analyze: (files) => ipcRenderer.invoke("analysis:analyze", files),
+    analyze: (input) => ipcRenderer.invoke("analysis:analyze", input),
   },
   player: {
     status: () => ipcRenderer.invoke("player:status"),

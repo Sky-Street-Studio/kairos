@@ -1,4 +1,4 @@
-//! Node bindings for the Kairos editor: diagnostics, outline and the story graph.
+//! Node bindings for the Kairos editor: diagnostics, outline, the story graph and asset usage.
 
 mod analysis;
 mod export;
@@ -6,10 +6,22 @@ mod export;
 // Unit tests link without a Node runtime, so the exported functions only exist in the addon.
 #[cfg(not(test))]
 mod bindings {
+    use std::sync::{LazyLock, Mutex};
+
     use napi_derive::napi;
 
-    use crate::analysis::{self, CheckResult, Outline, ParseResult, SourceFile, StoryGraph};
+    use crate::analysis::{
+        self, AnalyzeInput, CheckResult, Outline, ParseCache, ParseResult, ProjectAnalysis, SourceFile, StoryGraph,
+    };
     use crate::export;
+
+    static CACHE: LazyLock<Mutex<ParseCache>> = LazyLock::new(Default::default);
+
+    #[napi]
+    pub fn analyze(input: AnalyzeInput) -> ProjectAnalysis {
+        let mut cache = CACHE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        analysis::analyze(&input, &mut cache)
+    }
 
     #[napi]
     pub fn parse(source: String) -> ParseResult {

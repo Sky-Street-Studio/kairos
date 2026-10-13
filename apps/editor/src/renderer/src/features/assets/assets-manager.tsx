@@ -4,8 +4,8 @@ import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useApp } from "@/store";
-import { assetUsageCount, assetUrl, classifyAsset } from "@shared/assets";
-import type { AssetCategory, AssetEntry, SourceFile } from "@shared/types";
+import { assetUrl, classifyAsset } from "@shared/assets";
+import type { AssetCategory, AssetEntry } from "@shared/types";
 
 import { startAssetDrag } from "../stage/asset-drag";
 
@@ -18,12 +18,6 @@ const CATEGORY_TITLES: Record<AssetCategory, string> = {
   voice: "Voice",
   other: "Other",
 };
-
-function sourceFiles(buffers: Record<string, { path: string; source: string }>): SourceFile[] {
-  return Object.values(buffers)
-    .filter((file) => file.path.startsWith("script/") && file.path.endsWith(".kai"))
-    .map(({ path, source }) => ({ path, source }));
-}
 
 function AssetRow({
   asset,
@@ -161,7 +155,7 @@ function Section({
 
 export function AssetsManager() {
   const project = useApp((state) => state.project);
-  const buffers = useApp((state) => state.buffers);
+  const assetUsage = useApp((state) => state.analysis.assetUsage);
   const outlines = useApp((state) => state.analysis.outlines);
   const refreshTree = useApp((state) => state.refreshTree);
   const saveAll = useApp((state) => state.saveAll);
@@ -175,7 +169,6 @@ export function AssetsManager() {
     ],
     [outlines],
   );
-  const scripts = useMemo(() => sourceFiles(buffers), [buffers]);
   const assets = useMemo(
     () =>
       (project?.assets ?? [])
@@ -275,7 +268,7 @@ export function AssetsManager() {
       <AssetRow
         key={asset.path}
         asset={asset}
-        usage={assetUsageCount(asset, scripts, project?.spriteLayers)}
+        usage={assetUsage[asset.path] ?? 0}
         loopStart={project?.audioMetadata?.[relativeAudioPath]?.loopStart}
         playing={playingPath === asset.path}
         onPlay={() => setPlayingPath(playingPath === asset.path ? null : asset.path)}
