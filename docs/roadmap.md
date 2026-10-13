@@ -25,12 +25,9 @@ Lists, dictionaries, built-in functions and seeded random draws in the script la
 
 Build and edit a branching story from the visual flow and block editors, with the script available for direct edits. Design: `visual-story-editor.md`.
 
-## 3b. Custom screens
+## 3b. Custom screens (done)
 
-A declarative way to build interactive UI, with layout, buttons, text and images bound to script variables. Today the customization surface is `ui/theme.toml` and `ui/title.toml`. Contract: `custom-screens.md`.
-
-- Unlocks phone and messaging systems, stat screens, maps, custom save/load and settings screens, and simple minigames.
-- Resolve the open questions in `custom-screens.md` before starting the runtime implementation.
+Project-authored TOML screen trees now support layout, text, images, buttons, bars, toggles, sliders, lists and repeaters bound to script values. Scripts and screen actions can show or hide screens and navigate labels. Native and web players render the same screen definitions with pointer, keyboard focus, modal input handling and theme inheritance. The phone/inventory example is in `examples/hello-kairos/ui/screens/phone.toml`. Contract and resolved decisions: `custom-screens.md`.
 
 ## 3c. Beginner path (done)
 

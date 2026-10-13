@@ -129,10 +129,40 @@ impl WebPlayer {
             serde_json::from_str(project_json).map_err(|e| error(format!("project json: {e}")))?;
         let sources = json.scripts.into_iter().map(|s| (PathBuf::from(s.path), s.source));
         let mut project = Project::from_sources(&json.manifest, sources).map_err(|e| error(e.to_string()))?;
+        for screen in json.screens {
+            let path = PathBuf::from(screen.path);
+            match kairos_project::screens::parse_screen(&screen.source) {
+                Ok(definition) => {
+                    let expected = path.file_stem().and_then(|name| name.to_str()).unwrap_or_default();
+                    if expected != definition.id {
+                        project.screen_diagnostics.push((
+                            path.clone(),
+                            kairos_project::screens::ScreenDiagnostic {
+                                node: None,
+                                message: format!("screen id `{}` does not match filename `{expected}`", definition.id),
+                            },
+                        ));
+                    } else if project.screens.insert(definition.id.clone(), definition).is_some() {
+                        project.screen_diagnostics.push((
+                            path.clone(),
+                            kairos_project::screens::ScreenDiagnostic {
+                                node: None,
+                                message: "duplicate screen id".into(),
+                            },
+                        ));
+                    }
+                }
+                Err(diagnostics) => project
+                    .screen_diagnostics
+                    .extend(diagnostics.into_iter().map(|diagnostic| (path.clone(), diagnostic))),
+            }
+        }
+        project.validate_screens();
+        project.include_screen_diagnostics();
         for translation in json.translations {
             project.set_translation(&translation.lang, &translation.source).map_err(|e| error(e.to_string()))?;
         }
-        if !project.diagnostics.is_empty() {
+        if !project.diagnostics.is_empty() || !project.screen_diagnostics.is_empty() {
             return Err(error(project.diagnostics_report().trim_end()));
         }
         let theme = Theme::parse(json.theme.as_deref().unwrap_or_default()).map_err(error)?;
@@ -458,7 +488,9 @@ fn listen(inner: &Rc<RefCell<Inner>>) {
                 "Escape" => Some(Key::Escape),
                 "PageUp" => Some(Key::Back),
                 "PageDown" => Some(Key::Forward),
-                "Tab" => Some(Key::Skip),
+                "Tab" => Some(if event.shift_key() { Key::FocusPrevious } else { Key::FocusNext }),
+                "ArrowUp" | "ArrowLeft" => Some(Key::FocusPrevious),
+                "ArrowDown" | "ArrowRight" => Some(Key::FocusNext),
                 "a" | "A" => Some(Key::Auto),
                 k => k.parse::<u8>().ok().map(Key::Digit),
             };

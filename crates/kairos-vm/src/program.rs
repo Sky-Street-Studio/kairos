@@ -28,6 +28,8 @@ pub enum Instr {
     Mutate { name: String, method: String, args: Vec<Expr> },
     Scene { image: Option<Vec<String>>, with: Option<String> },
     Show { image: Vec<String>, at: Option<String>, with: Option<String> },
+    ShowScreen(String),
+    HideScreen(String),
     Hide { tag: String, with: Option<String> },
     With(String),
     Play { channel: String, asset: String, looped: bool, queue: bool, fadein: Option<f64> },
@@ -293,6 +295,8 @@ impl Compiler {
             StmtKind::Show { image, at, with } => {
                 Instr::Show { image: image.clone(), at: at.clone(), with: with.clone() }
             }
+            StmtKind::ShowScreen(id) => Instr::ShowScreen(id.clone()),
+            StmtKind::HideScreen(id) => Instr::HideScreen(id.clone()),
             StmtKind::Hide { tag, with } => Instr::Hide { tag: tag.clone(), with: with.clone() },
             StmtKind::With(t) => Instr::With(t.clone()),
             StmtKind::Play { channel, asset, looped, queue, fadein } => Instr::Play {

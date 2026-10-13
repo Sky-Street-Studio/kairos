@@ -3,9 +3,12 @@
 use std::collections::HashMap;
 
 use kairos_audio::{Audio, Bus, Sound};
-use kairos_project::{AudioLoop, AudioMetadata, Project, parse_audio_metadata};
+use kairos_project::{
+    AudioLoop, AudioMetadata, Project, parse_audio_metadata,
+    screens::{self, ActionType, BindingPart, ScreenAction},
+};
 use kairos_render::{Fonts, Renderer, TransitionKind};
-use kairos_vm::{Effect, Persistent, PersistentError};
+use kairos_vm::{Effect, Persistent, PersistentError, Value};
 
 use crate::assets::{Assets, Loaded, Request};
 use crate::game::{Game, Screen, Shown, Signal};
@@ -14,6 +17,20 @@ use crate::theme::{Theme, Title};
 use crate::view::{self, Action, Hotspot, ImageInfo, SLOTS, ViewInput, image_name};
 
 const PERSISTENT_INTERVAL: f32 = 2.0;
+
+fn toml_value(value: toml::Value) -> Option<Value> {
+    Some(match value {
+        toml::Value::Boolean(value) => Value::Bool(value),
+        toml::Value::Integer(value) => Value::Int(value),
+        toml::Value::Float(value) => Value::Float(value),
+        toml::Value::String(value) => Value::Str(value),
+        toml::Value::Array(values) => Value::List(values.into_iter().map(toml_value).collect::<Option<_>>()?),
+        toml::Value::Table(values) => {
+            Value::Dict(values.into_iter().map(|(key, value)| Some((key, toml_value(value)?))).collect::<Option<_>>()?)
+        }
+        toml::Value::Datetime(_) => return None,
+    })
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Button {
@@ -27,6 +44,8 @@ pub enum Key {
     Escape,
     Back,
     Forward,
+    FocusNext,
+    FocusPrevious,
     Digit(u8),
     Auto,
     Skip,
@@ -34,6 +53,7 @@ pub enum Key {
 
 pub struct Player {
     game: Game,
+    screens: std::collections::BTreeMap<String, kairos_project::screens::ScreenDefinition>,
     start_label: String,
     project_name: String,
     title: Title,
@@ -60,6 +80,7 @@ pub struct Player {
     back_to: Screen,
     backlog_scroll: usize,
     notice: Option<(String, f32)>,
+    focused_custom: Option<String>,
     /// Persistent data waiting to be written; reading a line changes it, so writes are batched.
     persistent_pending: Option<Vec<u8>>,
     persistent_timer: f32,
@@ -101,6 +122,7 @@ impl Player {
         let title_text = title.title.clone().unwrap_or_else(|| project_name.clone());
         let mut player = Player {
             game,
+            screens: project.screens.clone(),
             start_label: project.manifest.start.clone(),
             project_name,
             title,
@@ -127,6 +149,7 @@ impl Player {
             back_to: Screen::Game,
             backlog_scroll: 0,
             notice: None,
+            focused_custom: None,
             persistent_pending: None,
             persistent_timer: 0.0,
             persistent_writable,
@@ -320,6 +343,7 @@ impl Player {
 
         let images = &self.images;
         let lookup = |name: &str| images.get(name).copied().unwrap_or(ImageInfo::Loading);
+        let variables = self.game.debug_variables();
         let input = ViewInput {
             game: &self.game,
             theme: &self.theme,
@@ -334,6 +358,10 @@ impl Player {
             interface_family: self.interface_family.as_deref(),
             can_quit: self.can_quit,
             notice: self.notice.as_ref().map(|n| n.0.as_str()),
+            screens: &self.screens,
+            screen_stack: self.game.custom_screens(),
+            variables: &variables,
+            focused_custom: self.focused_custom.as_deref(),
         };
         let (frame, hotspots) = view::build(&input, &mut self.fonts);
         self.hotspots = hotspots;
@@ -342,16 +370,22 @@ impl Player {
 
     pub fn pointer_moved(&mut self, x: f32, y: f32) {
         self.mouse = self.renderer.letterbox().to_virtual(x, y);
+        if let Some(Action::Custom { screen, node, selection }) = view::hit(&self.hotspots, self.mouse.0, self.mouse.1)
+        {
+            self.focused_custom =
+                Some(format!("{screen}/{node}/{}", selection.map_or_else(|| "-".into(), |index| index.to_string())));
+        }
     }
 
     pub fn pointer_down(&mut self, button: Button) {
         self.start_audio();
         match button {
+            Button::Secondary if self.custom_modal() || self.custom_close_configured() => self.close_custom_screen(),
             Button::Secondary if self.game.screen == Screen::Game => self.act(Action::Open(Screen::Menu)),
             Button::Secondary => self.act(Action::Back),
             Button::Primary => match view::hit(&self.hotspots, self.mouse.0, self.mouse.1) {
                 Some(action) => self.act(action),
-                None if self.game.screen == Screen::Game => self.game.proceed(),
+                None if !self.custom_modal() && self.game.screen == Screen::Game => self.game.proceed(),
                 None => {}
             },
         }
@@ -375,6 +409,21 @@ impl Player {
     pub fn key(&mut self, key: Key) {
         self.start_audio();
         let screen = self.game.screen;
+        if key == Key::Escape && self.custom_close_configured() {
+            self.close_custom_screen();
+            return;
+        }
+        let has_custom_controls = self.hotspots.iter().any(|hotspot| matches!(&hotspot.action, Action::Custom { .. }));
+        if self.custom_modal() || has_custom_controls {
+            match key {
+                Key::Escape if !self.game.custom_screens().is_empty() => self.close_custom_screen(),
+                Key::Advance if has_custom_controls => self.activate_focused_custom(),
+                Key::Forward | Key::FocusNext if has_custom_controls => self.focus_custom(1),
+                Key::Back | Key::FocusPrevious if has_custom_controls => self.focus_custom(-1),
+                _ => {}
+            }
+            return;
+        }
         match key {
             Key::Advance if screen == Screen::Game => self.game.proceed(),
             Key::Escape if screen == Screen::Game => self.act(Action::Open(Screen::Menu)),
@@ -472,7 +521,206 @@ impl Player {
             }
             Action::Restart => self.start_game(),
             Action::Quit => self.quit = true,
+            Action::Custom { screen, node, selection } => self.activate_custom(&screen, &node, selection),
         }
+    }
+
+    fn custom_close_configured(&self) -> bool {
+        self.game
+            .custom_screens()
+            .last()
+            .and_then(|id| self.screens.get(id))
+            .is_some_and(|screen| screen.close_action.is_some())
+    }
+
+    fn custom_modal(&self) -> bool {
+        self.game.custom_screens().iter().any(|id| self.screens.get(id).is_some_and(|screen| screen.modal))
+    }
+
+    fn close_custom_screen(&mut self) {
+        let Some(id) = self.game.custom_screens().last().cloned() else { return };
+        let Some(action) = self.screens.get(&id).and_then(|screen| screen.close_action.clone()) else { return };
+        self.run_screen_action(action);
+    }
+
+    fn focus_custom(&mut self, direction: isize) {
+        let controls: Vec<_> = self
+            .hotspots
+            .iter()
+            .filter_map(|hotspot| match &hotspot.action {
+                Action::Custom { screen, node, selection } => Some((screen.clone(), node.clone(), *selection)),
+                _ => None,
+            })
+            .collect();
+        if controls.is_empty() {
+            return;
+        }
+        let current = self.focused_custom.as_ref().and_then(|id| {
+            controls.iter().position(|(screen, node, selection)| {
+                id == &format!("{screen}/{node}/{}", selection.map_or_else(|| "-".into(), |index| index.to_string()))
+            })
+        });
+        let next = current.map_or(if direction < 0 { controls.len() - 1 } else { 0 }, |at| {
+            (at as isize + direction).rem_euclid(controls.len() as isize) as usize
+        });
+        let (screen, node, selection) = &controls[next];
+        self.focused_custom =
+            Some(format!("{screen}/{node}/{}", selection.map_or_else(|| "-".into(), |index| index.to_string())));
+    }
+
+    fn activate_focused_custom(&mut self) {
+        let focused = self.focused_custom.clone().or_else(|| {
+            self.hotspots.iter().find_map(|hotspot| match &hotspot.action {
+                Action::Custom { screen, node, selection } => {
+                    Some(format!("{screen}/{node}/{}", selection.map_or_else(|| "-".into(), |index| index.to_string())))
+                }
+                _ => None,
+            })
+        });
+        if let Some(focused) = focused
+            && let Some(action) = self.hotspots.iter().find_map(|hotspot| match &hotspot.action {
+                Action::Custom { screen, node, selection }
+                    if focused
+                        == format!(
+                            "{screen}/{node}/{}",
+                            selection.map_or_else(|| "-".into(), |index| index.to_string())
+                        ) =>
+                {
+                    Some(Action::Custom { screen: screen.clone(), node: node.clone(), selection: *selection })
+                }
+                _ => None,
+            })
+        {
+            self.act(action);
+        }
+    }
+
+    fn activate_custom(&mut self, screen_id: &str, node_id: &str, selection: Option<usize>) {
+        let Some(node) =
+            self.screens.get(screen_id).and_then(|screen| screen.nodes.iter().find(|node| node.id == node_id)).cloned()
+        else {
+            return;
+        };
+        if let Some(index) = selection {
+            let Some(value) = node.binding.as_deref().and_then(|binding| self.binding_value(binding)) else { return };
+            let selected = match value {
+                Value::List(items) => items.get(index).cloned(),
+                Value::Dict(items) => items.keys().nth(index).cloned().map(Value::Str),
+                _ => None,
+            };
+            let Some(selected) = selected else { return };
+            let Some(target) = node.target.as_deref() else { return };
+            if let Err(error) = self.set_binding(target, selected) {
+                self.notify(error);
+                return;
+            }
+        } else if node.kind == kairos_project::screens::NodeType::Toggle {
+            let Some(binding) = node.binding.as_deref() else { return };
+            let value = match self.binding_value(binding) {
+                Some(Value::Bool(value)) => Value::Bool(!value),
+                _ => return,
+            };
+            if let Err(error) = self.set_binding(binding, value) {
+                self.notify(error);
+                return;
+            }
+        } else if node.kind == kairos_project::screens::NodeType::Slider {
+            let Some(binding) = node.binding.as_deref() else { return };
+            let Some(old) = self.binding_value(binding) else { return };
+            let Some(rect) = self.hotspots.iter().find(|hotspot| matches!(&hotspot.action, Action::Custom { screen, node: id, selection: None } if screen == screen_id && id == node_id)).map(|hotspot| hotspot.rect) else { return };
+            let ratio = ((self.mouse.0 - rect.x) / rect.w.max(1.0)).clamp(0.0, 1.0) as f64;
+            let min = node.min.unwrap_or(0.0);
+            let value = min + ratio * (node.max.unwrap_or(1.0) - min);
+            let next = match old {
+                Value::Int(_) => Value::Int(value.round() as i64),
+                Value::Float(_) => Value::Float(value),
+                _ => return,
+            };
+            if let Err(error) = self.set_binding(binding, next) {
+                self.notify(error);
+                return;
+            }
+        }
+        if let Some(action) = node.action {
+            self.run_screen_action(action);
+        }
+    }
+
+    fn run_screen_action(&mut self, action: ScreenAction) {
+        match action.kind {
+            ActionType::Set => {
+                let Some(target) = action.target.as_deref() else { return };
+                let value = match (action.value, action.binding.as_deref()) {
+                    (Some(value), _) => match toml_value(value) {
+                        Some(value) => value,
+                        None => return,
+                    },
+                    (_, Some(binding)) => match self.binding_value(binding) {
+                        Some(value) => value,
+                        None => return,
+                    },
+                    _ => return,
+                };
+                if let Err(error) = self.set_binding(target, value) {
+                    self.notify(error);
+                }
+            }
+            ActionType::Jump => {
+                if let Some(label) = action.target.as_deref()
+                    && let Err(error) = self.game.jump_label(label)
+                {
+                    self.notify(error.to_string());
+                }
+            }
+            ActionType::Call => {
+                if let Some(label) = action.target.as_deref()
+                    && let Err(error) = self.game.call_label(label)
+                {
+                    self.notify(error.to_string());
+                }
+            }
+            ActionType::Show => {
+                if let Some(id) = action.target.as_deref() {
+                    if self.screens.contains_key(id) {
+                        self.game.show_custom_screen(id);
+                    } else {
+                        self.notify(format!("unknown screen `{id}`"));
+                    }
+                }
+            }
+            ActionType::Hide => {
+                if let Some(id) = action.target.as_deref() {
+                    self.game.hide_custom_screen(id);
+                }
+            }
+            ActionType::Return => self.game.return_custom_screen(),
+        }
+    }
+
+    fn binding_value(&self, path: &str) -> Option<Value> {
+        let parts = screens::parse_binding(path).ok()?;
+        let (name, rest) = screens::binding_root(&parts)?;
+        let variables = self.game.debug_variables();
+        let value = variables.get(&name)?;
+        screens::read_binding(value, rest).cloned()
+    }
+
+    fn set_binding(&mut self, path: &str, value: Value) -> Result<(), String> {
+        if self.binding_value(path).is_none() {
+            return Err(format!("binding `{path}` does not address an existing value"));
+        }
+        let parts = screens::parse_binding(path).map_err(|_| format!("invalid binding `{path}`"))?;
+        let Some((name, rest)) = screens::binding_root(&parts) else {
+            return Err(format!("invalid binding `{path}`"));
+        };
+        let indices: Vec<_> = rest
+            .iter()
+            .map(|part| match part {
+                BindingPart::Key(key) => Value::Str(key.clone()),
+                BindingPart::Index(index) => Value::Int(*index as i64),
+            })
+            .collect();
+        self.game.set_variable_path(&name, &indices, value).map_err(|error| error.to_string())
     }
 
     fn notify(&mut self, message: String) {
@@ -551,6 +799,20 @@ impl Player {
             let mut words = vec![sprite.tag.clone()];
             words.extend(sprite.attrs.iter().cloned());
             names.push(image_name(&words));
+        }
+        for id in self.game.custom_screens() {
+            if let Some(screen) = self.screens.get(id) {
+                for node in &screen.nodes {
+                    if let Some(image) = &node.image {
+                        names.push(image.clone());
+                    } else if node.kind == kairos_project::screens::NodeType::Image
+                        && let Some(image) = node.binding.as_deref().and_then(|binding| self.binding_value(binding))
+                        && let Value::Str(image) = image
+                    {
+                        names.push(image);
+                    }
+                }
+            }
         }
         for name in names {
             if !self.images.contains_key(&name) {

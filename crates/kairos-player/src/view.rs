@@ -6,6 +6,9 @@ use kairos_render::{Color, Draw, Fonts, Frame, Layer, Rect, TextAlign, TextSpec}
 
 use crate::game::{Game, Mode, Screen, Settings, Shown};
 use crate::theme::{Theme, Title, TitleButton};
+use kairos_project::screens::{self, AnchorX, AnchorY, Dimension, NodeType, ScreenDefinition, ScreenNode, SizingMode};
+use kairos_vm::Value;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Setting {
@@ -17,7 +20,7 @@ pub enum Setting {
     Skip,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     Choose(usize),
     Back,
@@ -33,9 +36,10 @@ pub enum Action {
     Continue,
     MainMenu,
     Quit,
+    Custom { screen: String, node: String, selection: Option<usize> },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Hotspot {
     pub rect: Rect,
     pub action: Action,
@@ -66,6 +70,10 @@ pub struct ViewInput<'a> {
     pub interface_family: Option<&'a str>,
     pub can_quit: bool,
     pub notice: Option<&'a str>,
+    pub screens: &'a BTreeMap<String, ScreenDefinition>,
+    pub screen_stack: &'a [String],
+    pub variables: &'a BTreeMap<String, Value>,
+    pub focused_custom: Option<&'a str>,
 }
 
 pub(crate) fn sprite_rects(
@@ -118,6 +126,12 @@ pub fn image_name(words: &[String]) -> String {
     words.join(" ")
 }
 
+struct RepeatScope {
+    item: Value,
+    index: Value,
+    key: Option<Value>,
+}
+
 struct Builder<'a, 'f> {
     input: &'a ViewInput<'a>,
     fonts: &'f mut Fonts,
@@ -136,15 +150,379 @@ pub fn build(input: &ViewInput, fonts: &mut Fonts) -> (Frame, Vec<Hotspot>) {
     if let Some(notice) = input.notice {
         ui.push(b.notice(notice));
     }
+    b.custom_screens(&mut ui);
     (Frame { scene, ui }, b.hotspots)
 }
 
 /// The topmost action under a point.
 pub fn hit(hotspots: &[Hotspot], x: f32, y: f32) -> Option<Action> {
-    hotspots.iter().rev().find(|h| h.rect.contains(x, y)).map(|h| h.action)
+    hotspots.iter().rev().find(|h| h.rect.contains(x, y)).map(|h| h.action.clone())
 }
 
 impl Builder<'_, '_> {
+    fn custom_screens(&mut self, ui: &mut Vec<Layer>) {
+        let mut screens: Vec<_> = self
+            .input
+            .screen_stack
+            .iter()
+            .enumerate()
+            .filter_map(|(index, id)| self.input.screens.get(id).map(|screen| (screen.layer, index, id, screen)))
+            .collect();
+        screens.sort_by_key(|(layer, index, ..)| (*layer, *index));
+        for (_, _, id, screen) in screens {
+            if screen.modal {
+                self.hotspots.clear();
+            }
+            let size = self.size();
+            let Some(root) = screen.nodes.iter().find(|node| node.parent.is_none()) else { continue };
+            let rect = Rect::new(0.0, 0.0, size.0, size.1);
+            let mut layer = Vec::new();
+            if screen.modal {
+                layer.push(Draw::fill(rect, Color::rgba(0, 0, 0, 120)));
+            }
+            self.draw_screen_node(id, screen, root, rect, &mut layer, None);
+            ui.push(layer);
+        }
+    }
+
+    fn draw_screen_node(
+        &mut self,
+        screen_id: &str,
+        screen: &ScreenDefinition,
+        node: &ScreenNode,
+        rect: Rect,
+        layer: &mut Layer,
+        scope: Option<&RepeatScope>,
+    ) {
+        let theme = &self.input.theme.menu;
+        let color = node.color.as_deref().and_then(Color::hex).unwrap_or(theme.accent.0);
+        let children: Vec<_> = screen.nodes.iter().filter(|child| child.parent.as_deref() == Some(&node.id)).collect();
+        let binding = node.binding.as_deref().and_then(|path| screen_binding(self.input.variables, path, scope));
+        if node.kind == NodeType::Repeat {
+            let instances: Vec<_> = match binding {
+                Some(Value::List(items)) => {
+                    items.iter().enumerate().map(|(index, item)| (item.clone(), index, None)).collect()
+                }
+                Some(Value::Dict(items)) => items
+                    .iter()
+                    .enumerate()
+                    .map(|(index, (key, item))| (item.clone(), index, Some(key.clone())))
+                    .collect(),
+                _ => Vec::new(),
+            };
+            let height = rect.h / instances.len().max(1) as f32;
+            for (index, (item, order, key)) in instances.into_iter().enumerate() {
+                let child_rect = Rect::new(rect.x, rect.y + index as f32 * height, rect.w, height);
+                let repeated = RepeatScope { item, index: Value::Int(order as i64), key: key.map(Value::Str) };
+                for child in &children {
+                    self.draw_screen_node(screen_id, screen, child, child_rect, layer, Some(&repeated));
+                }
+            }
+            return;
+        }
+        if matches!(node.kind, NodeType::Stack | NodeType::Row | NodeType::Column | NodeType::Grid) {
+            let inside = Rect::new(
+                rect.x + node.padding,
+                rect.y + node.padding,
+                (rect.w - node.padding * 2.0).max(0.0),
+                (rect.h - node.padding * 2.0).max(0.0),
+            );
+            let child_rects = match node.kind {
+                NodeType::Row => self.row_rects(&children, inside, node.gap, scope),
+                NodeType::Column => self.column_rects(&children, inside, node.gap, scope),
+                NodeType::Grid => self.grid_rects(&children, inside, node.gap, node.columns.unwrap_or(1), scope),
+                _ => children.iter().map(|child| intersect(self.fit_node(child, inside, scope), inside)).collect(),
+            };
+            for (child, child_rect) in children.into_iter().zip(child_rects) {
+                self.draw_screen_node(screen_id, screen, child, child_rect, layer, scope);
+            }
+            return;
+        }
+        match node.kind {
+            NodeType::Text => {
+                let text = node
+                    .text
+                    .as_deref()
+                    .map(|text| interpolate_screen_text(text, self.input.variables, scope))
+                    .or_else(|| binding.map(value_text))
+                    .unwrap_or_default();
+                layer.push(self.ui_text(
+                    text,
+                    rect,
+                    24.0,
+                    node.color.as_deref().and_then(Color::hex).unwrap_or(theme.text_color.0),
+                    TextAlign::Left,
+                ));
+            }
+            NodeType::Image => {
+                let name = node.image.as_deref().or_else(|| {
+                    binding.and_then(|value| match value {
+                        Value::Str(name) => Some(name.as_str()),
+                        _ => None,
+                    })
+                });
+                if let Some(name) = name
+                    && matches!((self.input.image)(name), ImageInfo::Ready(_, _))
+                {
+                    layer.push(Draw::Image { name: name.to_string(), rect, opacity: 1.0 });
+                }
+            }
+            NodeType::Button => {
+                let focused = self.input.focused_custom == Some(&format!("{screen_id}/{}/-", node.id));
+                screen_panel(
+                    layer,
+                    rect,
+                    if focused { color } else { theme.color.0 },
+                    self.input.theme.choice.hover_color.0,
+                );
+                layer.push(self.ui_text(
+                    node.text.as_deref().unwrap_or("Button"),
+                    rect.inset(8.0),
+                    22.0,
+                    theme.text_color.0,
+                    TextAlign::Center,
+                ));
+                self.hotspots.push(Hotspot {
+                    rect,
+                    action: Action::Custom { screen: screen_id.into(), node: node.id.clone(), selection: None },
+                });
+            }
+            NodeType::Bar => {
+                screen_panel(layer, rect, theme.color.0, self.input.theme.choice.hover_color.0);
+                if let Some(value) = binding.and_then(number_value) {
+                    let ratio = ((value - node.min.unwrap_or(0.0))
+                        / (node.max.unwrap_or(1.0) - node.min.unwrap_or(0.0)))
+                    .clamp(0.0, 1.0) as f32;
+                    layer.push(Draw::fill(Rect::new(rect.x, rect.y, rect.w * ratio, rect.h), color));
+                }
+            }
+            NodeType::Toggle => {
+                let enabled = matches!(binding, Some(Value::Bool(true)));
+                let focused = self.input.focused_custom == Some(&format!("{screen_id}/{}/-", node.id));
+                screen_panel(
+                    layer,
+                    rect,
+                    if enabled || focused { color } else { theme.color.0 },
+                    self.input.theme.choice.hover_color.0,
+                );
+                layer.push(self.ui_text(
+                    node.text.as_deref().unwrap_or(if enabled { "On" } else { "Off" }),
+                    rect.inset(6.0),
+                    20.0,
+                    theme.text_color.0,
+                    TextAlign::Center,
+                ));
+                self.hotspots.push(Hotspot {
+                    rect,
+                    action: Action::Custom { screen: screen_id.into(), node: node.id.clone(), selection: None },
+                });
+            }
+            NodeType::Slider => {
+                let focused = self.input.focused_custom == Some(&format!("{screen_id}/{}/-", node.id));
+                screen_panel(
+                    layer,
+                    rect,
+                    if focused { color } else { theme.color.0 },
+                    self.input.theme.choice.hover_color.0,
+                );
+                if let Some(value) = binding.and_then(number_value) {
+                    let ratio = ((value - node.min.unwrap_or(0.0))
+                        / (node.max.unwrap_or(1.0) - node.min.unwrap_or(0.0)))
+                    .clamp(0.0, 1.0) as f32;
+                    layer.push(Draw::fill(Rect::new(rect.x, rect.y, rect.w * ratio, rect.h), color));
+                }
+                self.hotspots.push(Hotspot {
+                    rect,
+                    action: Action::Custom { screen: screen_id.into(), node: node.id.clone(), selection: None },
+                });
+            }
+            NodeType::List => {
+                let values: Vec<Value> = match binding {
+                    Some(Value::List(items)) => items.clone(),
+                    Some(Value::Dict(items)) => items.keys().cloned().map(Value::Str).collect(),
+                    _ => Vec::new(),
+                };
+                let row_height = rect.h / values.len().max(1) as f32;
+                for (index, value) in values.iter().enumerate() {
+                    let row = Rect::new(rect.x, rect.y + row_height * index as f32, rect.w, row_height);
+                    let focused = self.input.focused_custom == Some(&format!("{screen_id}/{}/{index}", node.id));
+                    screen_panel(
+                        layer,
+                        row,
+                        if focused { color } else { theme.color.0 },
+                        self.input.theme.choice.hover_color.0,
+                    );
+                    layer.push(self.ui_text(
+                        value_text(value),
+                        row.inset(4.0),
+                        20.0,
+                        theme.text_color.0,
+                        TextAlign::Left,
+                    ));
+                    self.hotspots.push(Hotspot {
+                        rect: row,
+                        action: Action::Custom {
+                            screen: screen_id.into(),
+                            node: node.id.clone(),
+                            selection: Some(index),
+                        },
+                    });
+                }
+            }
+            NodeType::Stack | NodeType::Row | NodeType::Column | NodeType::Grid | NodeType::Repeat => unreachable!(),
+        }
+    }
+
+    fn row_rects(&mut self, children: &[&ScreenNode], rect: Rect, gap: f32, scope: Option<&RepeatScope>) -> Vec<Rect> {
+        let sizes = self.distribute(children, true, rect.w, gap, scope);
+        let mut x = rect.x;
+        children
+            .iter()
+            .zip(sizes)
+            .map(|(child, width)| {
+                let cell = Rect::new(x, rect.y, width, rect.h);
+                x += width + gap;
+                intersect(self.fit_node(child, cell, scope), rect)
+            })
+            .collect()
+    }
+
+    fn column_rects(
+        &mut self,
+        children: &[&ScreenNode],
+        rect: Rect,
+        gap: f32,
+        scope: Option<&RepeatScope>,
+    ) -> Vec<Rect> {
+        let sizes = self.distribute(children, false, rect.h, gap, scope);
+        let mut y = rect.y;
+        children
+            .iter()
+            .zip(sizes)
+            .map(|(child, height)| {
+                let cell = Rect::new(rect.x, y, rect.w, height);
+                y += height + gap;
+                intersect(self.fit_node(child, cell, scope), rect)
+            })
+            .collect()
+    }
+
+    fn grid_rects(
+        &mut self,
+        children: &[&ScreenNode],
+        rect: Rect,
+        gap: f32,
+        columns: usize,
+        scope: Option<&RepeatScope>,
+    ) -> Vec<Rect> {
+        let columns = columns.max(1);
+        let rows = children.len().div_ceil(columns).max(1);
+        let width = (rect.w - gap * (columns - 1) as f32) / columns as f32;
+        let height = (rect.h - gap * (rows - 1) as f32) / rows as f32;
+        children
+            .iter()
+            .enumerate()
+            .map(|(index, child)| {
+                let (row, col) = (index / columns, index % columns);
+                let cell =
+                    Rect::new(rect.x + col as f32 * (width + gap), rect.y + row as f32 * (height + gap), width, height);
+                intersect(self.fit_node(child, cell, scope), rect)
+            })
+            .collect()
+    }
+
+    fn distribute(
+        &mut self,
+        children: &[&ScreenNode],
+        horizontal: bool,
+        available: f32,
+        gap: f32,
+        scope: Option<&RepeatScope>,
+    ) -> Vec<f32> {
+        let fixed: Vec<_> = children.iter().map(|child| self.dimension_size(child, horizontal, scope)).collect();
+        let used: f32 = fixed.iter().flatten().sum();
+        let fill_count = fixed.iter().filter(|size| size.is_none()).count();
+        let fill =
+            ((available - gap * children.len().saturating_sub(1) as f32 - used).max(0.0)) / fill_count.max(1) as f32;
+        fixed.into_iter().map(|size| size.unwrap_or(fill)).collect()
+    }
+
+    fn dimension_size(&mut self, node: &ScreenNode, horizontal: bool, scope: Option<&RepeatScope>) -> Option<f32> {
+        match if horizontal { node.width } else { node.height } {
+            Some(Dimension::Pixels(size)) => Some(size),
+            Some(Dimension::Mode(SizingMode::Content)) => Some(self.content_size(node, horizontal, scope)),
+            Some(Dimension::Mode(SizingMode::Fill)) | None => None,
+        }
+    }
+
+    fn fit_node(&mut self, node: &ScreenNode, cell: Rect, scope: Option<&RepeatScope>) -> Rect {
+        let width = self.dimension_size(node, true, scope).unwrap_or(cell.w).min(cell.w);
+        let height = self.dimension_size(node, false, scope).unwrap_or(cell.h).min(cell.h);
+        let horizontal = match node.anchor_x.unwrap_or(AnchorX::Left) {
+            AnchorX::Left => 0.0,
+            AnchorX::Center => 0.5,
+            AnchorX::Right => 1.0,
+        };
+        let vertical = match node.anchor_y.unwrap_or(AnchorY::Top) {
+            AnchorY::Top => 0.0,
+            AnchorY::Center => 0.5,
+            AnchorY::Bottom => 1.0,
+        };
+        Rect::new(cell.x + (cell.w - width) * horizontal, cell.y + (cell.h - height) * vertical, width, height)
+    }
+
+    fn content_size(&mut self, node: &ScreenNode, horizontal: bool, scope: Option<&RepeatScope>) -> f32 {
+        match node.kind {
+            NodeType::Text | NodeType::Button | NodeType::Toggle => {
+                let text = node
+                    .text
+                    .as_deref()
+                    .map(|text| interpolate_screen_text(text, self.input.variables, scope))
+                    .or_else(|| {
+                        node.binding
+                            .as_deref()
+                            .and_then(|binding| screen_binding(self.input.variables, binding, scope))
+                            .map(value_text)
+                    })
+                    .unwrap_or_default();
+                let measured = self.fonts.measure(&text, 24.0, self.input.interface_family, None);
+                if horizontal {
+                    measured.width + if node.kind == NodeType::Text { 0.0 } else { 24.0 }
+                } else {
+                    measured.height + if node.kind == NodeType::Text { 0.0 } else { 16.0 }
+                }
+            }
+            NodeType::Image => {
+                let name = node.image.as_deref().or_else(|| {
+                    node.binding
+                        .as_deref()
+                        .and_then(|binding| screen_binding(self.input.variables, binding, scope))
+                        .and_then(|value| match value {
+                            Value::Str(name) => Some(name.as_str()),
+                            _ => None,
+                        })
+                });
+                match name.map(|name| (self.input.image)(name)) {
+                    Some(ImageInfo::Ready(width, height)) => {
+                        if horizontal {
+                            width as f32
+                        } else {
+                            height as f32
+                        }
+                    }
+                    _ => 64.0,
+                }
+            }
+            _ => {
+                if horizontal {
+                    120.0
+                } else {
+                    40.0
+                }
+            }
+        }
+    }
+
     fn size(&self) -> (f32, f32) {
         self.input.size
     }
@@ -348,7 +726,7 @@ impl Builder<'_, '_> {
                 _ => true,
             };
             let hovered = r.contains(self.input.mouse.0, self.input.mouse.1);
-            let color = match (action, active, hovered) {
+            let color = match (action.clone(), active, hovered) {
                 (Action::Toggle(_), true, _) => self.input.theme.menu.accent.0,
                 (_, false, _) => gray(0.4),
                 (_, true, true) => Color::WHITE,
@@ -598,6 +976,68 @@ impl Builder<'_, '_> {
     }
 }
 
+fn intersect(rect: Rect, clip: Rect) -> Rect {
+    let x = rect.x.max(clip.x);
+    let y = rect.y.max(clip.y);
+    let right = (rect.x + rect.w).min(clip.x + clip.w);
+    let bottom = (rect.y + rect.h).min(clip.y + clip.h);
+    Rect::new(x, y, (right - x).max(0.0), (bottom - y).max(0.0))
+}
+
+fn screen_panel(layer: &mut Layer, rect: Rect, fill: Color, border: Color) {
+    layer.push(Draw::fill(rect, border));
+    layer.push(Draw::fill(rect.inset(2.0), fill));
+}
+
+fn screen_binding<'a>(
+    variables: &'a BTreeMap<String, Value>,
+    path: &str,
+    scope: Option<&'a RepeatScope>,
+) -> Option<&'a Value> {
+    let parts = screens::parse_binding(path).ok()?;
+    let (name, rest) = screens::binding_root(&parts)?;
+    let root = match name.as_str() {
+        "item" => &scope?.item,
+        "index" => &scope?.index,
+        "key" => scope?.key.as_ref()?,
+        _ => variables.get(&name)?,
+    };
+    screens::read_binding(root, rest)
+}
+
+fn interpolate_screen_text(text: &str, variables: &BTreeMap<String, Value>, scope: Option<&RepeatScope>) -> String {
+    let mut result = String::new();
+    let mut tail = text;
+    while let Some((start, end)) = screens::next_interpolation(tail) {
+        result.push_str(&tail[..start]);
+        if let Some(value) = screen_binding(variables, &tail[start + 1..end], scope) {
+            result.push_str(&value_text(value));
+        }
+        tail = &tail[end + 1..];
+    }
+    result.push_str(tail);
+    result
+}
+
+fn value_text(value: &Value) -> String {
+    match value {
+        Value::None => String::new(),
+        Value::Bool(value) => value.to_string(),
+        Value::Int(value) => value.to_string(),
+        Value::Float(value) => value.to_string(),
+        Value::Str(value) => value.clone(),
+        Value::List(_) | Value::Dict(_) => String::new(),
+    }
+}
+
+fn number_value(value: &Value) -> Option<f64> {
+    match value {
+        Value::Int(value) => Some(*value as f64),
+        Value::Float(value) => Some(*value),
+        _ => None,
+    }
+}
+
 fn placeholder_label(name: &str) -> String {
     format!("missing image: {name}")
 }
@@ -645,6 +1085,9 @@ mod tests {
 
     use super::*;
 
+    static EMPTY_SCREENS: BTreeMap<String, ScreenDefinition> = BTreeMap::new();
+    static EMPTY_VARIABLES: BTreeMap<String, Value> = BTreeMap::new();
+
     const SCRIPT: &str = "character e \"Eileen\" color=\"#c8ffc8\"\n\nlabel start:\n    scene bg room\n    show e happy at left\n    show k at right\n    e \"Hello.\"\n    menu:\n        \"One\":\n            pass\n        \"Two\":\n            pass\n        \"Three\":\n            pass\n    return\n";
 
     fn game() -> Game {
@@ -681,6 +1124,10 @@ mod tests {
             interface_family: None,
             can_quit: true,
             notice: None,
+            screens: &EMPTY_SCREENS,
+            screen_stack: &[],
+            variables: &EMPTY_VARIABLES,
+            focused_custom: None,
         };
         build(&input, &mut Fonts::new())
     }
@@ -774,7 +1221,8 @@ mod tests {
         let (frame, hotspots) = view(&game, (0.0, 0.0));
         assert_eq!(frame.ui.len(), 2);
         assert!(hotspots.iter().all(|h| !matches!(h.action, Action::Rollback | Action::Choose(_))));
-        let loads: Vec<Action> = hotspots.iter().map(|h| h.action).filter(|a| matches!(a, Action::Load(_))).collect();
+        let loads: Vec<Action> =
+            hotspots.iter().map(|h| h.action.clone()).filter(|a| matches!(a, Action::Load(_))).collect();
         assert_eq!(loads, [Action::Load(1)], "only filled slots can be loaded");
         assert!(hotspots.iter().any(|h| h.action == Action::Back));
     }
@@ -806,6 +1254,10 @@ mod tests {
             interface_family: None,
             can_quit: false,
             notice: None,
+            screens: &EMPTY_SCREENS,
+            screen_stack: &[],
+            variables: &EMPTY_VARIABLES,
+            focused_custom: None,
         };
         let (_, hotspots) = build(&input, &mut Fonts::new());
         assert!(!hotspots.iter().any(|h| h.action == Action::Continue));
@@ -821,6 +1273,91 @@ mod tests {
         assert!(!hotspots.iter().any(|h| h.action == Action::Open(Screen::Save)));
         let (_, hotspots) = view(&game(), (0.0, 0.0));
         assert!(hotspots.iter().any(|h| h.action == Action::Open(Screen::Save)));
+    }
+
+    #[test]
+    fn custom_screen_renders_bound_values_and_selectable_list_items() {
+        let mut game = game();
+        game.show_custom_screen("phone");
+        let screen = kairos_project::screens::parse_screen(
+            r#"
+            id = "phone"
+            modal = true
+            [[nodes]]
+            id = "root"
+            type = "column"
+            [[nodes]]
+            id = "title"
+            parent = "root"
+            type = "text"
+            text = "Gold: [gold]"
+            [[nodes]]
+            id = "items"
+            parent = "root"
+            type = "list"
+            binding = "inventory"
+            target = "selected"
+            [[nodes]]
+            id = "party"
+            parent = "root"
+            type = "repeat"
+            binding = "members"
+            [[nodes]]
+            id = "member_name"
+            parent = "party"
+            type = "text"
+            binding = "item.name"
+        "#,
+        )
+        .unwrap();
+        let screens = BTreeMap::from([("phone".into(), screen)]);
+        let variables = BTreeMap::from([
+            ("gold".into(), Value::Int(4)),
+            ("inventory".into(), Value::List(vec![Value::Str("key".into()), Value::Str("map".into())])),
+            ("selected".into(), Value::Str("key".into())),
+            (
+                "members".into(),
+                Value::List(vec![
+                    Value::Dict(BTreeMap::from([("name".into(), Value::Str("Mira".into()))])),
+                    Value::Dict(BTreeMap::from([("name".into(), Value::Str("Kai".into()))])),
+                ]),
+            ),
+        ]);
+        let theme = Theme::default();
+        let title = Title::default();
+        let slots: [Option<String>; SLOTS] = std::array::from_fn(|_| None);
+        let input = ViewInput {
+            game: &game,
+            theme: &theme,
+            title: &title,
+            title_text: "Test",
+            size: (1280.0, 720.0),
+            mouse: (0.0, 0.0),
+            image: &images,
+            slots: &slots,
+            backlog_scroll: 0,
+            dialogue_family: None,
+            interface_family: None,
+            can_quit: false,
+            notice: None,
+            screens: &screens,
+            screen_stack: game.custom_screens(),
+            variables: &variables,
+            focused_custom: None,
+        };
+        let (frame, hotspots) = build(&input, &mut Fonts::new());
+        assert!(texts(frame.ui.last().unwrap()).contains(&"Gold: 4"));
+        let list_rows: Vec<_> = hotspots
+            .iter()
+            .filter(
+                |hotspot| matches!(&hotspot.action, Action::Custom { node, selection: Some(_), .. } if node == "items"),
+            )
+            .collect();
+        assert_eq!(list_rows.len(), 2);
+        assert!(list_rows[0].rect.y < list_rows[1].rect.y);
+        let rendered = texts(frame.ui.last().unwrap());
+        assert!(rendered.contains(&"Mira"));
+        assert!(rendered.contains(&"Kai"));
     }
 
     #[test]

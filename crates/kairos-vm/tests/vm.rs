@@ -88,6 +88,23 @@ fn title_flow_statements_return_host_actions_and_advance() {
 }
 
 #[test]
+fn custom_screen_statements_emit_presentation_effects_and_continue() {
+    let p = program(
+        r#"label start:
+    show screen phone
+    hide screen phone
+    "Done."
+"#,
+    );
+    let mut vm = started(&p);
+    assert_eq!(say(vm.advance().unwrap()), "Done.");
+    assert_eq!(
+        vm.take_effects(),
+        vec![kairos_vm::Effect::ShowScreen("phone".into()), kairos_vm::Effect::HideScreen("phone".into()),]
+    );
+}
+
+#[test]
 fn rollback_stops_at_the_first_interaction() {
     let p = program(LOOP);
     let mut vm = started(&p);
