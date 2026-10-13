@@ -89,6 +89,7 @@ pub struct Game {
     backlog: Vec<Line>,
     /// Backlog length before each shown interaction, parallel to the VM's rollback history.
     marks: Vec<usize>,
+    screen_history: Vec<Vec<String>>,
     signals: Vec<Signal>,
     skip_timer: f32,
     custom_screens: Vec<String>,
@@ -107,6 +108,7 @@ impl Game {
             translations: BTreeMap::new(),
             backlog: Vec::new(),
             marks: Vec::new(),
+            screen_history: Vec::new(),
             signals: Vec::new(),
             skip_timer: 0.0,
             custom_screens: Vec::new(),
@@ -305,7 +307,11 @@ impl Game {
             return false;
         }
         self.backlog.truncate(*self.marks.get(position).unwrap_or(&0));
+        if let Some(screens) = self.screen_history.get(position).cloned() {
+            self.custom_screens = screens;
+        }
         self.marks.truncate(position);
+        self.screen_history.truncate(position);
         self.mode = Mode::Normal;
         self.signals.push(Signal::Resync);
         self.step();
@@ -351,6 +357,10 @@ impl Game {
         }
         self.mode = Mode::Normal;
         self.marks.pop();
+        self.screen_history.pop();
+        if let Some(screens) = self.screen_history.pop() {
+            self.custom_screens = screens;
+        }
         if let Some(mark) = self.marks.pop() {
             self.backlog.truncate(mark);
         }
@@ -448,6 +458,7 @@ impl Game {
     fn reset(&mut self) {
         self.backlog.clear();
         self.marks.clear();
+        self.screen_history.clear();
         self.custom_screens.clear();
         self.mode = Mode::Normal;
         self.screen = Screen::Game;
@@ -479,6 +490,7 @@ impl Game {
         };
         if !matches!(event, Event::End) {
             self.marks.push(self.backlog.len());
+            self.screen_history.push(self.custom_screens.clone());
         }
         self.shown = match event {
             Event::Say { who, color, text } => {
@@ -807,6 +819,27 @@ label start:
         game.proceed();
         assert_eq!(text(&game), "Closed.");
         assert!(game.custom_screens().is_empty());
+    }
+
+    #[test]
+    fn rollback_restores_the_custom_screen_stack_at_the_history_point() {
+        let project = kairos_project::Project::from_sources(
+            "name = \"t\"",
+            [(
+                PathBuf::from("script/a.kai"),
+                "label start:\n    show screen phone\n    \"First\"\n    \"Second\"\n".into(),
+            )],
+        )
+        .unwrap();
+        let mut game = Game::new(project.program).unwrap();
+        game.settings.text_speed = Settings::INSTANT;
+        game.start("start");
+        assert_eq!(game.custom_screens(), ["phone"]);
+        game.proceed();
+        game.show_custom_screen("inventory");
+
+        assert!(game.rollback());
+        assert_eq!(game.custom_screens(), ["phone"]);
     }
 
     #[test]

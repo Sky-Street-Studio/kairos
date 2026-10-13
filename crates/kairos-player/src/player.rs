@@ -18,6 +18,14 @@ use crate::view::{self, Action, Hotspot, ImageInfo, SLOTS, ViewInput, image_name
 
 const PERSISTENT_INTERVAL: f32 = 2.0;
 
+fn apply_set_value(current: &mut Value, value: Value, path: &str) -> Result<(), String> {
+    if std::mem::discriminant(current) != std::mem::discriminant(&value) {
+        return Err(format!("set value type does not match target binding `{path}`"));
+    }
+    *current = value;
+    Ok(())
+}
+
 fn toml_value(value: toml::Value) -> Option<Value> {
     Some(match value {
         toml::Value::Boolean(value) => Value::Bool(value),
@@ -370,10 +378,10 @@ impl Player {
 
     pub fn pointer_moved(&mut self, x: f32, y: f32) {
         self.mouse = self.renderer.letterbox().to_virtual(x, y);
-        if let Some(Action::Custom { screen, node, selection }) = view::hit(&self.hotspots, self.mouse.0, self.mouse.1)
+        if let Some(Action::Custom { screen, node, selection, repeat_path }) =
+            view::hit(&self.hotspots, self.mouse.0, self.mouse.1)
         {
-            self.focused_custom =
-                Some(format!("{screen}/{node}/{}", selection.map_or_else(|| "-".into(), |index| index.to_string())));
+            self.focused_custom = Some(view::custom_focus_id(&screen, &node, selection, &repeat_path));
         }
     }
 
@@ -521,7 +529,7 @@ impl Player {
             }
             Action::Restart => self.start_game(),
             Action::Quit => self.quit = true,
-            Action::Custom { screen, node, selection } => self.activate_custom(&screen, &node, selection),
+            Action::Custom { screen, node, selection, .. } => self.activate_custom(&screen, &node, selection),
         }
     }
 
@@ -548,7 +556,9 @@ impl Player {
             .hotspots
             .iter()
             .filter_map(|hotspot| match &hotspot.action {
-                Action::Custom { screen, node, selection } => Some((screen.clone(), node.clone(), *selection)),
+                Action::Custom { screen, node, selection, repeat_path } => {
+                    Some((screen.clone(), node.clone(), *selection, repeat_path.clone()))
+                }
                 _ => None,
             })
             .collect();
@@ -556,37 +566,37 @@ impl Player {
             return;
         }
         let current = self.focused_custom.as_ref().and_then(|id| {
-            controls.iter().position(|(screen, node, selection)| {
-                id == &format!("{screen}/{node}/{}", selection.map_or_else(|| "-".into(), |index| index.to_string()))
+            controls.iter().position(|(screen, node, selection, repeat_path)| {
+                id == &view::custom_focus_id(screen, node, *selection, repeat_path)
             })
         });
         let next = current.map_or(if direction < 0 { controls.len() - 1 } else { 0 }, |at| {
             (at as isize + direction).rem_euclid(controls.len() as isize) as usize
         });
-        let (screen, node, selection) = &controls[next];
-        self.focused_custom =
-            Some(format!("{screen}/{node}/{}", selection.map_or_else(|| "-".into(), |index| index.to_string())));
+        let (screen, node, selection, repeat_path) = &controls[next];
+        self.focused_custom = Some(view::custom_focus_id(screen, node, *selection, repeat_path));
     }
 
     fn activate_focused_custom(&mut self) {
         let focused = self.focused_custom.clone().or_else(|| {
             self.hotspots.iter().find_map(|hotspot| match &hotspot.action {
-                Action::Custom { screen, node, selection } => {
-                    Some(format!("{screen}/{node}/{}", selection.map_or_else(|| "-".into(), |index| index.to_string())))
+                Action::Custom { screen, node, selection, repeat_path } => {
+                    Some(view::custom_focus_id(screen, node, *selection, repeat_path))
                 }
                 _ => None,
             })
         });
         if let Some(focused) = focused
             && let Some(action) = self.hotspots.iter().find_map(|hotspot| match &hotspot.action {
-                Action::Custom { screen, node, selection }
-                    if focused
-                        == format!(
-                            "{screen}/{node}/{}",
-                            selection.map_or_else(|| "-".into(), |index| index.to_string())
-                        ) =>
+                Action::Custom { screen, node, selection, repeat_path }
+                    if focused == view::custom_focus_id(screen, node, *selection, repeat_path) =>
                 {
-                    Some(Action::Custom { screen: screen.clone(), node: node.clone(), selection: *selection })
+                    Some(Action::Custom {
+                        screen: screen.clone(),
+                        node: node.clone(),
+                        selection: *selection,
+                        repeat_path: repeat_path.clone(),
+                    })
                 }
                 _ => None,
             })
@@ -627,7 +637,7 @@ impl Player {
         } else if node.kind == kairos_project::screens::NodeType::Slider {
             let Some(binding) = node.binding.as_deref() else { return };
             let Some(old) = self.binding_value(binding) else { return };
-            let Some(rect) = self.hotspots.iter().find(|hotspot| matches!(&hotspot.action, Action::Custom { screen, node: id, selection: None } if screen == screen_id && id == node_id)).map(|hotspot| hotspot.rect) else { return };
+            let Some(rect) = self.hotspots.iter().find(|hotspot| matches!(&hotspot.action, Action::Custom { screen, node: id, selection: None, .. } if screen == screen_id && id == node_id)).map(|hotspot| hotspot.rect) else { return };
             let ratio = ((self.mouse.0 - rect.x) / rect.w.max(1.0)).clamp(0.0, 1.0) as f64;
             let min = node.min.unwrap_or(0.0);
             let value = min + ratio * (node.max.unwrap_or(1.0) - min);
@@ -653,7 +663,10 @@ impl Player {
                 let value = match (action.value, action.binding.as_deref()) {
                     (Some(value), _) => match toml_value(value) {
                         Some(value) => value,
-                        None => return,
+                        None => {
+                            self.notify("set action values cannot contain TOML datetimes".into());
+                            return;
+                        }
                     },
                     (_, Some(binding)) => match self.binding_value(binding) {
                         Some(value) => value,
@@ -661,7 +674,7 @@ impl Player {
                     },
                     _ => return,
                 };
-                if let Err(error) = self.set_binding(target, value) {
+                if let Err(error) = self.set_action_binding(target, value) {
                     self.notify(error);
                 }
             }
@@ -703,6 +716,13 @@ impl Player {
         let variables = self.game.debug_variables();
         let value = variables.get(&name)?;
         screens::read_binding(value, rest).cloned()
+    }
+
+    fn set_action_binding(&mut self, path: &str, value: Value) -> Result<(), String> {
+        let mut current =
+            self.binding_value(path).ok_or_else(|| format!("binding `{path}` does not address an existing value"))?;
+        apply_set_value(&mut current, value, path)?;
+        self.set_binding(path, current)
     }
 
     fn set_binding(&mut self, path: &str, value: Value) -> Result<(), String> {
@@ -954,6 +974,21 @@ pub(crate) fn log(message: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn set_actions_reject_type_mismatches_without_changing_the_target() {
+        let mut target = Value::Bool(false);
+        let before = target.clone();
+
+        assert!(apply_set_value(&mut target, Value::Str("yes".into()), "enabled").is_err());
+        assert_eq!(target, before);
+    }
+
+    #[test]
+    fn set_actions_reject_toml_datetimes() {
+        let parsed: toml::Value = toml::from_str("value = 2024-01-02").unwrap();
+        assert!(toml_value(parsed["value"].clone()).is_none());
+    }
 
     #[test]
     fn loop_metadata_uses_the_resolved_audio_path_relative_to_audio() {

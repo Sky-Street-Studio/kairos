@@ -36,7 +36,7 @@ pub enum Action {
     Continue,
     MainMenu,
     Quit,
-    Custom { screen: String, node: String, selection: Option<usize> },
+    Custom { screen: String, node: String, selection: Option<usize>, repeat_path: Vec<String> },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -130,6 +130,12 @@ struct RepeatScope {
     item: Value,
     index: Value,
     key: Option<Value>,
+    path: Vec<String>,
+}
+
+pub(crate) fn custom_focus_id(screen: &str, node: &str, selection: Option<usize>, repeat_path: &[String]) -> String {
+    let selection = selection.map_or_else(|| "-".into(), |index| index.to_string());
+    format!("{screen}/{node}/{repeat_path:?}/{selection}")
 }
 
 struct Builder<'a, 'f> {
@@ -213,7 +219,9 @@ impl Builder<'_, '_> {
             let height = rect.h / instances.len().max(1) as f32;
             for (index, (item, order, key)) in instances.into_iter().enumerate() {
                 let child_rect = Rect::new(rect.x, rect.y + index as f32 * height, rect.w, height);
-                let repeated = RepeatScope { item, index: Value::Int(order as i64), key: key.map(Value::Str) };
+                let mut path = scope.map_or_else(Vec::new, |scope| scope.path.clone());
+                path.push(key.as_ref().map_or_else(|| format!("index:{order}"), |key| format!("key:{key}")));
+                let repeated = RepeatScope { item, index: Value::Int(order as i64), key: key.map(Value::Str), path };
                 for child in &children {
                     self.draw_screen_node(screen_id, screen, child, child_rect, layer, Some(&repeated));
                 }
@@ -268,7 +276,13 @@ impl Builder<'_, '_> {
                 }
             }
             NodeType::Button => {
-                let focused = self.input.focused_custom == Some(&format!("{screen_id}/{}/-", node.id));
+                let focused = self.input.focused_custom
+                    == Some(&custom_focus_id(
+                        screen_id,
+                        &node.id,
+                        None,
+                        scope.map_or(&[], |scope| scope.path.as_slice()),
+                    ));
                 screen_panel(
                     layer,
                     rect,
@@ -284,7 +298,12 @@ impl Builder<'_, '_> {
                 ));
                 self.hotspots.push(Hotspot {
                     rect,
-                    action: Action::Custom { screen: screen_id.into(), node: node.id.clone(), selection: None },
+                    action: Action::Custom {
+                        screen: screen_id.into(),
+                        node: node.id.clone(),
+                        selection: None,
+                        repeat_path: scope.map_or_else(Vec::new, |scope| scope.path.clone()),
+                    },
                 });
             }
             NodeType::Bar => {
@@ -298,7 +317,13 @@ impl Builder<'_, '_> {
             }
             NodeType::Toggle => {
                 let enabled = matches!(binding, Some(Value::Bool(true)));
-                let focused = self.input.focused_custom == Some(&format!("{screen_id}/{}/-", node.id));
+                let focused = self.input.focused_custom
+                    == Some(&custom_focus_id(
+                        screen_id,
+                        &node.id,
+                        None,
+                        scope.map_or(&[], |scope| scope.path.as_slice()),
+                    ));
                 screen_panel(
                     layer,
                     rect,
@@ -314,11 +339,22 @@ impl Builder<'_, '_> {
                 ));
                 self.hotspots.push(Hotspot {
                     rect,
-                    action: Action::Custom { screen: screen_id.into(), node: node.id.clone(), selection: None },
+                    action: Action::Custom {
+                        screen: screen_id.into(),
+                        node: node.id.clone(),
+                        selection: None,
+                        repeat_path: scope.map_or_else(Vec::new, |scope| scope.path.clone()),
+                    },
                 });
             }
             NodeType::Slider => {
-                let focused = self.input.focused_custom == Some(&format!("{screen_id}/{}/-", node.id));
+                let focused = self.input.focused_custom
+                    == Some(&custom_focus_id(
+                        screen_id,
+                        &node.id,
+                        None,
+                        scope.map_or(&[], |scope| scope.path.as_slice()),
+                    ));
                 screen_panel(
                     layer,
                     rect,
@@ -333,7 +369,12 @@ impl Builder<'_, '_> {
                 }
                 self.hotspots.push(Hotspot {
                     rect,
-                    action: Action::Custom { screen: screen_id.into(), node: node.id.clone(), selection: None },
+                    action: Action::Custom {
+                        screen: screen_id.into(),
+                        node: node.id.clone(),
+                        selection: None,
+                        repeat_path: scope.map_or_else(Vec::new, |scope| scope.path.clone()),
+                    },
                 });
             }
             NodeType::List => {
@@ -345,7 +386,13 @@ impl Builder<'_, '_> {
                 let row_height = rect.h / values.len().max(1) as f32;
                 for (index, value) in values.iter().enumerate() {
                     let row = Rect::new(rect.x, rect.y + row_height * index as f32, rect.w, row_height);
-                    let focused = self.input.focused_custom == Some(&format!("{screen_id}/{}/{index}", node.id));
+                    let focused = self.input.focused_custom
+                        == Some(&custom_focus_id(
+                            screen_id,
+                            &node.id,
+                            Some(index),
+                            scope.map_or(&[], |scope| scope.path.as_slice()),
+                        ));
                     screen_panel(
                         layer,
                         row,
@@ -365,6 +412,7 @@ impl Builder<'_, '_> {
                             screen: screen_id.into(),
                             node: node.id.clone(),
                             selection: Some(index),
+                            repeat_path: scope.map_or_else(Vec::new, |scope| scope.path.clone()),
                         },
                     });
                 }
@@ -1307,6 +1355,11 @@ mod tests {
             parent = "party"
             type = "text"
             binding = "item.name"
+            [[nodes]]
+            id = "member_button"
+            parent = "party"
+            type = "button"
+            text = "Select"
         "#,
         )
         .unwrap();
@@ -1358,6 +1411,12 @@ mod tests {
         let rendered = texts(frame.ui.last().unwrap());
         assert!(rendered.contains(&"Mira"));
         assert!(rendered.contains(&"Kai"));
+        let repeated: Vec<_> = hotspots
+            .iter()
+            .filter(|hotspot| matches!(&hotspot.action, Action::Custom { node, .. } if node == "member_button"))
+            .collect();
+        assert_eq!(repeated.len(), 2);
+        assert_ne!(repeated[0].action, repeated[1].action);
     }
 
     #[test]

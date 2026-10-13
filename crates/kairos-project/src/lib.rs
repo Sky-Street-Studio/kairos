@@ -376,6 +376,39 @@ impl Project {
                         &mut self.screen_diagnostics,
                     );
                 }
+                if let Some(value) = &action.value
+                    && contains_datetime(value)
+                {
+                    self.screen_diagnostics.push((
+                        path.to_path_buf(),
+                        screens::ScreenDiagnostic {
+                            node: Some(node.to_string()),
+                            message: "datetime values are not supported in set actions".into(),
+                        },
+                    ));
+                }
+                if let Some(target) = &action.target
+                    && let Some(target_value) = initial_binding(target, initial_values)
+                {
+                    let source_matches = if let Some(value) = &action.value {
+                        contains_datetime(value) || toml_type_matches(value, target_value)
+                    } else {
+                        action
+                            .binding
+                            .as_deref()
+                            .and_then(|binding| initial_binding(binding, initial_values))
+                            .is_none_or(|value| same_value_type(value, target_value))
+                    };
+                    if !source_matches {
+                        self.screen_diagnostics.push((
+                            path.to_path_buf(),
+                            screens::ScreenDiagnostic {
+                                node: Some(node.to_string()),
+                                message: format!("set value type is incompatible with target binding `{target}`"),
+                            },
+                        ));
+                    }
+                }
             }
             screens::ActionType::Jump | screens::ActionType::Call => {
                 if let Some(label) = &action.target
@@ -580,6 +613,40 @@ fn initial_binding<'a>(
     screens::read_binding(values.get(&name)?, rest)
 }
 
+fn contains_datetime(value: &toml::Value) -> bool {
+    match value {
+        toml::Value::Datetime(_) => true,
+        toml::Value::Array(values) => values.iter().any(contains_datetime),
+        toml::Value::Table(values) => values.values().any(contains_datetime),
+        _ => false,
+    }
+}
+
+fn toml_type_matches(value: &toml::Value, target: &kairos_script::Value) -> bool {
+    matches!(
+        (value, target),
+        (toml::Value::Boolean(_), kairos_script::Value::Bool(_))
+            | (toml::Value::Integer(_), kairos_script::Value::Int(_))
+            | (toml::Value::Float(_), kairos_script::Value::Float(_))
+            | (toml::Value::String(_), kairos_script::Value::Str(_))
+            | (toml::Value::Array(_), kairos_script::Value::List(_))
+            | (toml::Value::Table(_), kairos_script::Value::Dict(_))
+    )
+}
+
+fn same_value_type(left: &kairos_script::Value, right: &kairos_script::Value) -> bool {
+    matches!(
+        (left, right),
+        (kairos_script::Value::None, kairos_script::Value::None)
+            | (kairos_script::Value::Bool(_), kairos_script::Value::Bool(_))
+            | (kairos_script::Value::Int(_), kairos_script::Value::Int(_))
+            | (kairos_script::Value::Float(_), kairos_script::Value::Float(_))
+            | (kairos_script::Value::Str(_), kairos_script::Value::Str(_))
+            | (kairos_script::Value::List(_), kairos_script::Value::List(_))
+            | (kairos_script::Value::Dict(_), kairos_script::Value::Dict(_))
+    )
+}
+
 fn has_repeat_parent(screen: &screens::ScreenDefinition, node: &screens::ScreenNode) -> bool {
     let mut parent = node.parent.as_deref();
     while let Some(id) = parent {
@@ -738,6 +805,81 @@ label start:
         assert!(report.contains("ui/screens/phone.toml:0: node `items`: binding `missing`"), "{report}");
         assert!(!report.contains("node `display`"), "{report}");
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn set_actions_reject_literal_values_incompatible_with_the_target_type() {
+        let mut project = Project::from_sources(
+            "name = \"test\"",
+            [(
+                PathBuf::from("script/main.kai"),
+                r#"default enabled = false
+default created = "today"
+default label = "no"
+label start:
+    return
+"#
+                .into(),
+            )],
+        )
+        .unwrap();
+        project.screens = BTreeMap::from([(
+            "phone".into(),
+            screens::parse_screen(
+                r#"
+                id = "phone"
+                [[nodes]]
+                id = "root"
+                type = "column"
+                [[nodes]]
+                id = "switch"
+                parent = "root"
+                type = "button"
+                action = { type = "set", target = "enabled", value = "yes" }
+                [[nodes]]
+                id = "timestamp"
+                parent = "root"
+                type = "button"
+                action = { type = "set", target = "created", value = 2024-01-02 }
+                [[nodes]]
+                id = "copy"
+                parent = "root"
+                type = "button"
+                action = { type = "set", target = "enabled", binding = "label" }
+            "#,
+            )
+            .unwrap(),
+        )]);
+
+        project.validate_screens();
+
+        assert!(
+            project.screen_diagnostics.iter().any(|(path, diagnostic)| {
+                path == Path::new("ui/screens/phone.toml")
+                    && diagnostic.node.as_deref() == Some("switch")
+                    && diagnostic.message.contains("incompatible")
+            }),
+            "{:?}",
+            project.screen_diagnostics
+        );
+        assert!(
+            project.screen_diagnostics.iter().any(|(path, diagnostic)| {
+                path == Path::new("ui/screens/phone.toml")
+                    && diagnostic.node.as_deref() == Some("timestamp")
+                    && diagnostic.message.contains("datetime")
+            }),
+            "{:?}",
+            project.screen_diagnostics
+        );
+        assert!(
+            project.screen_diagnostics.iter().any(|(path, diagnostic)| {
+                path == Path::new("ui/screens/phone.toml")
+                    && diagnostic.node.as_deref() == Some("copy")
+                    && diagnostic.message.contains("incompatible")
+            }),
+            "{:?}",
+            project.screen_diagnostics
+        );
     }
 
     #[test]
