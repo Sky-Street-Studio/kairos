@@ -3,17 +3,11 @@ import { join } from "node:path";
 
 import { app } from "electron";
 
-import type { Analysis, AnalyzeInput } from "@shared/types";
+import type { Analysis, AnalyzeInput, ExportTarget } from "@shared/types";
 
 interface Addon {
   analyze(input: AnalyzeInput): Analysis;
-  exportGame(
-    project: string,
-    target: "web" | "desktop" | "windows-x64" | "linux-x64" | "macos",
-    output: string,
-    playerBinary?: string,
-    playerPkg?: string,
-  ): string;
+  exportGame(project: string, target: ExportTarget, output: string, playerBinary?: string, playerPkg?: string): string;
   sceneBlocks(source: string, label: string): string;
   applyEdits(files: string, ops: string): string;
   references(files: string, label: string): string;

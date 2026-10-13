@@ -12,6 +12,8 @@ The exporter copies `kairos.toml`, `script/`, `assets/`, `ui/` and `tl/`. It rej
 | `linux-x64` | `<name>`, `game/` and executable `run.sh` |
 | `macos` | `<Name>.app` with the player in `Contents/MacOS` and game files in `Contents/Resources/game` |
 
+Windows filesystems do not keep Unix permissions, so a Linux export made on Windows needs `chmod +x run.sh <name>` before it runs. Ship it in a tar archive created on Linux or macOS to keep the bits.
+
 The Linux and Windows launchers start the executable from the output directory, so the player can find the adjacent `game/` folder. The macOS player loads `../Resources/game`. The CLI uses its own executable as the host player for `desktop`; pass `--player-binary <path>` for an externally built target player. The editor uses its packaged or development host player, or `KAIROS_PLAYER_BINARY_WINDOWS_X64`, `KAIROS_PLAYER_BINARY_LINUX_X64` or `KAIROS_PLAYER_BINARY_MACOS` for a supplied target binary. Kairos does not cross-compile the player. Without a matching binary, cross-target export fails with a host-only error. Build the player with the Rust target toolchain you have installed, then supply that binary.
 
 ## macOS signing

@@ -80,6 +80,9 @@ impl Steam {
             if relative.components().any(|part| !matches!(part, std::path::Component::Normal(_))) {
                 continue;
             }
+            if crosses_symlink(&self.save_dir, relative) {
+                continue;
+            }
             let path = self.save_dir.join(relative);
             let remote_file = remote.file(&entry.name);
             let remote_time = remote_file.timestamp();
@@ -145,15 +148,18 @@ fn files_under(directory: &Path) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(directory) else { return Vec::new() };
     entries
         .filter_map(Result::ok)
-        .flat_map(|entry| {
-            let path = entry.path();
-            if path.is_dir() {
-                files_under(&path)
-            } else if path.is_file() {
-                vec![path]
-            } else {
-                Vec::new()
-            }
+        .flat_map(|entry| match entry.file_type() {
+            Ok(kind) if kind.is_dir() => files_under(&entry.path()),
+            Ok(kind) if kind.is_file() => vec![entry.path()],
+            _ => Vec::new(),
         })
         .collect()
+}
+
+fn crosses_symlink(base: &Path, relative: &Path) -> bool {
+    let mut path = base.to_path_buf();
+    relative.components().any(|part| {
+        path.push(part);
+        path.symlink_metadata().is_ok_and(|meta| meta.file_type().is_symlink())
+    })
 }

@@ -226,12 +226,19 @@ fn sign_macos(app: &Path) -> Result<(), ExportError> {
         if !status.success() {
             return Err(ExportError::Player("codesign failed".into()));
         }
+        // notarytool only accepts a zip, dmg or pkg, not a bare .app bundle.
+        let archive = app.with_extension("zip");
+        let status = Command::new("ditto").args(["-c", "-k", "--keepParent"]).arg(app).arg(&archive).status()?;
+        if !status.success() {
+            return Err(ExportError::Player("ditto could not archive the app for notarization".into()));
+        }
         let status = Command::new("xcrun")
             .args(["notarytool", "submit"])
-            .arg(app)
+            .arg(&archive)
             .args(["--keychain-profile", &profile, "--team-id", &team, "--wait"])
-            .status()?;
-        if !status.success() {
+            .status();
+        let _ = std::fs::remove_file(&archive);
+        if !status?.success() {
             return Err(ExportError::Player("notarytool failed".into()));
         }
         let status = Command::new("xcrun").args(["stapler", "staple"]).arg(app).status()?;
