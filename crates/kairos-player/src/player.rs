@@ -3,14 +3,14 @@
 use std::collections::HashMap;
 
 use kairos_audio::{Audio, Bus, Sound};
-use kairos_project::Project;
+use kairos_project::{AudioLoop, AudioMetadata, Project, parse_audio_metadata};
 use kairos_render::{Fonts, Renderer, TransitionKind};
 use kairos_vm::Effect;
 
-use crate::assets::{Assets, Request};
+use crate::assets::{Assets, Loaded, Request};
 use crate::game::{Game, Screen, Shown, Signal};
 use crate::saves::SaveStore;
-use crate::theme::Theme;
+use crate::theme::{Theme, Title};
 use crate::view::{self, Action, Hotspot, ImageInfo, SLOTS, ViewInput, image_name};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,6 +33,10 @@ pub enum Key {
 pub struct Player {
     game: Game,
     start_label: String,
+    project_name: String,
+    title: Title,
+    title_text: String,
+    in_splashscreen: bool,
     theme: Theme,
     fonts: Fonts,
     dialogue_family: Option<String>,
@@ -40,6 +44,11 @@ pub struct Player {
     renderer: Renderer,
     audio: Audio,
     audio_started: bool,
+    duck: f32,
+    duck_fade: f64,
+    audio_metadata: AudioMetadata,
+    audio_metadata_ready: bool,
+    pending_audio: Vec<Loaded>,
     assets: Assets,
     images: HashMap<String, ImageInfo>,
     saves: SaveStore,
@@ -63,10 +72,24 @@ impl Player {
         saves: SaveStore,
         can_quit: bool,
     ) -> Result<Player, String> {
-        let game = Game::new(project.program.clone()).map_err(|e| e.to_string())?;
+        let saved_language = saves.language().unwrap_or_default();
+        let mut game = Game::new(project.program.clone()).map_err(|e| e.to_string())?;
+        game.set_localizations(project.translations.clone(), &saved_language);
+        let mut assets = assets;
+        let audio_metadata_ready = !cfg!(target_arch = "wasm32");
+        if !audio_metadata_ready {
+            assets.request(Request::AudioMetadata);
+        }
+        let title = Title::parse(&load_title(project)?)?;
+        let project_name = project.manifest.name.clone();
+        let title_text = title.title.clone().unwrap_or_else(|| project_name.clone());
         let mut player = Player {
             game,
             start_label: project.manifest.start.clone(),
+            project_name,
+            title,
+            title_text,
+            in_splashscreen: false,
             theme,
             fonts: Fonts::new(),
             dialogue_family: None,
@@ -74,6 +97,11 @@ impl Player {
             renderer,
             audio: Audio::silent(),
             audio_started: false,
+            duck: project.manifest.audio.duck,
+            duck_fade: project.manifest.audio.duck_fade,
+            audio_metadata: project.audio_metadata.clone(),
+            audio_metadata_ready,
+            pending_audio: Vec::new(),
             assets,
             images: HashMap::new(),
             saves,
@@ -95,12 +123,81 @@ impl Player {
     }
 
     pub fn start(&mut self) {
+        if self.game.has_label("splashscreen") {
+            self.in_splashscreen = true;
+            self.game.start("splashscreen");
+        } else {
+            self.show_title();
+        }
+    }
+
+    pub fn set_title(&mut self, text: &str) -> Result<(), String> {
+        self.title = Title::parse(text)?;
+        self.title_text = self.title.title.clone().unwrap_or_else(|| self.project_name.clone());
+        Ok(())
+    }
+
+    fn show_title(&mut self) {
+        self.in_splashscreen = false;
+        if self.game.has_label("main_menu") {
+            self.game.start("main_menu");
+        } else {
+            self.slots = (0..SLOTS).map(|i| self.saves.preview(i)).collect();
+            self.game.show_title();
+            if self.audio_started {
+                self.play_title_music();
+            }
+        }
+    }
+
+    fn start_game(&mut self) {
+        self.in_splashscreen = false;
         let label = self.start_label.clone();
         self.game.start(&label);
     }
 
+    fn play_title_music(&mut self) {
+        if let Some(asset) = self.title.music.clone() {
+            self.assets.request(Request::TitleMusic(asset));
+        }
+    }
+
     pub fn start_at(&mut self, pc: usize) {
+        self.in_splashscreen = false;
         self.game.start_at(pc);
+    }
+
+    pub fn debug_start_at(
+        &mut self,
+        pc: usize,
+        overrides: &std::collections::BTreeMap<String, kairos_vm::Value>,
+    ) -> Result<(), kairos_vm::RuntimeError> {
+        self.in_splashscreen = false;
+        self.game.start_at_with_overrides(pc, overrides)
+    }
+
+    pub fn debug_variables(&self) -> std::collections::BTreeMap<String, kairos_vm::Value> {
+        self.game.debug_variables()
+    }
+
+    pub fn debug_pc(&self) -> usize {
+        self.game.debug_pc()
+    }
+
+    pub fn debug_call_stack(&self) -> &[usize] {
+        self.game.debug_call_stack()
+    }
+
+    pub fn debug_history_len(&self) -> usize {
+        self.game.debug_history_len()
+    }
+
+    pub fn debug_set_variable(&mut self, name: &str, value: kairos_vm::Value) -> Result<(), kairos_vm::RuntimeError> {
+        self.game.debug_set_variable(name, value)
+    }
+
+    pub fn debug_rollback_to(&mut self, position: usize) -> bool {
+        self.game.debug_rollback_to(position)
     }
 
     /// Opens the audio device. Browsers only allow this after a user gesture.
@@ -112,6 +209,9 @@ impl Player {
         self.audio = Audio::new();
         self.apply_volumes();
         self.sync_audio();
+        if self.game.screen == Screen::Title {
+            self.play_title_music();
+        }
     }
 
     pub fn should_quit(&self) -> bool {
@@ -130,6 +230,16 @@ impl Player {
         let dt = dt.clamp(0.0, 0.25);
         self.receive_assets();
         self.game.tick(dt);
+        if self.in_splashscreen && matches!(self.game.shown, Shown::End) {
+            self.show_title();
+        }
+        match self.game.shown {
+            Shown::OpenLoad => self.act(Action::Open(Screen::Load)),
+            Shown::OpenSettings => self.act(Action::Open(Screen::Settings)),
+            Shown::Quit if self.can_quit => self.quit = true,
+            Shown::Quit => self.game.proceed(),
+            _ => {}
+        }
         self.renderer.tick(dt);
         self.audio.update();
         self.handle_signals();
@@ -146,6 +256,8 @@ impl Player {
         let input = ViewInput {
             game: &self.game,
             theme: &self.theme,
+            title: &self.title,
+            title_text: &self.title_text,
             size: self.renderer.virtual_size(),
             mouse: self.mouse,
             image: &lookup,
@@ -217,11 +329,21 @@ impl Player {
         match action {
             Action::Choose(i) => self.game.choose(i),
             Action::Back => {
+                if self.game.screen == Screen::Title {
+                    return;
+                }
                 self.game.screen = if self.game.screen == Screen::Menu { Screen::Game } else { self.back_to };
                 self.back_to = Screen::Game;
+                if matches!(self.game.shown, Shown::OpenLoad | Shown::OpenSettings) {
+                    self.game.proceed();
+                }
             }
             Action::Open(screen) => {
-                self.back_to = if self.game.screen == Screen::Menu { Screen::Menu } else { Screen::Game };
+                self.back_to = match self.game.screen {
+                    Screen::Menu => Screen::Menu,
+                    Screen::Title => Screen::Title,
+                    _ => Screen::Game,
+                };
                 self.game.screen = screen;
                 self.backlog_scroll = 0;
                 self.slots = (0..SLOTS).map(|i| self.saves.preview(i)).collect();
@@ -247,6 +369,20 @@ impl Player {
                     Err(e) => self.notify(format!("Could not load: {e}")),
                 }
             }
+            Action::Start => self.start_game(),
+            Action::Continue => {
+                if let Some(slot) = self.saves.newest()
+                    && let Some(bytes) = self.saves.read(slot)
+                {
+                    if let Err(e) = self.game.load(&bytes) {
+                        self.notify(format!("Could not load: {e}"));
+                    } else {
+                        self.game.screen = Screen::Game;
+                        self.notify(format!("Loaded slot {}", slot + 1));
+                    }
+                }
+            }
+            Action::MainMenu => self.show_title(),
             Action::Toggle(mode) => {
                 self.game.toggle(mode);
                 self.game.screen = Screen::Game;
@@ -258,7 +394,13 @@ impl Player {
                 view::adjust(&mut self.game.settings, setting, direction);
                 self.apply_volumes();
             }
-            Action::Restart => self.start(),
+            Action::Language(direction) => {
+                self.game.cycle_language(direction);
+                if let Err(error) = self.saves.set_language(self.game.language()) {
+                    self.notify(format!("Could not save language: {error}"));
+                }
+            }
+            Action::Restart => self.start_game(),
             Action::Quit => self.quit = true,
         }
     }
@@ -272,6 +414,7 @@ impl Player {
         self.audio.set_volume(Bus::Music, s.music);
         self.audio.set_volume(Bus::Sound, s.sound);
         self.audio.set_volume(Bus::Voice, s.voice);
+        self.audio.set_ducking(self.duck, self.duck_fade);
     }
 
     fn handle_signals(&mut self) {
@@ -319,6 +462,10 @@ impl Player {
     fn request_stage_images(&mut self) {
         let stage = self.game.stage();
         let mut names: Vec<String> = stage.background.iter().map(|w| image_name(w)).collect();
+        if self.game.screen == Screen::Title {
+            names.extend(self.title.background.iter().cloned());
+            names.extend(self.title.logo.iter().cloned());
+        }
         for sprite in &stage.sprites {
             let mut words = vec![sprite.tag.clone()];
             words.extend(sprite.attrs.iter().cloned());
@@ -334,40 +481,100 @@ impl Player {
 
     fn receive_assets(&mut self) {
         for loaded in self.assets.poll() {
-            match (loaded.request, loaded.bytes) {
-                (Request::Image(name), Some(bytes)) => {
-                    let info = match decode_image(&bytes, self.renderer.max_texture_size()) {
-                        Ok(image) => {
-                            let size = image.dimensions();
-                            self.renderer.upload_image(&name, size, image.as_raw());
-                            ImageInfo::Ready(size.0, size.1)
-                        }
-                        Err(e) => {
-                            log(&format!("image `{name}`: {e}"));
-                            ImageInfo::Missing
-                        }
-                    };
-                    self.images.insert(name, info);
+            if matches!(&loaded.request, Request::AudioMetadata) {
+                if let Some(bytes) = loaded.bytes {
+                    match std::str::from_utf8(&bytes)
+                        .map_err(|e| e.to_string())
+                        .and_then(|text| parse_audio_metadata(text).map_err(|e| e.to_string()))
+                    {
+                        Ok(metadata) => self.audio_metadata = metadata,
+                        Err(e) => log(&format!("audio/audio.toml: {e}")),
+                    }
                 }
-                (Request::Image(name), None) => {
-                    log(&format!("image `{name}` not found under assets/images"));
-                    self.images.insert(name, ImageInfo::Missing);
-                }
-                (Request::Audio { channel, asset, looped, queue, fadein }, Some(bytes)) => match Sound::decode(bytes) {
-                    Ok(sound) if queue => self.audio.queue(&channel, &asset, sound, looped),
-                    Ok(sound) => self.audio.play(&channel, &asset, sound, looped, fadein),
-                    Err(e) => log(&format!("audio `{asset}`: {e}")),
-                },
-                (Request::Audio { asset, .. }, None) => log(&format!("audio `{asset}` not found under assets/audio")),
-                (Request::Font { dialogue, path }, Some(bytes)) => match self.fonts.load(bytes) {
-                    Some(family) if dialogue => self.dialogue_family = Some(family),
-                    Some(family) => self.interface_family = Some(family),
-                    None => log(&format!("font `{path}` could not be read")),
-                },
-                (Request::Font { path, .. }, None) => log(&format!("font `{path}` not found under assets")),
+                self.audio_metadata_ready = true;
+            } else if matches!(&loaded.request, Request::Audio { .. } | Request::TitleMusic(_))
+                && !self.audio_metadata_ready
+            {
+                self.pending_audio.push(loaded);
+            } else {
+                self.receive_asset(loaded);
+            }
+        }
+        if self.audio_metadata_ready {
+            for loaded in std::mem::take(&mut self.pending_audio) {
+                self.receive_audio(loaded);
             }
         }
     }
+
+    fn receive_asset(&mut self, loaded: Loaded) {
+        if matches!(&loaded.request, Request::Audio { .. } | Request::TitleMusic(_)) {
+            self.receive_audio(loaded);
+            return;
+        }
+        match (loaded.request, loaded.bytes) {
+            (Request::Image(name), Some(bytes)) => {
+                let info = match decode_image(&bytes, self.renderer.max_texture_size()) {
+                    Ok(image) => {
+                        let size = image.dimensions();
+                        self.renderer.upload_image(&name, size, image.as_raw());
+                        ImageInfo::Ready(size.0, size.1)
+                    }
+                    Err(e) => {
+                        log(&format!("image `{name}`: {e}"));
+                        ImageInfo::Missing
+                    }
+                };
+                self.images.insert(name, info);
+            }
+            (Request::Image(name), None) => {
+                log(&format!("image `{name}` not found under assets/images"));
+                self.images.insert(name, ImageInfo::Missing);
+            }
+            (Request::Font { dialogue, path }, Some(bytes)) => match self.fonts.load(bytes) {
+                Some(family) if dialogue => self.dialogue_family = Some(family),
+                Some(family) => self.interface_family = Some(family),
+                None => log(&format!("font `{path}` could not be read")),
+            },
+            (Request::Font { path, .. }, None) => log(&format!("font `{path}` not found under assets")),
+            _ => {}
+        }
+    }
+
+    fn receive_audio(&mut self, loaded: Loaded) {
+        let resolved_path = loaded.resolved_path;
+        let request = match loaded.request {
+            Request::TitleMusic(_) if self.game.screen != Screen::Title => return,
+            Request::TitleMusic(asset) => {
+                Request::Audio { channel: "music".into(), asset, looped: true, queue: false, fadein: None }
+            }
+            request => request,
+        };
+        match (request, loaded.bytes) {
+            (Request::Audio { channel, asset, looped, queue, fadein }, Some(bytes)) => {
+                let loop_region = audio_loop(&self.audio_metadata, resolved_path.as_deref());
+                match Sound::decode(bytes) {
+                    Ok(mut sound) => {
+                        if let Some(region) = loop_region {
+                            sound = sound.with_loop_region(region.loop_start, region.loop_end);
+                        }
+                        if queue {
+                            self.audio.queue(&channel, &asset, sound, looped);
+                        } else {
+                            self.audio.play(&channel, &asset, sound, looped, fadein);
+                        }
+                    }
+                    Err(e) => log(&format!("audio `{asset}`: {e}")),
+                }
+            }
+            (Request::Audio { asset, .. }, None) => log(&format!("audio `{asset}` not found under assets/audio")),
+            _ => {}
+        }
+    }
+}
+
+fn audio_loop(metadata: &AudioMetadata, resolved_path: Option<&str>) -> Option<AudioLoop> {
+    resolved_path.and_then(|path| path.strip_prefix("audio/")).and_then(|path| metadata.get(path)).copied()
 }
 
 fn decode_image(bytes: &[u8], max: u32) -> Result<image::RgbaImage, image::ImageError> {
@@ -380,9 +587,40 @@ fn decode_image(bytes: &[u8], max: u32) -> Result<image::RgbaImage, image::Image
     Ok(image.into_rgba8())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn load_title(project: &Project) -> Result<String, String> {
+    match std::fs::read_to_string(project.root.join("ui/title.toml")) {
+        Ok(text) => Ok(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(e) => Err(format!("ui/title.toml: {e}")),
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn load_title(_: &Project) -> Result<String, String> {
+    Ok(String::new())
+}
+
 pub(crate) fn log(message: &str) {
     #[cfg(target_arch = "wasm32")]
     web_sys::console::warn_1(&message.into());
     #[cfg(not(target_arch = "wasm32"))]
     eprintln!("{message}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn loop_metadata_uses_the_resolved_audio_path_relative_to_audio() {
+        let metadata =
+            [("music/theme.ogg".to_string(), AudioLoop { loop_start: 2.0, loop_end: Some(8.0) })].into_iter().collect();
+        assert_eq!(
+            audio_loop(&metadata, Some("audio/music/theme.ogg")),
+            Some(AudioLoop { loop_start: 2.0, loop_end: Some(8.0) })
+        );
+        assert_eq!(audio_loop(&metadata, Some("audio/theme.ogg")), None);
+        assert_eq!(audio_loop(&metadata, None), None);
+    }
 }

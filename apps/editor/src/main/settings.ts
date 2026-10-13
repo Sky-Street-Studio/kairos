@@ -36,7 +36,7 @@ function sanitize(raw: unknown): Settings {
 export async function getSettings(): Promise<Settings> {
   if (cached) return cached;
   const raw = await readFile(file(), "utf8")
-    .catch(() => readFile(legacyFile(), "utf8"))
+    .catch((err) => (process.env.KAIROS_USER_DATA ? Promise.reject(err) : readFile(legacyFile(), "utf8")))
     .then(JSON.parse, () => ({}));
   cached = sanitize(raw);
   return cached;

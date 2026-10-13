@@ -9,7 +9,10 @@ pub enum SaveStore {
     /// `localStorage` entries under a per-project prefix.
     #[cfg(target_arch = "wasm32")]
     Local(String),
-    Memory(HashMap<usize, (Vec<u8>, String)>),
+    Memory {
+        slots: HashMap<usize, (Vec<u8>, String, u128)>,
+        language: Option<String>,
+    },
 }
 
 impl SaveStore {
@@ -18,7 +21,7 @@ impl SaveStore {
     pub fn for_project(name: &str) -> SaveStore {
         match directories::ProjectDirs::from("", "", "Kairos") {
             Some(dirs) => SaveStore::Dir(dirs.data_dir().join("saves").join(sanitize(name))),
-            None => SaveStore::Memory(HashMap::new()),
+            None => SaveStore::Memory { slots: HashMap::new(), language: None },
         }
     }
 
@@ -39,11 +42,16 @@ impl SaveStore {
             SaveStore::Local(prefix) => {
                 let storage = local_storage().ok_or("localStorage is unavailable")?;
                 let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-                storage.set_item(&format!("{prefix}{slot}"), &hex).map_err(|_| "storage is full")?;
-                storage.set_item(&format!("{prefix}{slot}:preview"), preview).map_err(|_| "storage is full".into())
+                storage.set_item(&format!("{prefix}{slot}"), &hex).map_err(|_| "storage is full".to_string())?;
+                storage
+                    .set_item(&format!("{prefix}{slot}:preview"), preview)
+                    .map_err(|_| "storage is full".to_string())?;
+                storage
+                    .set_item(&format!("{prefix}{slot}:saved_at"), &timestamp().to_string())
+                    .map_err(|_| "storage is full".into())
             }
-            SaveStore::Memory(slots) => {
-                slots.insert(slot, (bytes.to_vec(), preview.to_string()));
+            SaveStore::Memory { slots, .. } => {
+                slots.insert(slot, (bytes.to_vec(), preview.to_string(), timestamp()));
                 Ok(())
             }
         }
@@ -58,7 +66,75 @@ impl SaveStore {
                 let hex = local_storage()?.get_item(&format!("{prefix}{slot}")).ok()??;
                 (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(hex.get(i..i + 2)?, 16).ok()).collect()
             }
-            SaveStore::Memory(slots) => slots.get(&slot).map(|s| s.0.clone()),
+            SaveStore::Memory { slots, .. } => slots.get(&slot).map(|s| s.0.clone()),
+        }
+    }
+
+    pub fn language(&self) -> Option<String> {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            SaveStore::Dir(dir) => std::fs::read_to_string(dir.join("language.txt")).ok(),
+            #[cfg(target_arch = "wasm32")]
+            SaveStore::Local(prefix) => local_storage()?.get_item(&format!("{prefix}language")).ok()?,
+            SaveStore::Memory { language, .. } => language.clone(),
+        }
+    }
+
+    pub fn set_language(&mut self, language: &str) -> Result<(), String> {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            SaveStore::Dir(dir) => {
+                std::fs::create_dir_all(&*dir).map_err(|e| e.to_string())?;
+                std::fs::write(dir.join("language.txt"), language).map_err(|e| e.to_string())
+            }
+            #[cfg(target_arch = "wasm32")]
+            SaveStore::Local(prefix) => local_storage()
+                .ok_or("localStorage is unavailable")?
+                .set_item(&format!("{prefix}language"), language)
+                .map_err(|_| "storage is full".into()),
+            SaveStore::Memory { language: saved, .. } => {
+                *saved = Some(language.to_string());
+                Ok(())
+            }
+        }
+    }
+
+    pub fn newest(&self) -> Option<usize> {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            SaveStore::Dir(dir) => std::fs::read_dir(dir)
+                .ok()?
+                .filter_map(Result::ok)
+                .filter_map(|entry| {
+                    let name = entry.file_name();
+                    let name = name.to_str()?;
+                    let slot = name.strip_prefix("slot-")?.strip_suffix(".ksav")?.parse::<usize>().ok()?;
+                    let modified =
+                        entry.metadata().ok()?.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?;
+                    Some((slot, modified))
+                })
+                .max_by_key(|(_, modified)| *modified)
+                .map(|(slot, _)| slot),
+            #[cfg(target_arch = "wasm32")]
+            SaveStore::Local(prefix) => {
+                let storage = local_storage()?;
+                (0..crate::view::SLOTS)
+                    .filter_map(|slot| {
+                        storage.get_item(&format!("{prefix}{slot}")).ok()??;
+                        let saved_at = storage
+                            .get_item(&format!("{prefix}{slot}:saved_at"))
+                            .ok()
+                            .flatten()
+                            .and_then(|value| value.parse::<u128>().ok())
+                            .unwrap_or(slot as u128);
+                        Some((slot, saved_at))
+                    })
+                    .max_by_key(|(_, saved_at)| *saved_at)
+                    .map(|(slot, _)| slot)
+            }
+            SaveStore::Memory { slots, .. } => {
+                slots.iter().max_by_key(|(_, (_, _, timestamp))| timestamp).map(|(slot, _)| *slot)
+            }
         }
     }
 
@@ -75,9 +151,19 @@ impl SaveStore {
                 storage.get_item(&format!("{prefix}{slot}")).ok()??;
                 Some(storage.get_item(&format!("{prefix}{slot}:preview")).ok().flatten().unwrap_or_default())
             }
-            SaveStore::Memory(slots) => slots.get(&slot).map(|s| s.1.clone()),
+            SaveStore::Memory { slots, .. } => slots.get(&slot).map(|s| s.1.clone()),
         }
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn timestamp() -> u128 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn timestamp() -> u128 {
+    (js_sys::Date::now() * 1_000_000.0) as u128
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -95,10 +181,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn language_preference_is_separate_from_save_slots() {
+        let mut store = SaveStore::Memory { slots: HashMap::new(), language: None };
+        store.write(0, b"save", "preview").unwrap();
+        assert_eq!(store.language(), None);
+        store.set_language("ja").unwrap();
+        assert_eq!(store.language().as_deref(), Some("ja"));
+        assert_eq!(store.read(0).as_deref(), Some(&b"save"[..]));
+    }
+
+    #[test]
     fn project_names_become_safe_directory_names() {
         assert_eq!(sanitize("Hello Kairos"), "Hello_Kairos");
         assert_eq!(sanitize("../x"), "___x");
         assert_eq!(sanitize(""), "untitled");
+    }
+
+    #[test]
+    fn newest_memory_slot_tracks_write_order() {
+        let mut store = SaveStore::Memory { slots: HashMap::new(), language: None };
+        store.write(4, b"first", "first").unwrap();
+        store.write(1, b"newest", "newest").unwrap();
+        assert_eq!(store.newest(), Some(1));
     }
 
     #[test]
@@ -110,6 +214,10 @@ mod tests {
         assert_eq!(store.read(0).as_deref(), Some(&b"KSAVdata"[..]));
         assert_eq!(store.preview(0).as_deref(), Some("Eileen: Hi."));
         assert_eq!(store.read(1), None);
+        store.set_language("ja").unwrap();
+        let loaded = SaveStore::Dir(dir.clone());
+        assert_eq!(loaded.language().as_deref(), Some("ja"));
+        assert_eq!(loaded.read(0).as_deref(), Some(&b"KSAVdata"[..]));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

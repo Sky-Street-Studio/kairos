@@ -51,14 +51,18 @@ export interface StoryGraph {
 export interface Manifest {
   name: string;
   start: string;
+  window?: { width: number; height: number };
 }
 
 export type AssetKind = "image" | "audio" | "other";
+export type AssetCategory = "background" | "sprite" | "ui" | "music" | "sound" | "voice" | "other";
 
 export interface AssetEntry {
   /** Project-relative, always starting with `assets/`. */
   path: string;
   kind: AssetKind;
+  category: AssetCategory;
+  characterId?: string;
   /** What a script writes to use the asset: `bg room` for images, `theme.ogg` for audio. */
   name: string;
 }
@@ -70,6 +74,19 @@ export interface TreeNode {
   children?: TreeNode[];
 }
 
+export interface SpriteLayerConfig {
+  order: string[];
+  defaults: Record<string, string>;
+  groups: Record<string, string[]>;
+}
+
+export interface TranslationFile {
+  lang: string;
+  source: string;
+}
+
+export type ExportTarget = "web" | "desktop";
+
 export interface ProjectSnapshot {
   root: string;
   manifest: Manifest;
@@ -77,9 +94,14 @@ export interface ProjectSnapshot {
   manifestSource: string;
   /** Raw `ui/theme.toml`, if present. */
   uiTheme: string | null;
+  /** Raw `ui/title.toml`, if present. */
+  uiTitle: string | null;
   scripts: SourceFile[];
+  translations: TranslationFile[];
   tree: TreeNode[];
   assets: AssetEntry[];
+  audioMetadata?: Record<string, { loopStart?: number; loopEnd?: number }>;
+  spriteLayers?: Record<string, SpriteLayerConfig>;
 }
 
 export interface CharacterFields {
@@ -146,8 +168,12 @@ export interface KairosApi {
     open(root: string): Promise<ProjectSnapshot>;
     reload(): Promise<ProjectSnapshot | null>;
     writeFile(path: string, content: string): Promise<void>;
+    importAsset(sourcePath: string | null, folder: string, convertWebp?: boolean): Promise<string | null>;
+    renameAsset(path: string, name: string): Promise<void>;
     applyEdit(edit: ProjectEdit): Promise<EditResult>;
     createFromTemplate(): Promise<string | null>;
+    pickExportFolder(): Promise<string | null>;
+    export(target: ExportTarget, output: string): Promise<string>;
   };
   analysis: {
     analyze(files: SourceFile[]): Promise<Analysis>;

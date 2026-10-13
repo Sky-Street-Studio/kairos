@@ -106,7 +106,7 @@ export function stagePosition(xFraction: number): StagePosition {
 /** The statement a dropped asset turns into, or `null` for assets scripts cannot reference. */
 export function statementForAsset(asset: AssetEntry, xFraction: number): string | null {
   if (asset.kind === "image") {
-    return asset.name.split(/\s+/)[0] === "bg"
+    return asset.category === "background" || asset.name.split(/\s+/)[0] === "bg"
       ? `scene ${asset.name}`
       : `show ${asset.name} at ${stagePosition(xFraction)}`;
   }

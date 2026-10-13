@@ -5,7 +5,7 @@ use kairos_render::layout::{cover_rect, sprite_rect, xalign};
 use kairos_render::{Color, Draw, Fonts, Frame, Layer, Rect, TextAlign, TextSpec};
 
 use crate::game::{Game, Mode, Screen, Settings, Shown};
-use crate::theme::Theme;
+use crate::theme::{Theme, Title, TitleButton};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Setting {
@@ -26,7 +26,11 @@ pub enum Action {
     Toggle(Mode),
     Rollback,
     Adjust(Setting, i8),
+    Language(i8),
     Restart,
+    Start,
+    Continue,
+    MainMenu,
     Quit,
 }
 
@@ -48,6 +52,8 @@ pub const SLOTS: usize = 6;
 pub struct ViewInput<'a> {
     pub game: &'a Game,
     pub theme: &'a Theme,
+    pub title: &'a Title,
+    pub title_text: &'a str,
     pub size: (f32, f32),
     pub mouse: (f32, f32),
     pub image: &'a dyn Fn(&str) -> ImageInfo,
@@ -113,7 +119,18 @@ impl Builder<'_, '_> {
         let (w, h) = self.size();
         let stage = self.input.game.stage();
         let mut layer = Vec::new();
-        if let Some(words) = &stage.background {
+        if self.input.game.screen == Screen::Title {
+            if let Some(name) = &self.input.title.background {
+                match (self.input.image)(name) {
+                    ImageInfo::Ready(iw, ih) => {
+                        let rect = cover_rect((iw as f32, ih as f32), (w, h));
+                        layer.push(Draw::Image { name: name.clone(), rect, opacity: 1.0 });
+                    }
+                    ImageInfo::Missing => {}
+                    ImageInfo::Loading => {}
+                }
+            }
+        } else if let Some(words) = &stage.background {
             let name = image_name(words);
             match (self.input.image)(&name) {
                 ImageInfo::Ready(iw, ih) => {
@@ -134,7 +151,7 @@ impl Builder<'_, '_> {
                 ImageInfo::Loading => {}
             }
         }
-        for sprite in &stage.sprites {
+        for sprite in stage.sprites.iter().filter(|_| self.input.game.screen != Screen::Title) {
             let mut words = vec![sprite.tag.clone()];
             words.extend(sprite.attrs.iter().cloned());
             let name = image_name(&words);
@@ -183,7 +200,7 @@ impl Builder<'_, '_> {
                 self.choices(&mut layer, choices, bottom);
                 self.quick_menu(&mut layer);
             }
-            Shown::Pause { .. } | Shown::Nothing => {}
+            Shown::Pause { .. } | Shown::OpenLoad | Shown::OpenSettings | Shown::Quit | Shown::Nothing => {}
             Shown::End => {
                 let title = Rect::new(0.0, h * 0.36, w, 60.0);
                 layer.push(self.ui_text("The End", title, 44.0, theme.menu.text_color.0, TextAlign::Center));
@@ -285,6 +302,7 @@ impl Builder<'_, '_> {
             let active = match action {
                 Action::Toggle(m) => self.input.game.mode == m,
                 Action::Rollback => self.input.game.can_rollback(),
+                Action::Open(Screen::Save) => self.input.game.save().is_some(),
                 _ => true,
             };
             let hovered = r.contains(self.input.mouse.0, self.input.mouse.1);
@@ -295,7 +313,9 @@ impl Builder<'_, '_> {
                 (_, true, false) => gray(0.7),
             };
             layer.push(self.ui_text(label, r, 17.0, color, TextAlign::Center));
-            self.hotspots.push(Hotspot { rect: r, action });
+            if active || action != Action::Open(Screen::Save) {
+                self.hotspots.push(Hotspot { rect: r, action });
+            }
             x += item_w;
         }
     }
@@ -322,12 +342,16 @@ impl Builder<'_, '_> {
     fn overlay(&mut self) -> Layer {
         let theme = self.input.theme;
         let (w, h) = self.size();
+        let screen = self.input.game.screen;
+        if screen == Screen::Title {
+            return self.title_screen();
+        }
         let mut layer = Vec::new();
         let (top, bottom) = theme.menu.fill();
         layer.push(Draw::Fill { rect: Rect::new(0.0, 0.0, w, h), top, bottom, radius: 0.0 });
-        let screen = self.input.game.screen;
         let title = match screen {
             Screen::Menu | Screen::Game => "Menu",
+            Screen::Title => unreachable!(),
             Screen::Save => "Save",
             Screen::Load => "Load",
             Screen::Backlog => "History",
@@ -341,6 +365,7 @@ impl Builder<'_, '_> {
         layer.push(title);
         match screen {
             Screen::Menu | Screen::Game => self.main_menu(&mut layer),
+            Screen::Title => unreachable!(),
             Screen::Save | Screen::Load => self.slots(&mut layer, screen == Screen::Save),
             Screen::Backlog => self.backlog(&mut layer),
             Screen::Settings => self.settings(&mut layer),
@@ -348,6 +373,56 @@ impl Builder<'_, '_> {
         if screen != Screen::Menu {
             let rect = Rect::new((w - 240.0) / 2.0, h - 88.0, 240.0, 52.0);
             self.button(&mut layer, rect, "Back", Action::Back, true);
+        }
+        layer
+    }
+
+    fn title_screen(&mut self) -> Layer {
+        let (w, h) = self.size();
+        let menu = &self.input.theme.menu;
+        let (top, bottom) = menu.fill();
+        let mut layer = vec![Draw::Fill { rect: Rect::new(0.0, 0.0, w, h), top, bottom, radius: 0.0 }];
+        let logo =
+            self.input.title.logo.as_ref().filter(|logo| matches!((self.input.image)(logo), ImageInfo::Ready(_, _)));
+        if let Some(logo) = logo {
+            if let ImageInfo::Ready(iw, ih) = (self.input.image)(logo) {
+                let height = 170.0;
+                let width = (height * iw as f32 / ih as f32).min(w * 0.8);
+                let rect = Rect::new((w - width) / 2.0, h * 0.12, width, height);
+                layer.push(Draw::Image { name: logo.clone(), rect, opacity: 1.0 });
+            }
+        } else {
+            let rect = Rect::new(0.0, h * 0.18, w, 64.0);
+            let mut title = self.ui_text(self.input.title_text, rect, 48.0, menu.accent.0, TextAlign::Center);
+            if let Draw::Text(spec) = &mut title {
+                spec.bold = true;
+            }
+            layer.push(title);
+        }
+        let visible: Vec<_> = self
+            .input
+            .title
+            .buttons
+            .iter()
+            .filter_map(|button| match button {
+                TitleButton::Start => Some(("Start", Action::Start)),
+                TitleButton::Continue if self.input.slots.iter().any(Option::is_some) => {
+                    Some(("Continue", Action::Continue))
+                }
+                TitleButton::Continue => None,
+                TitleButton::Load => Some(("Load", Action::Open(Screen::Load))),
+                TitleButton::Settings => Some(("Settings", Action::Open(Screen::Settings))),
+                TitleButton::Quit if self.input.can_quit => Some(("Quit", Action::Quit)),
+                TitleButton::Quit => None,
+            })
+            .collect();
+        let bh = 48.0;
+        let gap = 10.0;
+        let mut y = (h * 0.48).max(220.0);
+        for (label, action) in visible {
+            let rect = Rect::new((w - 320.0) / 2.0, y, 320.0, bh);
+            self.button(&mut layer, rect, label, action, true);
+            y += bh + gap;
         }
         layer
     }
@@ -363,6 +438,7 @@ impl Builder<'_, '_> {
             ("Load", Action::Open(Screen::Load)),
             ("History", Action::Open(Screen::Backlog)),
             ("Settings", Action::Open(Screen::Settings)),
+            ("Main menu", Action::MainMenu),
             (auto, Action::Toggle(Mode::Auto)),
             (skip, Action::Toggle(Mode::Skip)),
             ("Restart", Action::Restart),
@@ -455,6 +531,17 @@ impl Builder<'_, '_> {
             self.button(layer, Rect::new(left + 568.0, y, 52.0, 52.0), "+", Action::Adjust(setting, 1), true);
             y += 72.0;
         }
+        let row = Rect::new(left, y, 300.0, 52.0);
+        layer.push(self.ui_text("Language", row, 26.0, theme.menu.text_color.0, TextAlign::Center));
+        self.button(layer, Rect::new(left + 320.0, y, 52.0, 52.0), "-", Action::Language(-1), true);
+        layer.push(self.ui_text(
+            self.input.game.language_label(),
+            Rect::new(left + 380.0, y, 180.0, 52.0),
+            24.0,
+            theme.menu.accent.0,
+            TextAlign::Center,
+        ));
+        self.button(layer, Rect::new(left + 568.0, y, 52.0, 52.0), "+", Action::Language(1), true);
     }
 
     fn notice(&mut self, notice: &str) -> Layer {
@@ -534,10 +621,13 @@ mod tests {
 
     fn view(game: &Game, mouse: (f32, f32)) -> (Frame, Vec<Hotspot>) {
         let theme = Theme::default();
+        let title = Title::default();
         let slots = [None, Some("Eileen: Hello.".to_string()), None, None, None, None];
         let input = ViewInput {
             game,
             theme: &theme,
+            title: &title,
+            title_text: "Test",
             size: (1280.0, 720.0),
             mouse,
             image: &images,
@@ -643,6 +733,61 @@ mod tests {
         let loads: Vec<Action> = hotspots.iter().map(|h| h.action).filter(|a| matches!(a, Action::Load(_))).collect();
         assert_eq!(loads, [Action::Load(1)], "only filled slots can be loaded");
         assert!(hotspots.iter().any(|h| h.action == Action::Back));
+    }
+
+    #[test]
+    fn title_screen_shows_start_and_continue_only_when_saves_exist() {
+        let mut started_game = game();
+        started_game.screen = Screen::Title;
+        let (_, hotspots) = view(&started_game, (0.0, 0.0));
+        assert!(hotspots.iter().any(|h| h.action == Action::Start));
+        assert!(hotspots.iter().any(|h| h.action == Action::Continue));
+
+        let mut empty_game = game();
+        empty_game.screen = Screen::Title;
+        let theme = Theme::default();
+        let title = Title { buttons: vec![TitleButton::Start, TitleButton::Continue], ..Title::default() };
+        let slots: [Option<String>; SLOTS] = std::array::from_fn(|_| None);
+        let input = ViewInput {
+            game: &empty_game,
+            theme: &theme,
+            title: &title,
+            title_text: "Test",
+            size: (1280.0, 720.0),
+            mouse: (0.0, 0.0),
+            image: &images,
+            slots: &slots,
+            backlog_scroll: 0,
+            dialogue_family: None,
+            interface_family: None,
+            can_quit: false,
+            notice: None,
+        };
+        let (_, hotspots) = build(&input, &mut Fonts::new());
+        assert!(!hotspots.iter().any(|h| h.action == Action::Continue));
+    }
+
+    #[test]
+    fn quick_menu_save_is_inert_while_saving_is_disabled() {
+        let sources = [(PathBuf::from("script/a.kai"), "label splashscreen:\n    \"Splash\"\n".to_string())];
+        let project = kairos_project::Project::from_sources("name = \"t\"", sources).unwrap();
+        let mut splash = Game::new(project.program).unwrap();
+        splash.start("splashscreen");
+        let (_, hotspots) = view(&splash, (0.0, 0.0));
+        assert!(!hotspots.iter().any(|h| h.action == Action::Open(Screen::Save)));
+        let (_, hotspots) = view(&game(), (0.0, 0.0));
+        assert!(hotspots.iter().any(|h| h.action == Action::Open(Screen::Save)));
+    }
+
+    #[test]
+    fn settings_lists_source_language_and_language_controls() {
+        let mut game = game();
+        game.screen = Screen::Settings;
+        let (frame, hotspots) = view(&game, (0.0, 0.0));
+        assert!(texts(&frame.ui[1]).contains(&"Language"));
+        assert!(texts(&frame.ui[1]).contains(&"Source"));
+        assert!(hotspots.iter().any(|hotspot| hotspot.action == Action::Language(-1)));
+        assert!(hotspots.iter().any(|hotspot| hotspot.action == Action::Language(1)));
     }
 
     #[test]

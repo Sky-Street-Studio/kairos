@@ -99,6 +99,10 @@ describe("stage composer", () => {
 
   it("turns bg images into scenes and others into shows by drop position", () => {
     expect(statementForAsset(image("bg room"), 0.9)).toBe("scene bg room");
+    expect(statementForAsset(classifyAsset("assets/images/bg/room.png"), 0.9)).toBe("scene room");
+    expect(statementForAsset(classifyAsset("assets/images/sprites/e/face/happy.png"), 0.1)).toBe(
+      "show e happy at left",
+    );
     expect(statementForAsset(image("e happy"), 0.1)).toBe("show e happy at left");
     expect(statementForAsset(image("e happy"), 0.5)).toBe("show e happy at center");
     expect(statementForAsset(image("e happy"), 0.8)).toBe("show e happy at right");
@@ -128,6 +132,7 @@ describe("assets", () => {
     expect(classifyAsset("assets/images/bg room.webp")).toEqual({
       path: "assets/images/bg room.webp",
       kind: "image",
+      category: "background",
       name: "bg room",
     });
     expect(classifyAsset("assets/audio/sfx/door.ogg").name).toBe("sfx/door.ogg");

@@ -1,12 +1,21 @@
 import { readFile, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 
 import { BrowserWindow, Menu, app, dialog, ipcMain, shell, type MenuItemConstructorOptions } from "electron";
 
 import type { ProjectEdit, Settings, SourceFile, TerminalSpawn } from "@shared/types";
 
 import { analyze } from "./analysis";
-import { applyEdit, createFromTemplate, loadProject, projectRoot, writeProjectFile } from "./project";
+import { chooseExportFolder, exportProject } from "./export";
+import {
+  applyEdit,
+  createFromTemplate,
+  importProjectAsset,
+  loadProject,
+  projectRoot,
+  renameProjectAsset,
+  writeProjectFile,
+} from "./project";
 import { handleProtocols, playerStatus, registerSchemes } from "./protocols";
 import { getSettings, rememberProject, updateSettings } from "./settings";
 import { agents, killAllTerminals, killTerminal, resizeTerminal, spawnTerminal, writeTerminal } from "./terminal";
@@ -73,6 +82,60 @@ function registerIpc(): void {
     return root ? loadProject(root) : null;
   });
   ipcMain.handle("project:write", (_e, path: string, content: string) => writeProjectFile(path, content));
+  ipcMain.handle("project:asset-import", async (e, sourcePath: string | null, folder: string, convertWebp: boolean) => {
+    let source = sourcePath;
+    if (!source) {
+      const audio = folder.startsWith("assets/audio/");
+      const result = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender)!, {
+        title: "Import asset",
+        properties: ["openFile"],
+        filters:
+          folder === "assets"
+            ? undefined
+            : [
+                {
+                  name: audio ? "Audio" : "Images",
+                  extensions: audio ? ["ogg", "mp3", "wav", "flac"] : ["png", "jpg", "jpeg", "webp"],
+                },
+              ],
+      });
+      if (result.canceled || result.filePaths.length === 0) return null;
+      const imported: string[] = [];
+      for (const filePath of result.filePaths) {
+        const attempt = await importProjectAsset(filePath, folder, convertWebp, false);
+        if (attempt.warning) {
+          const answer = await dialog.showMessageBox(BrowserWindow.fromWebContents(e.sender)!, {
+            type: "warning",
+            buttons: ["Import", "Cancel"],
+            defaultId: 0,
+            cancelId: 1,
+            message: `${basename(filePath)} is ${attempt.warning.width} × ${attempt.warning.height}px.`,
+            detail: `This exceeds twice the manifest window size (${attempt.warning.maxWidth} × ${attempt.warning.maxHeight}px). Import anyway?`,
+          });
+          if (answer.response !== 0) continue;
+          const approved = await importProjectAsset(filePath, folder, convertWebp, true);
+          if (approved.path) imported.push(approved.path);
+        } else if (attempt.path) imported.push(attempt.path);
+      }
+      return imported.length ? imported[0] : null;
+    }
+    const attempt = await importProjectAsset(source, folder, convertWebp, false);
+    if (attempt.warning) {
+      const answer = await dialog.showMessageBox(BrowserWindow.fromWebContents(e.sender)!, {
+        type: "warning",
+        buttons: ["Import", "Cancel"],
+        defaultId: 0,
+        cancelId: 1,
+        message: `${basename(source)} is ${attempt.warning.width} × ${attempt.warning.height}px.`,
+        detail: `This exceeds twice the manifest window size (${attempt.warning.maxWidth} × ${attempt.warning.maxHeight}px). Import anyway?`,
+      });
+      if (answer.response !== 0) return null;
+      const approved = await importProjectAsset(source, folder, convertWebp, true);
+      return approved.path ?? null;
+    }
+    return attempt.path ?? null;
+  });
+  ipcMain.handle("project:asset-rename", (_e, path: string, name: string) => renameProjectAsset(path, name));
   ipcMain.handle("project:edit", (_e, edit: ProjectEdit) => applyEdit(edit));
   ipcMain.handle("project:create", async (e) => {
     const win = BrowserWindow.fromWebContents(e.sender)!;
@@ -87,6 +150,8 @@ function registerIpc(): void {
 
   ipcMain.handle("analysis:analyze", (_e, files: SourceFile[]) => analyze(files));
   ipcMain.handle("player:status", () => playerStatus());
+  ipcMain.handle("export:pick-folder", (e) => chooseExportFolder(e.sender));
+  ipcMain.handle("project:export", (_e, target: "web" | "desktop", output: string) => exportProject(target, output));
 
   ipcMain.handle("terminal:agents", () => agents());
   ipcMain.handle("terminal:spawn", (e, opts: TerminalSpawn) => spawnTerminal(e.sender, opts));

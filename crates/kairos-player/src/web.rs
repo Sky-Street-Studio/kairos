@@ -4,9 +4,10 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use kairos_project::Project;
+use kairos_project::{PlayerProjectJson, Project};
 use kairos_render::Renderer;
-use serde::Deserialize;
+use kairos_vm::Value;
+use serde::Serialize;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use web_sys::{HtmlCanvasElement, KeyboardEvent, MouseEvent, WheelEvent};
@@ -17,31 +18,35 @@ use crate::player::{Button, Key, Player};
 use crate::saves::SaveStore;
 use crate::theme::Theme;
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ProjectJson {
-    manifest: String,
-    scripts: Vec<ScriptJson>,
-    asset_base_url: String,
-    /// Contents of `ui/theme.toml`, if the project has one.
-    #[serde(default)]
-    theme: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct ScriptJson {
-    path: String,
-    source: String,
-}
-
 struct Loaded {
     project: Project,
     theme: Theme,
+    title: Option<String>,
     asset_base_url: String,
+    assets: Vec<String>,
 }
 
 type Handler = Box<dyn Fn(&mut Inner, web_sys::Event)>;
 type Listener = (&'static str, Closure<dyn FnMut(web_sys::Event)>);
+
+#[derive(Serialize)]
+struct DebugLocation {
+    label: String,
+    path: String,
+    line: usize,
+}
+
+#[derive(Serialize)]
+struct DebugState {
+    label: String,
+    path: String,
+    line: usize,
+    variables: std::collections::BTreeMap<String, serde_json::Value>,
+    #[serde(rename = "callStack")]
+    call_stack: Vec<DebugLocation>,
+    history: usize,
+    position: usize,
+}
 
 struct Inner {
     canvas: HtmlCanvasElement,
@@ -54,6 +59,8 @@ struct Inner {
     last_time: Option<f64>,
     wheel: f64,
     destroyed: bool,
+    debug_callback: Option<js_sys::Function>,
+    last_debug_state: Option<String>,
 }
 
 #[wasm_bindgen]
@@ -82,6 +89,8 @@ impl WebPlayer {
             last_time: None,
             wheel: 0.0,
             destroyed: false,
+            debug_callback: None,
+            last_debug_state: None,
         }));
         listen(&inner);
         WebPlayer { inner }
@@ -115,16 +124,28 @@ impl WebPlayer {
     }
 
     /// Compiles a project. Throws an `Error` with one `path:line: message` line per diagnostic.
-    pub fn load(&self, project_json: &str) -> Result<(), JsError> {
-        let json: ProjectJson = serde_json::from_str(project_json).map_err(|e| error(format!("project json: {e}")))?;
+    pub fn load(&self, project_json: &str, on_debug: Option<js_sys::Function>) -> Result<(), JsError> {
+        let json: PlayerProjectJson =
+            serde_json::from_str(project_json).map_err(|e| error(format!("project json: {e}")))?;
         let sources = json.scripts.into_iter().map(|s| (PathBuf::from(s.path), s.source));
-        let project = Project::from_sources(&json.manifest, sources).map_err(|e| error(e.to_string()))?;
+        let mut project = Project::from_sources(&json.manifest, sources).map_err(|e| error(e.to_string()))?;
+        for translation in json.translations {
+            project.set_translation(&translation.lang, &translation.source).map_err(|e| error(e.to_string()))?;
+        }
         if !project.diagnostics.is_empty() {
             return Err(error(project.diagnostics_report().trim_end()));
         }
         let theme = Theme::parse(json.theme.as_deref().unwrap_or_default()).map_err(error)?;
         let mut inner = self.inner.borrow_mut();
-        inner.loaded = Some(Loaded { project, theme, asset_base_url: json.asset_base_url });
+        inner.debug_callback = on_debug;
+        inner.last_debug_state = None;
+        inner.loaded = Some(Loaded {
+            project,
+            theme,
+            title: json.title,
+            asset_base_url: json.asset_base_url,
+            assets: json.assets,
+        });
         inner.build_player().map_err(error)
     }
 
@@ -133,12 +154,13 @@ impl WebPlayer {
         let mut inner = self.inner.borrow_mut();
         let player = inner.player.as_mut().ok_or_else(|| error("call ready() and load() before start()"))?;
         player.start();
+        inner.last_debug_state = None;
         Ok(())
     }
 
     /// Plays from the first statement at or after `line` (1-based) in the script at `path`.
     #[wasm_bindgen(js_name = playFromLine)]
-    pub fn play_from_line(&self, path: &str, line: u32) -> Result<(), JsError> {
+    pub fn play_from_line(&self, path: &str, line: u32, overrides_json: Option<String>) -> Result<(), JsError> {
         let mut inner = self.inner.borrow_mut();
         let pc = {
             let loaded = inner.loaded.as_ref().ok_or_else(|| error("call load() before playFromLine()"))?;
@@ -147,8 +169,48 @@ impl WebPlayer {
                 .pc_at(Path::new(path), line as usize)
                 .ok_or_else(|| error(format!("{path}:{line}: no statement at or after this line")))?
         };
+        let overrides = overrides_json
+            .map(|json| serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&json))
+            .transpose()
+            .map_err(|e| error(format!("overrides json: {e}")))?
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(name, value)| Ok((name.clone(), from_json(value, &name)?)))
+            .collect::<Result<std::collections::BTreeMap<_, _>, JsError>>()?;
         let player = inner.player.as_mut().ok_or_else(|| error("call ready() before playFromLine()"))?;
-        player.start_at(pc);
+        player.debug_start_at(pc, &overrides).map_err(|e| error(e.to_string()))?;
+        inner.last_debug_state = None;
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = debugState)]
+    pub fn debug_state(&self) -> Result<String, JsError> {
+        debug_state(&self.inner.borrow())
+    }
+
+    #[wasm_bindgen(js_name = setVariable)]
+    pub fn set_variable(&self, name: &str, json: &str) -> Result<(), JsError> {
+        let value =
+            from_json(serde_json::from_str(json).map_err(|e| error(format!("variable `{name}` json: {e}")))?, name)?;
+        let mut inner = self.inner.borrow_mut();
+        inner
+            .player
+            .as_mut()
+            .ok_or_else(|| error("call ready() and load() before setVariable()"))?
+            .debug_set_variable(name, value)
+            .map_err(|e| error(e.to_string()))?;
+        inner.last_debug_state = None;
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = rollbackTo)]
+    pub fn rollback_to(&self, position: u32) -> Result<(), JsError> {
+        let mut inner = self.inner.borrow_mut();
+        let player = inner.player.as_mut().ok_or_else(|| error("call ready() and load() before rollbackTo()"))?;
+        if !player.debug_rollback_to(position as usize) {
+            return Err(error(format!("history position {position} is not earlier than the current position")));
+        }
+        inner.last_debug_state = None;
         Ok(())
     }
 
@@ -183,6 +245,62 @@ impl WebPlayer {
     }
 }
 
+fn from_json(value: serde_json::Value, name: &str) -> Result<Value, JsError> {
+    match value {
+        serde_json::Value::Null => Ok(Value::None),
+        serde_json::Value::Bool(value) => Ok(Value::Bool(value)),
+        serde_json::Value::Number(value) => value
+            .as_i64()
+            .map(Value::Int)
+            .or_else(|| value.as_f64().map(Value::Float))
+            .ok_or_else(|| error(format!("variable `{name}` number is out of range"))),
+        serde_json::Value::String(value) => Ok(Value::Str(value)),
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+            Err(error(format!("variable `{name}` does not support arrays or objects")))
+        }
+    }
+}
+
+fn to_json(value: &Value) -> serde_json::Value {
+    match value {
+        Value::None => serde_json::Value::Null,
+        Value::Bool(value) => (*value).into(),
+        Value::Int(value) => (*value).into(),
+        Value::Float(value) => {
+            serde_json::Number::from_f64(*value).map(serde_json::Value::Number).unwrap_or(serde_json::Value::Null)
+        }
+        Value::Str(value) => value.clone().into(),
+    }
+}
+
+fn debug_state(inner: &Inner) -> Result<String, JsError> {
+    let loaded = inner.loaded.as_ref().ok_or_else(|| error("call load() before debugState()"))?;
+    let player = inner.player.as_ref().ok_or_else(|| error("call ready() before debugState()"))?;
+    let program = &loaded.project.program;
+    let location = |pc: usize| {
+        let file = program.files.get(pc).and_then(|index| loaded.project.files.get(*index));
+        DebugLocation {
+            label: program.label_at(pc).unwrap_or_default().to_string(),
+            path: file.map(|path| path.to_string_lossy().into_owned()).unwrap_or_default(),
+            line: program.lines.get(pc).copied().unwrap_or_default(),
+        }
+    };
+    let current = location(player.debug_pc());
+    let mut call_stack: Vec<_> = player.debug_call_stack().iter().rev().map(|pc| location(*pc)).collect();
+    call_stack.push(DebugLocation { label: current.label.clone(), path: current.path.clone(), line: current.line });
+    let history = player.debug_history_len();
+    serde_json::to_string(&DebugState {
+        label: current.label,
+        path: current.path,
+        line: current.line,
+        variables: player.debug_variables().iter().map(|(name, value)| (name.clone(), to_json(value))).collect(),
+        call_stack,
+        history,
+        position: history.saturating_sub(1),
+    })
+    .map_err(|e| error(format!("debug state: {e}")))
+}
+
 impl Inner {
     fn build_player(&mut self) -> Result<(), String> {
         let (Some(gpu), Some(loaded)) = (&self.gpu, &self.loaded) else { return Ok(()) };
@@ -194,9 +312,13 @@ impl Inner {
             (window.width, window.height),
             gpu.size(),
         );
-        let assets = Assets::url(loaded.asset_base_url.clone());
+        let assets = Assets::url(loaded.asset_base_url.clone(), loaded.assets.clone());
         let saves = SaveStore::for_project(&loaded.project.manifest.name);
-        self.player = Some(Player::new(renderer, &loaded.project, loaded.theme.clone(), assets, saves, false)?);
+        let mut player = Player::new(renderer, &loaded.project, loaded.theme.clone(), assets, saves, false)?;
+        if let Some(title) = &loaded.title {
+            player.set_title(title)?;
+        }
+        self.player = Some(player);
         Ok(())
     }
 
@@ -218,7 +340,7 @@ fn schedule_frame(inner: &Rc<RefCell<Inner>>) {
         let weak = Rc::downgrade(inner);
         this.frame_callback = Some(Closure::new(move |time: f64| {
             let Some(inner) = weak.upgrade() else { return };
-            {
+            let callback = {
                 let mut this = inner.borrow_mut();
                 let Inner { gpu, player, last_time, destroyed, .. } = &mut *this;
                 if *destroyed {
@@ -229,6 +351,17 @@ fn schedule_frame(inner: &Rc<RefCell<Inner>>) {
                 if let (Some(gpu), Some(player)) = (gpu, player) {
                     gpu.draw(|view| player.frame(dt, view));
                 }
+                let state = debug_state(&this).ok();
+                match (state, this.debug_callback.clone()) {
+                    (Some(state), Some(callback)) if this.last_debug_state.as_ref() != Some(&state) => {
+                        this.last_debug_state = Some(state.clone());
+                        Some((callback, state))
+                    }
+                    _ => None,
+                }
+            };
+            if let Some((callback, state)) = callback {
+                let _ = callback.call1(&JsValue::NULL, &JsValue::from_str(&state));
             }
             schedule_frame(&inner);
         }));

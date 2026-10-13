@@ -18,7 +18,9 @@ function fakeApi() {
     manifest: { name: "P", start: "start" },
     manifestSource: 'name = "P"\n',
     uiTheme: null,
+    uiTitle: null,
     scripts: [...disk].map(([path, source]) => ({ path, source })),
+    translations: [],
     tree: [],
     assets: [],
   });
@@ -30,6 +32,8 @@ function fakeApi() {
       open: vi.fn(async () => snapshot()),
       reload: vi.fn(async () => snapshot()),
       writeFile: vi.fn(async (path: string, content: string) => void disk.set(path, content)),
+      importAsset: vi.fn(async () => null),
+      renameAsset: vi.fn(async () => undefined),
       applyEdit: vi.fn(async (edit: ProjectEdit) => {
         const source = edit.source ?? disk.get(edit.path)!;
         const next = edit.kind === "connect" ? insertJump(source, edit.from, edit.to)!.source : source;
@@ -37,6 +41,8 @@ function fakeApi() {
         return { path: edit.path, source: next, changed: next !== source };
       }),
       createFromTemplate: vi.fn(async () => null),
+      pickExportFolder: vi.fn(async () => null),
+      export: vi.fn(async () => "/p/export"),
     },
     analysis: {
       analyze: vi.fn(async (files: SourceFile[]): Promise<Analysis> => {

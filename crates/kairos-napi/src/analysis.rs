@@ -232,7 +232,7 @@ fn terminates(stmts: &[Stmt]) -> bool {
         return false;
     };
     match &last.kind {
-        StmtKind::Jump(_) | StmtKind::Return => true,
+        StmtKind::Jump(_) | StmtKind::Return | StmtKind::Quit => true,
         StmtKind::If(branches) => {
             branches.last().is_some_and(|b| b.cond.is_none()) && branches.iter().all(|b| terminates(&b.body))
         }
@@ -316,11 +316,20 @@ label meet:
     }
 
     #[test]
+    fn graph_includes_title_flow_labels() {
+        let src = "label splashscreen:\n    return\nlabel main_menu:\n    jump start\nlabel start:\n    return\n";
+        let g = story_graph(&[file("script/a.kai", src)]);
+        let labels: Vec<_> = g.nodes.iter().map(|node| node.label.as_str()).collect();
+        assert_eq!(labels, ["splashscreen", "main_menu", "start"]);
+        assert_eq!(g.edges, [edge("main_menu", "start", "jump", None)]);
+    }
+
+    #[test]
     fn graph_of_example_project() {
         let src = include_str!("../../../examples/hello-kairos/script/script.kai");
         let g = story_graph(&[file("script/script.kai", src)]);
         let names: Vec<_> = g.nodes.iter().map(|n| n.label.as_str()).collect();
-        assert_eq!(names, ["start", "about", "meet_kai", "goodbye"]);
+        assert_eq!(names, ["splashscreen", "start", "about", "meet_kai", "goodbye"]);
         assert!(g.edges.contains(&edge("start", "about", "choice", Some("Tell me about the engine"))));
         assert!(g.edges.contains(&edge("start", "meet_kai", "call", Some("Who else is here?"))));
         assert!(g.edges.contains(&edge("about", "goodbye", "jump", None)));

@@ -1,6 +1,7 @@
 //! The player's input state machine on top of the VM. No graphics; the host draws from
 //! [`Game::shown`] and [`Game::stage`] and acts on [`Signal`]s.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use kairos_vm::{Effect, Event, LoadError, Program, RuntimeError, Stage, Vm};
@@ -11,6 +12,9 @@ pub enum Shown {
     Say { who: Option<String>, color: Option<String>, text: String, revealed: f32, len: usize, waited: f32 },
     Menu { caption: Option<String>, choices: Vec<String> },
     Pause { remaining: Option<f32> },
+    OpenLoad,
+    OpenSettings,
+    Quit,
     End,
     Error(String),
 }
@@ -25,6 +29,7 @@ pub enum Mode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
     Game,
+    Title,
     Menu,
     Save,
     Load,
@@ -77,6 +82,8 @@ pub struct Game {
     pub mode: Mode,
     pub screen: Screen,
     pub settings: Settings,
+    language: String,
+    translations: BTreeMap<String, BTreeMap<String, String>>,
     backlog: Vec<Line>,
     /// Backlog length before each shown interaction, parallel to the VM's rollback history.
     marks: Vec<usize>,
@@ -93,6 +100,8 @@ impl Game {
             mode: Mode::Normal,
             screen: Screen::Game,
             settings: Settings::default(),
+            language: String::new(),
+            translations: BTreeMap::new(),
             backlog: Vec::new(),
             marks: Vec::new(),
             signals: Vec::new(),
@@ -107,19 +116,45 @@ impl Game {
         }
     }
 
+    pub fn has_label(&self, name: &str) -> bool {
+        self.program.labels.contains_key(name)
+    }
+
+    pub fn show_title(&mut self) {
+        self.shown = Shown::Nothing;
+        self.reset();
+        self.screen = Screen::Title;
+    }
+
     /// Starts with fresh variables at an instruction, for "play from this line".
     pub fn start_at(&mut self, pc: usize) {
+        if let Err(e) = self.start_at_with_overrides(pc, &BTreeMap::new()) {
+            self.shown = Shown::Error(e.to_string());
+        }
+    }
+
+    pub fn start_at_with_overrides(
+        &mut self,
+        pc: usize,
+        overrides: &BTreeMap<String, kairos_vm::Value>,
+    ) -> Result<(), RuntimeError> {
         match Vm::new(self.program.clone()) {
-            Ok(vm) => self.vm = vm,
+            Ok(mut vm) => {
+                vm.set_translations(self.translations.get(&self.language).cloned().unwrap_or_default());
+                for (name, value) in overrides {
+                    vm.seed_variable(name, value.clone());
+                }
+                self.vm = vm;
+            }
             Err(e) => {
-                self.shown = Shown::Error(e.to_string());
-                return;
+                return Err(e);
             }
         }
         self.vm.start_at(pc);
         self.reset();
         self.signals.push(Signal::Resync);
         self.step();
+        Ok(())
     }
 
     pub fn stage(&self) -> &Stage {
@@ -134,8 +169,76 @@ impl Game {
         &self.backlog
     }
 
+    pub fn language(&self) -> &str {
+        &self.language
+    }
+
+    pub fn language_label(&self) -> &str {
+        if self.language.is_empty() { "Source" } else { &self.language }
+    }
+
+    pub fn languages(&self) -> Vec<String> {
+        std::iter::once(String::new()).chain(self.translations.keys().cloned()).collect()
+    }
+
+    pub fn set_localizations(&mut self, translations: BTreeMap<String, BTreeMap<String, String>>, language: &str) {
+        self.translations = translations;
+        self.set_language(language);
+    }
+
+    pub fn set_language(&mut self, language: &str) -> bool {
+        if !language.is_empty() && !self.translations.contains_key(language) {
+            return false;
+        }
+        self.language = language.to_string();
+        self.vm.set_translations(self.translations.get(language).cloned().unwrap_or_default());
+        true
+    }
+
+    pub fn cycle_language(&mut self, direction: i8) {
+        let languages = self.languages();
+        let index = languages.iter().position(|language| language == &self.language).unwrap_or(0);
+        let next = (index as isize + direction.signum() as isize).rem_euclid(languages.len() as isize) as usize;
+        self.set_language(&languages[next]);
+    }
+
     pub fn can_rollback(&self) -> bool {
         self.vm.can_rollback()
+    }
+
+    pub fn debug_variables(&self) -> std::collections::BTreeMap<String, kairos_vm::Value> {
+        self.vm.variables()
+    }
+
+    pub fn debug_pc(&self) -> usize {
+        self.vm.last_pc()
+    }
+
+    pub fn debug_call_stack(&self) -> &[usize] {
+        self.vm.call_stack()
+    }
+
+    pub fn debug_history_len(&self) -> usize {
+        self.vm.history_len()
+    }
+
+    pub fn debug_set_variable(&mut self, name: &str, value: kairos_vm::Value) -> Result<(), RuntimeError> {
+        self.vm.set_variable(name, value)
+    }
+
+    pub fn debug_rollback_to(&mut self, position: usize) -> bool {
+        if !self.vm.rollback_to(position) {
+            return false;
+        }
+        self.backlog.truncate(*self.marks.get(position).unwrap_or(&0));
+        self.marks.truncate(position);
+        self.mode = Mode::Normal;
+        self.signals.push(Signal::Resync);
+        self.step();
+        if let Shown::Say { revealed, len, .. } = &mut self.shown {
+            *revealed = *len as f32;
+        }
+        true
     }
 
     pub fn take_signals(&mut self) -> Vec<Signal> {
@@ -149,7 +252,9 @@ impl Game {
         }
         match &mut self.shown {
             Shown::Say { revealed, len, .. } if (*revealed as usize) < *len => *revealed = *len as f32,
-            Shown::Say { .. } | Shown::Pause { .. } => self.step(),
+            Shown::Say { .. } | Shown::Pause { .. } | Shown::OpenLoad | Shown::OpenSettings | Shown::Quit => {
+                self.step()
+            }
             _ => {}
         }
     }
@@ -184,11 +289,15 @@ impl Game {
     }
 
     pub fn save(&self) -> Option<Vec<u8>> {
+        if matches!(self.vm.program().label_at(self.vm.last_pc()), Some("splashscreen" | "main_menu")) {
+            return None;
+        }
         self.vm.save()
     }
 
     pub fn load(&mut self, bytes: &[u8]) -> Result<(), LoadError> {
         self.vm = Vm::load(self.program.clone(), bytes)?;
+        self.vm.set_translations(self.translations.get(&self.language).cloned().unwrap_or_default());
         self.reset();
         self.signals.push(Signal::Resync);
         self.step();
@@ -283,6 +392,9 @@ impl Game {
             }
             Event::Menu { caption, choices } => Shown::Menu { caption, choices },
             Event::Pause(d) => Shown::Pause { remaining: d.map(|d| d as f32) },
+            Event::OpenLoad => Shown::OpenLoad,
+            Event::OpenSettings => Shown::OpenSettings,
+            Event::Quit => Shown::Quit,
             Event::End => Shown::End,
         };
     }
@@ -345,6 +457,34 @@ label start:
         game.proceed();
         game.proceed();
         assert!(matches!(game.shown, Shown::Menu { .. }), "{:?}", game.shown);
+    }
+
+    #[test]
+    fn debug_overrides_apply_before_start_and_history_rolls_back_to_an_exact_position() {
+        let project = kairos_project::Project::from_sources(
+            "name = \"t\"",
+            [(
+                PathBuf::from("script/a.kai"),
+                r#"default n = 0
+label start:
+    "Value [n]"
+    "Next"
+"#
+                .into(),
+            )],
+        )
+        .unwrap();
+        let mut game = Game::new(project.program).unwrap();
+        let overrides = BTreeMap::from([("n".into(), kairos_vm::Value::Int(3))]);
+        game.start_at_with_overrides(0, &overrides).unwrap();
+        assert_eq!(text(&game), "Value 3");
+        game.proceed();
+        game.proceed();
+        assert_eq!(text(&game), "Next");
+        assert!(game.debug_rollback_to(0));
+        assert_eq!(text(&game), "Value 3");
+        assert_eq!(game.debug_history_len(), 1);
+        assert!(game.debug_set_variable("missing", kairos_vm::Value::None).is_err());
     }
 
     #[test]
@@ -505,6 +645,84 @@ label start:
         assert_eq!(game.shown, Shown::End);
         game.proceed();
         assert_eq!(game.shown, Shown::End);
+    }
+
+    #[test]
+    fn open_statements_pause_for_host_screens_then_continue() {
+        let source = "label start:\n    open settings\n    open load\n    quit\n    \"Done\"\n";
+        let project =
+            kairos_project::Project::from_sources("name = \"t\"", [(PathBuf::from("script/a.kai"), source.into())])
+                .unwrap();
+        let mut game = Game::new(project.program).unwrap();
+        game.start("start");
+        assert_eq!(game.shown, Shown::OpenSettings);
+        game.proceed();
+        assert_eq!(game.shown, Shown::OpenLoad);
+        game.proceed();
+        assert_eq!(game.shown, Shown::Quit);
+        game.proceed();
+        assert_eq!(text(&game), "Done");
+    }
+
+    #[test]
+    fn saving_stays_disabled_in_splashscreen_and_main_menu_until_jump_to_start() {
+        let source = "label splashscreen:\n    \"Splash\"\n    return\nlabel main_menu:\n    menu:\n        \"Start\":\n            jump start\nlabel start:\n    \"Game\"\n";
+        let project =
+            kairos_project::Project::from_sources("name = \"t\"", [(PathBuf::from("script/a.kai"), source.into())])
+                .unwrap();
+        let mut game = Game::new(project.program).unwrap();
+        game.start("splashscreen");
+        assert!(game.save().is_none());
+        game.proceed();
+        game.proceed();
+        game.start("main_menu");
+        assert!(game.save().is_none());
+        game.choose(0);
+        assert_eq!(text(&game), "Game");
+        assert!(game.save().is_some());
+    }
+
+    #[test]
+    fn saving_remains_disabled_while_a_main_menu_screen_is_open() {
+        let source = "label main_menu:\n    open settings\nlabel start:\n    \"Game\"\n";
+        let project =
+            kairos_project::Project::from_sources("name = \"t\"", [(PathBuf::from("script/a.kai"), source.into())])
+                .unwrap();
+        let mut game = Game::new(project.program).unwrap();
+        game.start("main_menu");
+        assert_eq!(game.shown, Shown::OpenSettings);
+        assert!(game.save().is_none());
+        game.proceed();
+        assert_eq!(text(&game), "Game");
+        assert!(game.save().is_some());
+    }
+
+    #[test]
+    fn language_selection_changes_runtime_text_and_can_be_restored_from_preferences() {
+        let project =
+            kairos_project::Project::from_sources("name = \"t\"", [(PathBuf::from("script/a.kai"), SCRIPT.into())])
+                .unwrap();
+        let mut translations = BTreeMap::new();
+        translations.insert(
+            "ja".to_string(),
+            project
+                .translation_entries()
+                .into_iter()
+                .map(|(key, source)| {
+                    let value = if source == "Hello there." { "こんにちは" } else { "" };
+                    (key, value.to_string())
+                })
+                .collect(),
+        );
+        let mut game = Game::new(project.program).unwrap();
+        game.set_localizations(translations, "ja");
+        game.start("start");
+        assert_eq!(game.language_label(), "ja");
+        assert_eq!(text(&game), "こんにちは");
+        game.cycle_language(1);
+        assert_eq!(game.language(), "");
+        game.set_localizations(BTreeMap::from([("ja".to_string(), BTreeMap::new())]), "ja");
+        assert_eq!(game.language_label(), "ja");
     }
 
     #[test]
