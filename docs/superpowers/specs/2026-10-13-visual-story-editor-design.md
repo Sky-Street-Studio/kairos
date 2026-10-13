@@ -26,13 +26,13 @@ The script is line- and indentation-based, so a statement spans from its first l
 `scene_blocks(source, label) -> Vec<Block>`
 
 - `Block { id, kind, fields, range: (first_line, last_line), children }`.
-- `id` is the statement's stable ID (label, source hash, occurrence), the same ID saves and translations use.
+- `line` is the block's 1-based first line in the source it was read from. Every edit is applied to that exact source, so a line identifies a statement.
 - `children` holds the bodies of choices and `if` branches.
 - Statements without a friendly block come back as `kind: Code` with their exact text.
 
 `apply(source, base, ops) -> Result<Applied, EditError>`
 
-- `base` is the source the ops were computed against. A mismatch returns `EditError::Stale`.
+- The store detects staleness: if the buffers changed while an edit was in flight, the edit is dropped and the scene tab reloads its blocks.
 - Ops:
   - Statements: `insert { after, block }`, `replace { id, block }`, `move { id, after }`, `delete { id }`.
   - Scenes: `add_scene { name, after_label }`, `rename_scene { from, to }`, `delete_scene { label, remove_references }`, `duplicate_scene { label, name }`.
@@ -54,7 +54,7 @@ The addon exports `sceneBlocks`, `applyEdits`, `applyProjectEdits`, `references`
 ### Editor store
 
 - **One edit action.** Every visual change goes through `edit(ops)`. It sends the current buffers to `applyEdits`, writes the results into the buffers, pushes one undo entry, and schedules analysis. Monaco, the graph and the preview react exactly as they do to typing.
-- **Stale edits.** A `Stale` result reloads the blocks and retries once. A second `Stale` drops the edit and refreshes the panel.
+- **Stale edits.** The store detects staleness: if the buffers changed while an edit was in flight, the edit is dropped and the scene tab reloads its blocks.
 - **Graph positions.** Positions saved by dragging live in `.kairos/editor.json` as `{ "graph": { "<label>": { "x": 0, "y": 0 } } }`. The engine and exporter ignore `.kairos/`. Nodes without a saved position use the automatic layout.
 
 ## Graph tools
@@ -117,7 +117,7 @@ Blocks use plain words: "Kai says…", "Change background", "Only if…".
 
 - **Edits never corrupt a file.** `WouldBreak` and other failures leave the buffer unchanged and show a toast with the reason.
 - **Files with parse errors.** Edits still work. Blocks inside an unparseable region come back as Code blocks.
-- **One history for the project.** Each entry holds the affected files' text before and after. Visual edits push one entry per action. Code-view typing pushes entries at Monaco's undo boundaries. Cmd+Z in either view undoes the latest change of either kind.
+- **One history for the project.** Each entry holds the affected files' text before and after. Visual edits push one entry per action. Code-view typing pushes one entry per file after 1 s without typing. Cmd+Z in either view undoes the latest change of either kind.
 - **Saving stays explicit.** Undo restores buffers, not files. Save and Save All write buffers as today, and dirty markers update.
 - **Limits.** The history keeps 200 entries and resets when a project opens.
 
