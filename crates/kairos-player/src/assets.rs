@@ -61,6 +61,9 @@ pub struct Assets {
 }
 
 #[cfg(target_arch = "wasm32")]
+type PackSource = (String, Option<String>, std::rc::Rc<std::cell::RefCell<PackCache>>);
+
+#[cfg(target_arch = "wasm32")]
 #[derive(Default)]
 struct PackCache {
     bytes: Option<Vec<u8>>,
@@ -73,11 +76,7 @@ enum Source {
     #[cfg(not(target_arch = "wasm32"))]
     Pack { index: kairos_project::assets::PackIndex, assets: AssetIndex },
     #[cfg(target_arch = "wasm32")]
-    Url {
-        base: String,
-        index: AssetIndex,
-        pack: Option<(String, Option<String>, std::rc::Rc<std::cell::RefCell<PackCache>>)>,
-    },
+    Url { base: String, index: AssetIndex, pack: Option<PackSource> },
 }
 
 impl Assets {
@@ -239,7 +238,7 @@ pub fn encode_path(path: &str) -> String {
 fn fetch_request(
     base: String,
     index: AssetIndex,
-    pack: Option<(String, Option<String>, std::rc::Rc<std::cell::RefCell<PackCache>>)>,
+    pack: Option<PackSource>,
     request: Request,
     ready: std::rc::Rc<std::cell::RefCell<Vec<Loaded>>>,
 ) {
@@ -258,7 +257,7 @@ async fn fetch_image(
     base: &str,
     index: &AssetIndex,
     name: &str,
-    pack: Option<&(String, Option<String>, std::rc::Rc<std::cell::RefCell<PackCache>>)>,
+    pack: Option<&PackSource>,
 ) -> Option<(String, Vec<u8>)> {
     let tag = name.split(' ').next().unwrap_or_default();
     let manifest = index.layer_manifest(tag);
@@ -280,11 +279,7 @@ async fn fetch_image(
 }
 
 #[cfg(target_arch = "wasm32")]
-async fn fetch_paths(
-    base: &str,
-    paths: &[String],
-    pack: Option<&(String, Option<String>, std::rc::Rc<std::cell::RefCell<PackCache>>)>,
-) -> Option<(String, Vec<u8>)> {
+async fn fetch_paths(base: &str, paths: &[String], pack: Option<&PackSource>) -> Option<(String, Vec<u8>)> {
     if let Some((pack_path, key, cache)) = pack {
         let bytes = fetch_pack_singleflight(base, pack_path, cache).await?;
         for path in paths {
@@ -337,7 +332,7 @@ async fn fetch_pack_singleflight(
 async fn fetch_bytes(url: &str) -> Option<Vec<u8>> {
     use wasm_bindgen::JsCast;
     use wasm_bindgen_futures::JsFuture;
-    let Some(window) = web_sys::window() else { return None };
+    let window = web_sys::window()?;
     let response = JsFuture::from(window.fetch_with_str(url)).await.ok()?.dyn_into::<web_sys::Response>().ok()?;
     if !response.ok() {
         return None;
