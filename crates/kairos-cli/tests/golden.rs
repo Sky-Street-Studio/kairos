@@ -24,6 +24,28 @@ fn beginner_templates_load_without_diagnostics() {
 }
 
 #[test]
+fn route_testing_finds_no_problems_in_examples_and_beginner_templates() {
+    let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
+    let mut projects = vec![examples.join("hello-kairos")];
+    let templates = examples.join("beginner-templates");
+    projects.extend(std::fs::read_dir(&templates).unwrap().map(|entry| entry.unwrap().path()));
+
+    for root in projects {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_kairos"))
+            .args(["test-routes", root.to_str().unwrap(), "--json"])
+            .output()
+            .unwrap();
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(output.status.success(), "{}: {report}", root.display());
+        assert_eq!(report["deadEnds"].as_array().unwrap().len(), 0, "{}: {report}", root.display());
+        assert_eq!(report["missingAssets"].as_array().unwrap().len(), 0, "{}: {report}", root.display());
+        assert_eq!(report["unresolvedChoices"].as_array().unwrap().len(), 0, "{}: {report}", root.display());
+        assert_eq!(report["unreachableLabels"].as_array().unwrap().len(), 0, "{}: {report}", root.display());
+        assert_eq!(report["truncated"].as_array().unwrap().len(), 0, "{}: {report}", root.display());
+    }
+}
+
+#[test]
 fn test_routes_emits_json_and_returns_failure_for_unreachable_labels() {
     let root = std::env::temp_dir().join(format!("kairos-routes-{}", std::process::id()));
     std::fs::create_dir_all(root.join("script")).unwrap();

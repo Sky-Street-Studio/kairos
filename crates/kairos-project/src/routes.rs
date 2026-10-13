@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Project,
-    assets::{AssetIndex, collect_paths},
+    assets::{AssetIndex, LayerConfig, collect_paths},
 };
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -72,23 +72,25 @@ pub fn test_routes(
             entries.insert(entry);
         }
     }
+    let mut routes_scheduled = 0;
+    let mut truncated = BTreeSet::new();
     for entry in entries {
+        if routes_scheduled >= options.max_routes {
+            truncated.insert(format!("route limit ({}) reached", options.max_routes));
+            break;
+        }
         let mut vm = Vm::new(project.program.clone())?;
         vm.start(entry)?;
         work.push_back(Work { vm, depth: 0, visits: BTreeMap::new(), last_label: None, route: Vec::new() });
+        routes_scheduled += 1;
     }
     let mut reachable = BTreeSet::new();
     let mut dead_ends = BTreeMap::new();
     let mut missing_assets = BTreeMap::new();
     let mut unresolved_choices = BTreeMap::new();
-    let mut truncated = BTreeSet::new();
     let mut routes_explored = 0;
 
     while let Some(mut item) = work.pop_front() {
-        if routes_explored >= options.max_routes {
-            truncated.insert(format!("route limit ({}) reached", options.max_routes));
-            break;
-        }
         routes_explored += 1;
         loop {
             if item.depth >= options.max_depth {
@@ -116,7 +118,7 @@ pub fn test_routes(
                     Instr::Scene { image: Some(words), .. } => {
                         (assets.image_candidates(words).is_empty(), words.join(" "))
                     }
-                    Instr::Show { image, .. } => (assets.image_candidates(image).is_empty(), image.join(" ")),
+                    Instr::Show { image, .. } => (image_paths(project, &assets, image).is_empty(), image.join(" ")),
                     Instr::Play { asset, .. } => (assets.audio_candidates(asset).is_empty(), asset.clone()),
                     _ => continue,
                 };
@@ -166,7 +168,12 @@ pub fn test_routes(
                     };
                     if item.vm.take_route_branch(pc, true).is_ok() && other.vm.take_route_branch(pc, false).is_ok() {
                         item.depth += 1;
-                        work.push_back(other);
+                        if routes_scheduled < options.max_routes {
+                            work.push_back(other);
+                            routes_scheduled += 1;
+                        } else {
+                            truncated.insert(format!("route limit ({}) reached", options.max_routes));
+                        }
                         continue;
                     }
                     dead_ends
@@ -176,6 +183,10 @@ pub fn test_routes(
                 Ok(RouteStep::Event(event)) => match event {
                     Event::Menu { choices, .. } => {
                         for (index, choice) in choices.into_iter().enumerate() {
+                            if routes_scheduled >= options.max_routes {
+                                truncated.insert(format!("route limit ({}) reached", options.max_routes));
+                                break;
+                            }
                             let mut branch = item.vm.clone();
                             if let Err(error) = branch.choose(index) {
                                 unresolved_choices.insert(
@@ -197,6 +208,7 @@ pub fn test_routes(
                                 last_label: item.last_label.clone(),
                                 route,
                             });
+                            routes_scheduled += 1;
                         }
                         break;
                     }
@@ -244,6 +256,19 @@ pub fn test_routes(
     })
 }
 
+fn image_paths(project: &Project, index: &AssetIndex, image: &[String]) -> Vec<String> {
+    let Some(tag) = image.first() else { return Vec::new() };
+    let manifest = index.layer_manifest(tag);
+    if index.contains(&manifest) {
+        let path = project.assets_dir().join(&manifest);
+        let Ok(text) = std::fs::read_to_string(path) else { return Vec::new() };
+        let Ok(config) = toml::from_str::<LayerConfig>(&text) else { return Vec::new() };
+        config.files(tag, &image[1..], index)
+    } else {
+        index.image_candidates(image)
+    }
+}
+
 fn current_label(vm: &Vm) -> String {
     vm.program().label_at(vm.state().pc).unwrap_or("<unknown>").to_string()
 }
@@ -279,6 +304,36 @@ mod tests {
         let report = test_routes(&project, RouteTestOptions::default()).unwrap();
         assert_eq!(report.dead_ends.len(), 1);
         assert!(report.dead_ends[0].message.contains("without an explicit return or quit"));
+    }
+
+    #[test]
+    fn layered_show_resolves_assets_from_its_layer_config() {
+        let root = std::env::temp_dir().join(format!("kairos-layered-route-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("script")).unwrap();
+        std::fs::create_dir_all(root.join("assets/images/sprites/hero/face")).unwrap();
+        std::fs::write(root.join("kairos.toml"), "name = 'test'").unwrap();
+        std::fs::write(root.join("script/main.kai"), "label start:\n    show hero happy\n    return\n").unwrap();
+        std::fs::write(root.join("assets/images/sprites/hero/layers.toml"), "order = ['face']\n").unwrap();
+        std::fs::write(root.join("assets/images/sprites/hero/face/happy.png"), []).unwrap();
+
+        let project = Project::load(&root).unwrap();
+        let report = test_routes(&project, RouteTestOptions::default()).unwrap();
+
+        assert!(report.missing_assets.is_empty(), "{:?}", report.missing_assets);
+        assert!(!report.has_problems());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn max_routes_caps_menu_enqueues_and_reports_truncation() {
+        let menu = project(
+            "label start:\n    menu:\n        \"first\":\n            return\n        \"second\":\n            return\n        \"third\":\n            return\n",
+        );
+
+        let report = test_routes(&menu, RouteTestOptions { max_routes: 2, ..Default::default() }).unwrap();
+
+        assert_eq!(report.routes_explored, 2);
+        assert_eq!(report.truncated, ["route limit (2) reached"]);
     }
 
     #[test]
