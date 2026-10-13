@@ -3,6 +3,7 @@ import { Toaster, toast } from "sonner";
 
 import { ResizeHandle } from "@/components/resize-handle";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { ViewBoundary } from "@/components/view-boundary";
 import { BottomPanel } from "@/features/terminal/bottom-panel";
 import { CommandPalette } from "@/features/palette/command-palette";
 import { PreviewPane } from "@/features/preview/preview-pane";
@@ -80,7 +81,9 @@ export function App() {
           <div className="flex min-h-0 flex-1 px-1.5">
             {layout.sidebar && (
               <>
-                <Sidebar width={layout.sidebarWidth} />
+                <ViewBoundary name="The sidebar">
+                  <Sidebar width={layout.sidebarWidth} />
+                </ViewBoundary>
                 <ResizeHandle
                   orientation="vertical"
                   size={layout.sidebarWidth}
@@ -103,7 +106,9 @@ export function App() {
                   onResize={(v) => resizePanel("bottomHeight", v)}
                 />
               )}
-              <BottomPanel open={layout.bottom} height={layout.bottomHeight} />
+              <ViewBoundary name="The bottom panel">
+                <BottomPanel open={layout.bottom} height={layout.bottomHeight} />
+              </ViewBoundary>
             </main>
             {layout.preview && (
               <>
@@ -115,7 +120,9 @@ export function App() {
                   max={760}
                   onResize={(v) => resizePanel("previewWidth", v)}
                 />
-                <PreviewPane width={layout.previewWidth} />
+                <ViewBoundary name="The preview">
+                  <PreviewPane width={layout.previewWidth} />
+                </ViewBoundary>
               </>
             )}
           </div>

@@ -53,7 +53,7 @@ cargo test --workspace
 bun install                              # also downloads the Electron binary
 bun run build:napi                       # builds crates/kairos-napi for the editor
 scripts/build-wasm.sh                    # builds the preview player into crates/kairos-player/pkg
-bun run dev                              # opens the Electron editor
+bun run dev                              # rebuilds the napi binding if Rust changed, then opens the editor
 KAIROS_PROJECT=$PWD/examples/hello-kairos bun run dev   # opens a project directly
 bun run test && bun run typecheck
 bun run --cwd apps/editor package         # builds an unsigned Kairos.app on macOS

@@ -9,7 +9,7 @@
   "type": "module",
   "scripts": {
     "build:napi": "bun run --cwd crates/kairos-napi build",
-    "dev": "bun run --cwd apps/editor dev",
+    "dev": "bun run build:napi && bun run --cwd apps/editor dev",
     "test": "bun run --cwd packages/theme test && bun run --cwd apps/editor test",
     "typecheck": "bun run --cwd packages/theme typecheck && bun run --cwd apps/editor typecheck",
     "lint": "oxlint",
