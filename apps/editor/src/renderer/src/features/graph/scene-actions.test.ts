@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { deleteSummary, startAfterRename } from "./scene-actions";
+import { deleteSummary, edgeOps, startAfterRename } from "./scene-actions";
 
 describe("delete confirmation", () => {
   it("counts links in plain words", () => {
@@ -13,6 +13,26 @@ describe("delete confirmation", () => {
         { path: "a", line: 4, kind: "call", choice: null },
       ]),
     ).toBe("2 choices, 1 jump and 1 call lead here.");
+  });
+});
+
+describe("story arrow actions", () => {
+  it("maps arrow actions to edits", () => {
+    expect(edgeOps({ from: "a", to: "b", kind: "choice", text: "Go" }, "delete")).toEqual([
+      { op: "removeLink", from: "a", to: "b", choice: "Go" },
+    ]);
+    expect(edgeOps({ from: "a", to: "b", kind: "jump", text: null }, "delete")).toEqual([
+      { op: "removeLink", from: "a", to: "b", choice: null },
+    ]);
+    expect(edgeOps({ from: "a", to: "b", kind: "fallthrough", text: null }, "makeExplicit")).toEqual([
+      { op: "connect", from: "a", to: "b", choice: null },
+    ]);
+    expect(edgeOps({ from: "a", to: "b", kind: "fallthrough", text: null }, "endHere")).toEqual([
+      { op: "endScene", label: "a" },
+    ]);
+    expect(edgeOps({ from: "a", to: "b", kind: "fallthrough", text: null }, "delete")).toEqual([
+      { op: "endScene", label: "a" },
+    ]);
   });
 });
 

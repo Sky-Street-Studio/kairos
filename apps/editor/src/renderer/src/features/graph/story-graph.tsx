@@ -1,11 +1,12 @@
 import * as ContextMenuPrimitive from "@radix-ui/react-context-menu";
-import type { EdgeKind } from "@shared/types";
+import type { EdgeKind, GraphEdge } from "@shared/types";
 import {
   Background,
   BackgroundVariant,
   type Connection,
   Controls,
   type Edge,
+  EdgeLabelRenderer,
   Handle,
   MarkerType,
   MiniMap,
@@ -15,6 +16,7 @@ import {
   Position,
   ReactFlow,
   ReactFlowProvider,
+  useEdgesState,
   useNodesState,
   useReactFlow,
 } from "@xyflow/react";
@@ -22,13 +24,14 @@ import { CircleAlert, Flag, Plus, Wand2 } from "lucide-react";
 import { type KeyboardEvent, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Dialog } from "@/components/ui/dialog";
 import { useResolvedAppearance } from "@/hooks/use-theme";
 import { cn } from "@/lib/utils";
 import { appStore, useApp } from "@/store";
 
-import { ghostTargets, positionsFor, withSelection } from "./graph-model";
+import { findChoiceOption, ghostTargets, positionsFor, withSelection } from "./graph-model";
 import { edgeId, mergeEdges, NODE_HEIGHT, NODE_WIDTH } from "./layout";
-import { SceneDialogs, useSceneActions } from "./scene-actions";
+import { edgeOps, SceneDialogs, useSceneActions } from "./scene-actions";
 
 type LabelData = {
   label: string;
@@ -78,6 +81,8 @@ type GhostNodeType = Node<GhostData, "ghost">;
 type GraphNodeType = LabelNodeType | GhostNodeType;
 
 const GHOST_OFFSET_Y = 160;
+
+type ConnectPrompt = { from: string; to: string };
 
 function GhostNode({ data }: NodeProps<GhostNodeType>) {
   return (
@@ -134,6 +139,8 @@ function Graph() {
   const actions = useSceneActions();
   const [contextLabel, setContextLabel] = useState<string | null>(null);
   const [ghostLabel, setGhostLabel] = useState<string | null>(null);
+  const [connectPrompt, setConnectPrompt] = useState<ConnectPrompt | null>(null);
+  const [choiceText, setChoiceText] = useState("");
   const [contextPoint, setContextPoint] = useState({ x: 0, y: 0 });
   const { fitView, screenToFlowPosition } = useReactFlow();
   const appearance = useResolvedAppearance();
@@ -195,12 +202,16 @@ function Graph() {
       selectable: false,
     }));
     const flowNodes: GraphNodeType[] = [...labelNodes, ...ghostNodes];
-    const flowEdges: Edge[] = mergeEdges(graph.edges).map((e, i) => {
+    const flowEdges: Edge[] = mergeEdges(graph.edges).map((merged, i) => {
+      const e =
+        graph.edges.find((edge) => edge.from === merged.from && edge.to === merged.to && edge.kind === merged.kind) ??
+        merged;
       const style = EDGE_STYLE[e.kind];
       return {
-        id: edgeId(e, i),
+        id: edgeId(merged, i),
         source: e.from,
         target: e.to,
+        selectable: true,
         label: e.kind === "choice" && e.text ? truncate(e.text, 26) : e.kind === "call" ? "call" : undefined,
         labelBgPadding: [6, 3] as [number, number],
         labelBgBorderRadius: 4,
@@ -216,14 +227,16 @@ function Graph() {
           color: style.stroke,
         },
         animated: false,
-        data: { kind: e.kind },
+        data: { edge: e },
       };
     });
     return { nodes: flowNodes, edges: [...flowEdges, ...ghostEdges] };
   }, [graph, diagnostics, start, graphLayout]);
 
   const [rfNodes, setNodes, onNodesChange] = useNodesState<GraphNodeType>(flow.nodes);
+  const [rfEdges, setEdges, onEdgesChange] = useEdgesState(flow.edges);
   useEffect(() => setNodes((prev) => withSelection(flow.nodes, prev)), [flow.nodes, setNodes]);
+  useEffect(() => setEdges(flow.edges), [flow.edges, setEdges]);
 
   const shape = graph.nodes.map((n) => n.label).join("|");
   useEffect(() => {
@@ -243,24 +256,55 @@ function Graph() {
     setNodePositions(Object.fromEntries(labels.map((node) => [node.id, node.position])));
   };
 
-  const onConnect = async (connection: Connection) => {
+  const onConnect = (connection: Connection) => {
     if (!connection.source || !connection.target || connection.source === connection.target) return;
-    if (
-      await appStore()
-        .getState()
-        .edit([
-          {
-            op: "connect",
-            from: connection.source,
-            to: connection.target,
-            choice: null,
-          },
-        ])
-    ) {
-      toast.success(`${connection.source} now goes to ${connection.target}`);
-    } else {
+    setConnectPrompt({ from: connection.source, to: connection.target });
+    setChoiceText(connection.target);
+  };
+
+  const connectScenes = async (choice: string | null) => {
+    if (!connectPrompt) return;
+    const { from, to } = connectPrompt;
+    const state = appStore().getState();
+    const focus = await state.edit([{ op: "connect", from, to, choice }]);
+    setConnectPrompt(null);
+    if (focus) toast.success(choice ? `Choice added from ${from} to ${to}` : `${from} now goes to ${to}`);
+    else {
       const error = appStore().getState().editError;
-      if (error) toast.error("Could not connect the scenes", { description: error });
+      if (error) toast.error(error);
+    }
+  };
+
+  const applyEdgeAction = async (edge: GraphEdge, action: "delete" | "makeExplicit" | "endHere") => {
+    const state = appStore().getState();
+    if (await state.edit(edgeOps(edge, action))) return;
+    const error = appStore().getState().editError;
+    if (error) toast.error(error);
+  };
+
+  const renameChoice = async (edge: GraphEdge, text: string) => {
+    if (edge.kind !== "choice" || !edge.text || text === edge.text) return;
+    const node = graph.nodes.find((item) => item.label === edge.from);
+    const source = node && appStore().getState().buffers[node.path]?.source;
+    if (!node || source === undefined) return;
+    try {
+      const scene = await window.kairos.edit.blocks(source, edge.from);
+      const option = scene && findChoiceOption(scene.blocks, edge.text, edge.to);
+      if (!option) {
+        toast.error("Could not rename the choice", {
+          description: `No choice called "${edge.text}" in ${edge.from} leads to ${edge.to}. Edit it in the scene instead.`,
+        });
+        return;
+      }
+      const state = appStore().getState();
+      if (!(await state.edit([{ op: "setChoiceText", path: node.path, line: option.line, text }]))) {
+        const error = appStore().getState().editError;
+        if (error) toast.error(error);
+      }
+    } catch (error) {
+      toast.error("Could not rename the choice", {
+        description: error instanceof Error ? error.message : String(error),
+      });
     }
   };
 
@@ -271,6 +315,10 @@ function Graph() {
 
   const selected = rfNodes.find((node) => node.selected && node.type === "label");
   const selectedLabels = rfNodes.filter((node) => node.selected && node.type === "label").map((node) => node.id);
+  const selectedEdge = rfEdges.find((edge) => edge.selected);
+  const selectedGraphEdge = (selectedEdge?.data as { edge?: GraphEdge } | undefined)?.edge;
+  const sourceNode = selectedEdge && flow.nodes.find((node) => node.id === selectedEdge.source);
+  const targetNode = selectedEdge && flow.nodes.find((node) => node.id === selectedEdge.target);
   const openNode = (label: string | null) => {
     if (label?.startsWith("missing:")) void actions.createGhost(label.slice("missing:".length));
     else if (label) goToLabel(label);
@@ -292,7 +340,10 @@ function Graph() {
       event.preventDefault();
       if (selectedLabels[0]) void actions.duplicate(selectedLabels[0]);
     } else if (event.key === "Delete" || event.key === "Backspace") {
-      if (selectedLabels.length) {
+      if (selectedGraphEdge) {
+        event.preventDefault();
+        void applyEdgeAction(selectedGraphEdge, "delete");
+      } else if (selectedLabels.length) {
         event.preventDefault();
         void actions.remove(selectedLabels);
       }
@@ -319,7 +370,8 @@ function Graph() {
           <ReactFlow
             nodes={rfNodes}
             onNodesChange={onNodesChange}
-            edges={flow.edges}
+            edges={rfEdges}
+            onEdgesChange={onEdgesChange}
             nodeTypes={nodeTypes}
             onConnect={(connection) => void onConnect(connection)}
             onConnectEnd={(_, connectionState) => {
@@ -389,6 +441,53 @@ function Graph() {
                 Create this scene
               </Button>
             </NodeToolbar>
+            {selectedEdge && selectedGraphEdge && sourceNode && targetNode && (
+              <EdgeLabelRenderer>
+                <div
+                  className="pointer-events-auto absolute z-20 flex items-center gap-1 rounded-md border bg-popover p-1 shadow-lg"
+                  style={{
+                    transform: `translate(-50%, -50%) translate(${(sourceNode.position.x + targetNode.position.x + NODE_WIDTH) / 2}px, ${(sourceNode.position.y + targetNode.position.y + NODE_HEIGHT) / 2}px)`,
+                  }}
+                  onClick={(event) => event.stopPropagation()}
+                  onMouseDown={(event) => event.stopPropagation()}
+                >
+                  {selectedGraphEdge.kind === "choice" && (
+                    <input
+                      key={selectedEdge.id}
+                      aria-label="Choice text"
+                      defaultValue={selectedGraphEdge.text ?? ""}
+                      className="h-7 w-36 rounded border bg-background px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      onBlur={(event) => void renameChoice(selectedGraphEdge, event.currentTarget.value.trim())}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") event.currentTarget.blur();
+                      }}
+                    />
+                  )}
+                  {selectedGraphEdge.kind === "fallthrough" ? (
+                    <>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void applyEdgeAction(selectedGraphEdge, "makeExplicit")}
+                      >
+                        Make explicit
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void applyEdgeAction(selectedGraphEdge, "endHere")}
+                      >
+                        End scene here
+                      </Button>
+                    </>
+                  ) : (
+                    <Button variant="ghost" size="sm" onClick={() => void applyEdgeAction(selectedGraphEdge, "delete")}>
+                      Delete arrow
+                    </Button>
+                  )}
+                </div>
+              </EdgeLabelRenderer>
+            )}
             <Background
               variant={BackgroundVariant.Dots}
               gap={20}
@@ -423,7 +522,7 @@ function Graph() {
                 </span>
               ))}
               <span className="border-l pl-3">Scroll or hold Space and drag to move around</span>
-              <span className="border-l pl-3">Drag from a node’s bottom handle to add a jump</span>
+              <span className="border-l pl-3">Drag from a node’s bottom handle to connect scenes</span>
               <Button variant="secondary" size="sm" onClick={() => void actions.add()}>
                 <Plus />
                 Add scene
@@ -497,6 +596,34 @@ function Graph() {
         </div>
       </ContextMenuPrimitive.Trigger>
       <SceneDialogs {...actions.dialogs} />
+      <Dialog
+        open={connectPrompt !== null}
+        onOpenChange={(open) => !open && setConnectPrompt(null)}
+        title="Connect scenes"
+      >
+        <div className="space-y-3">
+          <p className="text-xs text-muted-foreground">
+            Choose how {connectPrompt?.from} leads to {connectPrompt?.to}.
+          </p>
+          <label className="block space-y-1 text-xs">
+            <span>Choice text</span>
+            <input
+              aria-label="Choice text"
+              value={choiceText}
+              onChange={(event) => setChoiceText(event.target.value)}
+              className="h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+          </label>
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="secondary" onClick={() => void connectScenes(null)}>
+              Go to
+            </Button>
+            <Button type="button" onClick={() => void connectScenes(choiceText.trim())} disabled={!choiceText.trim()}>
+              Add as a choice
+            </Button>
+          </div>
+        </div>
+      </Dialog>
     </ContextMenuPrimitive.Root>
   );
 }

@@ -1,4 +1,5 @@
 import type { EditOp, Reference } from "@shared/edit-types";
+import type { GraphEdge } from "@shared/types";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -7,6 +8,25 @@ import { appStore } from "@/store";
 import { Dialog } from "../../components/ui/dialog";
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+export function edgeOps(
+  edge: Omit<GraphEdge, "text"> & { text?: string | null },
+  action: "delete" | "makeExplicit" | "endHere",
+): EditOp[] {
+  if (edge.kind === "fallthrough") {
+    return action === "makeExplicit"
+      ? [{ op: "connect", from: edge.from, to: edge.to, choice: null }]
+      : [{ op: "endScene", label: edge.from }];
+  }
+  return [
+    {
+      op: "removeLink",
+      from: edge.from,
+      to: edge.to,
+      choice: edge.kind === "choice" ? (edge.text ?? null) : null,
+    },
+  ];
+}
 
 /** The new start label when renaming `from` to `to` moves the start scene, else `null`. */
 export function startAfterRename(start: string | undefined, from: string, to: string): string | null {
