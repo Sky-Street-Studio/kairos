@@ -1,4 +1,4 @@
-import { Boxes, Network, Settings2, UsersRound, X } from "lucide-react";
+import { Boxes, Clapperboard, Network, Settings2, UsersRound, X } from "lucide-react";
 import { lazy, Suspense } from "react";
 
 import { cn } from "@/lib/utils";
@@ -16,6 +16,7 @@ const StoryGraphView = lazy(() => import("../graph/story-graph"));
 const AssetsManager = lazy(() =>
   import("../assets/assets-manager").then((module) => ({ default: module.AssetsManager })),
 );
+const SceneView = lazy(() => import("../scene/scene-view").then((module) => ({ default: module.SceneView })));
 
 const VIEW_META = {
   graph: { title: "Story flow", icon: Network },
@@ -36,7 +37,7 @@ function TabButton({ tab, active }: { tab: Tab; active: boolean }) {
   const errors = useApp((s) =>
     tab.kind === "file" ? s.analysis.diagnostics.filter((d) => d.path === tab.path).length : 0,
   );
-  const title = tab.kind === "file" ? basename(tab.path) : VIEW_META[tab.kind].title;
+  const title = tab.kind === "file" ? basename(tab.path) : tab.kind === "scene" ? tab.label : VIEW_META[tab.kind].title;
   return (
     <div
       role="tab"
@@ -57,6 +58,8 @@ function TabButton({ tab, active }: { tab: Tab; active: boolean }) {
           path={tab.path}
           className={cn("size-3.5 shrink-0", active && fileKind(tab.path) === "script" && "text-primary")}
         />
+      ) : tab.kind === "scene" ? (
+        <Clapperboard className="size-3.5 shrink-0" />
       ) : (
         <ViewIcon kind={tab.kind} />
       )}
@@ -135,6 +138,7 @@ export function Workspace() {
         {active?.kind === "characters" && <CharacterManager />}
         {active?.kind === "settings" && <SettingsView />}
         {active?.kind === "assets" && <AssetsManager />}
+        {active?.kind === "scene" && <SceneView label={active.label} />}
         {!active && <EmptyWorkspace />}
       </div>
     </section>

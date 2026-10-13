@@ -60,6 +60,8 @@ bun run --cwd apps/editor package         # builds an unsigned Kairos.app on mac
 bun run --cwd apps/editor test:e2e       # Playwright Electron smoke test
 ```
 
+Projects open on the story flow. Add, rename, duplicate and delete scenes there; drag between scenes to add a jump or a choice; click an arrow to edit or remove it. Double-click a scene to edit it as blocks: dialogue, backgrounds, characters, music, choices, conditions and variables, with the preview showing the selected moment. Anything without a block shows as a Code block you can still edit. Visual edits and typing share one undo history (Cmd+Z), and both change the same script files.
+
 The preview pane loads the WebAssembly player from `crates/kairos-player/pkg` and shows build instructions when it is missing.
 
 ## Export

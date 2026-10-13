@@ -18,6 +18,8 @@ export interface AnalyzeInput {
   spriteLayers: Record<string, SpriteLayers>
 }
 
+export declare function applyEdits(filesJson: string, opsJson: string): string
+
 export declare function checkProject(files: Array<SourceFile>): CheckResult
 
 export interface CheckResult {
@@ -44,6 +46,8 @@ export interface GraphNode {
   path: string
   line: number
 }
+
+export declare function labelFromName(name: string, takenJson: string): string
 
 export interface LineDiagnostic {
   line: number
@@ -83,6 +87,10 @@ export interface ProjectAnalysis {
   assetUsage: Record<string, number>
 }
 
+export declare function references(filesJson: string, label: string): string
+
+export declare function sceneBlocks(source: string, label: string): string
+
 export interface SourceFile {
   path: string
   source: string
@@ -98,4 +106,5 @@ export declare function storyGraph(files: Array<SourceFile>): StoryGraph
 export interface StoryGraph {
   nodes: Array<GraphNode>
   edges: Array<GraphEdge>
+  missing: Array<GraphEdge>
 }

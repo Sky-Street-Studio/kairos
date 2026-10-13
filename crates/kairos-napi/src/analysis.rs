@@ -84,6 +84,7 @@ pub struct GraphEdge {
 pub struct StoryGraph {
     pub nodes: Vec<GraphNode>,
     pub edges: Vec<GraphEdge>,
+    pub missing: Vec<GraphEdge>,
 }
 
 pub fn parse(source: &str) -> ParseResult {
@@ -277,9 +278,10 @@ fn graph_parsed(files: &[&SourceFile], parsed: &[&Parsed]) -> StoryGraph {
         }
     }
     let mut seen = HashSet::new();
-    edges.retain(|e| {
-        known.contains(e.to.as_str()) && seen.insert((e.from.clone(), e.to.clone(), e.kind.clone(), e.text.clone()))
-    });
+    let mut dedupe = |e: &GraphEdge| seen.insert((e.from.clone(), e.to.clone(), e.kind.clone(), e.text.clone()));
+    let missing: Vec<GraphEdge> =
+        edges.iter().filter(|e| !known.contains(e.to.as_str())).filter(|e| dedupe(e)).cloned().collect();
+    edges.retain(|e| known.contains(e.to.as_str()) && dedupe(e));
 
     let mut names = HashSet::new();
     let nodes = labels
@@ -287,7 +289,7 @@ fn graph_parsed(files: &[&SourceFile], parsed: &[&Parsed]) -> StoryGraph {
         .filter(|l| names.insert(l.name))
         .map(|l| GraphNode { label: l.name.into(), path: l.path.into(), line: l.line as u32 })
         .collect();
-    StoryGraph { nodes, edges }
+    StoryGraph { nodes, edges, missing }
 }
 
 fn collect_labels<'a>(stmts: &'a [Stmt], path: &'a str, out: &mut Vec<LabelRef<'a>>) {
@@ -396,6 +398,13 @@ label meet:
         let src = "label a:\n    if x:\n        jump c\n    else:\n        return\nlabel b:\n    jump c\nlabel c:\n    return\n";
         let g = story_graph(&[file("a.kai", src)]);
         assert_eq!(g.edges, [edge("a", "c", "jump", None), edge("b", "c", "jump", None)]);
+    }
+
+    #[test]
+    fn missing_targets_are_reported_separately() {
+        let g = story_graph(&[file("a.kai", "label a:\n    jump nowhere\n")]);
+        assert!(g.edges.is_empty());
+        assert_eq!(g.missing, [edge("a", "nowhere", "jump", None)]);
     }
 
     #[test]

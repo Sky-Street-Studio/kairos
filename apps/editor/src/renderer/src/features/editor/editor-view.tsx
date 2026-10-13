@@ -20,8 +20,8 @@ let mirroring = false;
 function syncModelsFromStore() {
   const { buffers } = appStore().getState();
   for (const buffer of Object.values(buffers)) {
-    const model = monaco.editor.getModel(modelUri(buffer.path));
-    if (!model || model.getValue() === buffer.source) continue;
+    const model = ensureModel(buffer.path, buffer.source);
+    if (model.getValue() === buffer.source) continue;
     mirroring = true;
     try {
       model.pushEditOperations([], [{ range: model.getFullModelRange(), text: buffer.source }], () => null);
@@ -152,6 +152,7 @@ export default function EditorView({ path }: { path: string | null }) {
       wrappingIndent: "indent",
     });
     editorRef.current = editor;
+    syncModelsFromStore();
     void document.fonts.ready.then(() => monaco.editor.remeasureFonts());
 
     editor.addAction({
@@ -185,6 +186,11 @@ export default function EditorView({ path }: { path: string | null }) {
       keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyK],
       run: () => appStore().getState().setPaletteOpen(true),
     });
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyZ, () => appStore().getState().undo());
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyZ, () =>
+      appStore().getState().redo(),
+    );
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyY, () => appStore().getState().redo());
 
     const subs = [
       editor.onDidChangeModelContent(() => {
@@ -228,11 +234,12 @@ export default function EditorView({ path }: { path: string | null }) {
     const state = appStore().getState();
     const buffer = state.buffers[path];
     if (!buffer) return;
-    for (const b of Object.values(state.buffers)) ensureModel(b.path, b.source);
+    syncModelsFromStore();
     const current = editor.getModel();
     if (current && pathOfUri(current.uri) !== path)
       viewStates.current.set(pathOfUri(current.uri), editor.saveViewState());
-    const model = ensureModel(path, buffer.source);
+    const model = monaco.editor.getModel(modelUri(path));
+    if (!model) return;
     if (current !== model) {
       editor.setModel(model);
       const saved = viewStates.current.get(path);

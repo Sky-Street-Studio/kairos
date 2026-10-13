@@ -1,3 +1,5 @@
+import type { Block } from "@shared/edit-types";
+import type { AssetEntry, PlayerStatus } from "@shared/types";
 import { Clapperboard, Copy, Play, RefreshCw, RotateCcw, TriangleAlert } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
 import { toast } from "sonner";
@@ -6,10 +8,22 @@ import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { appStore, useApp } from "@/store";
-import type { PlayerStatus } from "@shared/types";
-
-import { droppedStatement, isAssetDrag } from "../stage/asset-drag";
+import { ASSET_MIME, droppedStatement, isAssetDrag } from "../stage/asset-drag";
+import { flushPendingEdits } from "../scene/pending-edits";
+import { assetToBlock, showBlockAt, showOpFor } from "../scene/stage-drop";
+import { insertOp } from "../scene/block-ops";
 import { loadPlayerModule, parsePlayerError, projectJson, type PlayerError, type WebPlayer } from "./player";
+
+function sceneBlocks(blocks: Block[]): Block[] {
+  return blocks.flatMap((block) => [
+    block,
+    ...(block.kind === "choice"
+      ? block.options.flatMap((option) => sceneBlocks(option.blocks))
+      : block.kind === "if"
+        ? block.branches.flatMap((branch) => sceneBlocks(branch.blocks))
+        : []),
+  ]);
+}
 
 function StageDropZones({ active }: { active: boolean }) {
   return (
@@ -73,15 +87,29 @@ export function PreviewPane({ width }: { width: number }) {
   const playRequest = useApp((s) => s.playRequest);
   const openFile = useApp((s) => s.openFile);
   const cursor = useApp((s) => s.cursor);
+  const tabs = useApp((s) => s.tabs);
+  const activeId = useApp((s) => s.activeId);
   const setDebugState = useApp((s) => s.setDebugState);
   const setDebugControl = useApp((s) => s.setDebugControl);
-  const lastPlay = useRef<{ path: string; line: number; overrides?: Record<string, unknown> } | null>(null);
+  const lastPlay = useRef<{
+    path: string;
+    line: number;
+    mode: "play" | "seek";
+    overrides?: Record<string, unknown>;
+  } | null>(null);
 
   const checkStatus = useCallback(() => void window.kairos.player.status().then(setStatus), []);
   useEffect(checkStatus, [checkStatus]);
 
   const run = useCallback(
-    (from?: { path: string; line: number; overrides?: Record<string, unknown> } | null) => {
+    (
+      from?: {
+        path: string;
+        line: number;
+        mode: "play" | "seek";
+        overrides?: Record<string, unknown>;
+      } | null,
+    ) => {
       const player = playerRef.current;
       const { project, buffers } = appStore().getState();
       if (!player || !project) return;
@@ -101,7 +129,8 @@ export function PreviewPane({ width }: { width: number }) {
           ),
           (state) => setDebugState(JSON.parse(state)),
         );
-        if (from) player.playFromLine(from.path, from.line, JSON.stringify(from.overrides ?? {}));
+        if (from?.mode === "seek") player.previewAt(from.path, from.line);
+        else if (from) player.playFromLine(from.path, from.line, JSON.stringify(from.overrides ?? {}));
         else player.start();
         setError(null);
         setRunning(true);
@@ -158,9 +187,15 @@ export function PreviewPane({ width }: { width: number }) {
 
   useEffect(() => {
     if (!playRequest) return;
-    lastPlay.current = { path: playRequest.path, line: playRequest.line, overrides: playRequest.overrides };
+    lastPlay.current = {
+      path: playRequest.path,
+      line: playRequest.line,
+      mode: playRequest.mode,
+      overrides: playRequest.overrides,
+    };
     if (playerRef.current) run(lastPlay.current);
-    else if (status && !status.available)
+    // Seeks fire on every block selection; the missing-player panel already explains the state.
+    else if (status && !status.available && playRequest.mode !== "seek")
       toast("Build the player to preview from a line", { description: status.buildHint });
   }, [playRequest, run, status]);
 
@@ -168,10 +203,91 @@ export function PreviewPane({ width }: { width: number }) {
     if (!isAssetDrag(e)) return;
     e.preventDefault();
     setDragging(false);
-    const statement = droppedStatement(e, e.currentTarget);
-    if (!statement) return;
-    if (appStore().getState().insertAtCursor(statement)) toast(`Inserted ${statement}`);
-    else toast.error("Open a script to stage assets into it");
+    const asset = JSON.parse(e.dataTransfer.getData(ASSET_MIME)) as AssetEntry;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const block = assetToBlock(asset, (e.clientX - rect.left) / rect.width);
+    const activeTab = tabs.find((tab) => tab.id === activeId);
+    if (activeTab?.kind !== "scene") {
+      const statement = droppedStatement(e, e.currentTarget);
+      if (!statement) return;
+      if (appStore().getState().insertAtCursor(statement)) toast(`Inserted ${statement}`);
+      else toast.error("Open a script to stage assets into it");
+      return;
+    }
+    if (!block) return;
+    const sceneLabel = activeTab.label;
+    void (async () => {
+      await flushPendingEdits();
+      const state = appStore().getState();
+      const path = state.analysis.graph.nodes.find((node) => node.label === sceneLabel)?.path;
+      const source = path ? state.buffers[path]?.source : undefined;
+      const scene = path && source ? await window.kairos.edit.blocks(source, sceneLabel) : null;
+      if (!scene || !path) {
+        toast.error("Could not add this asset because the scene changed.");
+        return;
+      }
+      const current = appStore().getState();
+      const selection =
+        current.selectedBlock?.path === path
+          ? sceneBlocks(scene.blocks).find((item) => item.line === current.selectedBlock?.line)
+          : undefined;
+      const selectedLine = selection?.line ?? scene.blocks.at(-1)?.line ?? scene.line;
+      const operations =
+        block.kind === "show"
+          ? [
+              showOpFor(
+                sceneBlocks(scene.blocks),
+                selectedLine,
+                block.image[0]!,
+                block.image,
+                block.position ?? "center",
+                path,
+              ),
+            ]
+          : [
+              insertOp(
+                path,
+                selection || scene.blocks.length > 0
+                  ? { at: "after", line: selectedLine }
+                  : { at: "start", header: scene.line },
+                block,
+              ),
+            ];
+      const focus = await appStore().getState().edit(operations);
+      if (focus) appStore().getState().selectBlock(focus);
+      else toast.error(appStore().getState().editError ?? "Could not add this asset.");
+    })();
+  };
+
+  const onStageClickCapture = (e: React.MouseEvent<HTMLDivElement>) => {
+    const activeTab = appStore()
+      .getState()
+      .tabs.find((tab) => tab.id === appStore().getState().activeId);
+    const canvas = canvasRef.current;
+    if (activeTab?.kind !== "scene" || !canvas || !playerRef.current) return;
+    const character = playerRef.current.spriteAt(
+      (e.nativeEvent.offsetX * canvas.width) / canvas.clientWidth,
+      (e.nativeEvent.offsetY * canvas.height) / canvas.clientHeight,
+    );
+    if (!character) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const sceneLabel = activeTab.label;
+    void (async () => {
+      const state = appStore().getState();
+      const path = state.analysis.graph.nodes.find((node) => node.label === sceneLabel)?.path;
+      const source = path ? state.buffers[path]?.source : undefined;
+      const scene = path && source ? await window.kairos.edit.blocks(source, sceneLabel) : null;
+      if (!scene || !path) return;
+      const current = appStore().getState();
+      const selection =
+        current.selectedBlock?.path === path
+          ? sceneBlocks(scene.blocks).find((item) => item.line === current.selectedBlock?.line)
+          : undefined;
+      const selectedLine = selection?.line ?? scene.blocks.at(-1)?.line ?? scene.line;
+      const block = showBlockAt(sceneBlocks(scene.blocks), selectedLine, character);
+      if (block) appStore().getState().selectBlock({ path, line: block.line });
+    })();
   };
 
   return (
@@ -224,6 +340,7 @@ export function PreviewPane({ width }: { width: number }) {
             if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragging(false);
           }}
           onDrop={onDrop}
+          onClickCapture={onStageClickCapture}
           className="relative aspect-video w-full overflow-hidden rounded-md border bg-[#07070a] shadow-[0_10px_30px_-12px_rgb(0_0_0/0.6)]"
           data-testid="preview-stage"
         >

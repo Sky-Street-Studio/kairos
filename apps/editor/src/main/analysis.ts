@@ -14,6 +14,10 @@ interface Addon {
     playerBinary?: string,
     playerPkg?: string,
   ): string;
+  sceneBlocks(source: string, label: string): string;
+  applyEdits(files: string, ops: string): string;
+  references(files: string, label: string): string;
+  labelFromName(name: string, taken: string): string;
 }
 
 let addon: Addon | undefined;

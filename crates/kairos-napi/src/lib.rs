@@ -1,6 +1,7 @@
 //! Node bindings for the Kairos editor: diagnostics, outline, the story graph and asset usage.
 
 mod analysis;
+mod edit;
 mod export;
 
 // Unit tests link without a Node runtime, so the exported functions only exist in the addon.
@@ -53,5 +54,25 @@ mod bindings {
     ) -> napi::Result<String> {
         export::export_game(&project, &target, &output, player_binary.as_deref(), player_pkg.as_deref())
             .map_err(napi::Error::from_reason)
+    }
+
+    #[napi(js_name = "sceneBlocks")]
+    pub fn scene_blocks(source: String, label: String) -> String {
+        crate::edit::scene_blocks_json(&source, &label)
+    }
+
+    #[napi(js_name = "applyEdits")]
+    pub fn apply_edits(files_json: String, ops_json: String) -> String {
+        crate::edit::apply_edits_json(&files_json, &ops_json)
+    }
+
+    #[napi(js_name = "references")]
+    pub fn references(files_json: String, label: String) -> String {
+        crate::edit::references_json(&files_json, &label)
+    }
+
+    #[napi(js_name = "labelFromName")]
+    pub fn label_from_name(name: String, taken_json: String) -> String {
+        crate::edit::label_from_name_json(&name, &taken_json)
     }
 }

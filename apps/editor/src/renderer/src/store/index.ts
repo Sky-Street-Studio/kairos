@@ -4,6 +4,8 @@ import { createStore, type StoreApi } from "zustand/vanilla";
 
 import type { KairosApi, LayoutPrefs } from "@shared/types";
 
+import { createEditSlice } from "./edit-slice";
+import { createHistorySlice } from "./history-slice";
 import { createProjectSlice } from "./project-slice";
 import { createTabsSlice } from "./tabs-slice";
 import type { AnalysisSlice, AppState, PreviewSlice, SliceCreator, UiSlice } from "./types";
@@ -11,7 +13,12 @@ import type { AnalysisSlice, AppState, PreviewSlice, SliceCreator, UiSlice } fro
 export type { AppState, FileBuffer, Tab, ViewKind } from "./types";
 export { isDirty } from "./project-slice";
 
-export const EMPTY_ANALYSIS = { diagnostics: [], outlines: {}, graph: { nodes: [], edges: [] }, assetUsage: {} };
+export const EMPTY_ANALYSIS = {
+  diagnostics: [],
+  outlines: {},
+  graph: { nodes: [], edges: [], missing: [] },
+  assetUsage: {},
+};
 export const ANALYZE_DELAY_MS = 250;
 
 export const DEFAULT_LAYOUT: LayoutPrefs = {
@@ -84,7 +91,13 @@ const createPreviewSlice: SliceCreator<PreviewSlice> = (set) => ({
   },
   playFromLine(path, line, overrides) {
     set((s) => ({
-      playRequest: { path, line, overrides, nonce: ++playNonce },
+      playRequest: { path, line, overrides, nonce: ++playNonce, mode: "play" },
+      layout: { ...s.layout, preview: true },
+    }));
+  },
+  previewAt(path, line) {
+    set((s) => ({
+      playRequest: { path, line, nonce: ++playNonce, mode: "seek" },
       layout: { ...s.layout, preview: true },
     }));
   },
@@ -97,6 +110,8 @@ export function createAppStore(api: KairosApi): StoreApi<AppState> {
     ...createTabsSlice(set, get, api),
     ...createUiSlice(set, get, api),
     ...createPreviewSlice(set, get, api),
+    ...createHistorySlice(set, get, api),
+    ...createEditSlice(set, get, api),
   }));
 }
 

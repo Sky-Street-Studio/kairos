@@ -1,6 +1,7 @@
 //! Parser for the Kairos script language (`.kai`).
 
 pub mod ast;
+pub mod edit;
 mod lexer;
 mod parser;
 

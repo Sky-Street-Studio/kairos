@@ -6,22 +6,26 @@ import {
   Hash,
   Network,
   PackageOpen,
+  Palette,
   PanelBottom,
   PanelLeft,
   PanelRight,
-  Palette,
   Plus,
+  Redo2,
   Save,
   Settings2,
+  Undo2,
   UsersRound,
+  Wand2,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 
 import { Kbd } from "@/components/ui/input";
 import { modKey } from "@/lib/utils";
 import { appStore, useApp } from "@/store";
 
 import { ExportDialog } from "../export/export-dialog";
+import { SceneDialogs, useSceneActions } from "../graph/scene-actions";
 import { newProjectFromTemplate, openProjectDialog } from "../shell/actions";
 
 function Item({
@@ -58,6 +62,7 @@ const groupClass =
 
 export function CommandPalette() {
   const [exportOpen, setExportOpen] = useState(false);
+  const sceneActions = useSceneActions();
   const open = useApp((s) => s.paletteOpen);
   const setOpen = useApp((s) => s.setPaletteOpen);
   const project = useApp((s) => s.project);
@@ -114,6 +119,25 @@ export function CommandPalette() {
             <>
               <Item value="story flow graph" icon={<Network />} onSelect={() => s.openView("graph")}>
                 Show story flow
+              </Item>
+              <Item value="add scene" icon={<Plus />} onSelect={() => void sceneActions.add()}>
+                Add scene
+              </Item>
+              <Item
+                value="tidy up story flow"
+                icon={<Wand2 />}
+                onSelect={() => {
+                  s.openView("graph");
+                  s.resetGraphLayout();
+                }}
+              >
+                Tidy up story flow
+              </Item>
+              <Item value="undo" icon={<Undo2 />} hint={<Kbd>{mod}Z</Kbd>} onSelect={() => s.undo()}>
+                Undo
+              </Item>
+              <Item value="redo" icon={<Redo2 />} hint={<Kbd>{mod}⇧Z</Kbd>} onSelect={() => s.redo()}>
+                Redo
               </Item>
               <Item value="characters manager" icon={<UsersRound />} onSelect={() => s.openView("characters")}>
                 Manage characters
@@ -187,6 +211,7 @@ export function CommandPalette() {
       </Command.List>
     </Command.Dialog>,
     <ExportDialog key="export" open={exportOpen} onClose={() => setExportOpen(false)} />,
+    <SceneDialogs key="scene-dialogs" {...sceneActions.dialogs} />,
   ];
 }
 

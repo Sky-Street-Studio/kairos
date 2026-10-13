@@ -1,6 +1,12 @@
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-
 import type { KairosApi } from "@shared/types";
+import { contextBridge, type IpcRendererEvent, ipcRenderer } from "electron";
+
+function invokeEdit<T>(channel: string, ...args: unknown[]): Promise<T> {
+  return ipcRenderer.invoke(channel, ...args).catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, ""));
+  });
+}
 
 function subscribe<A extends unknown[]>(channel: string, listener: (...args: A) => void): () => void {
   const wrapped = (_e: IpcRendererEvent, ...args: unknown[]) => listener(...(args as A));
@@ -20,13 +26,21 @@ const api: KairosApi = {
     importAsset: (sourcePath, folder, convertWebp) =>
       ipcRenderer.invoke("project:asset-import", sourcePath, folder, convertWebp ?? false),
     renameAsset: (path, name) => ipcRenderer.invoke("project:asset-rename", path, name),
-    applyEdit: (edit) => ipcRenderer.invoke("project:edit", edit),
     createFromTemplate: () => ipcRenderer.invoke("project:create"),
     pickExportFolder: () => ipcRenderer.invoke("export:pick-folder"),
     export: (target, output) => ipcRenderer.invoke("project:export", target, output),
   },
   analysis: {
     analyze: (input) => ipcRenderer.invoke("analysis:analyze", input),
+  },
+  edit: {
+    blocks: (source, label) => invokeEdit("edit:blocks", source, label),
+    apply: (files, ops) => invokeEdit("edit:apply", files, ops),
+    references: (files, label) => invokeEdit("edit:references", files, label),
+    labelFromName: (name, taken) => invokeEdit("edit:label-from-name", name, taken),
+    readLayout: () => invokeEdit("edit:read-layout"),
+    writeLayout: (layout) => invokeEdit("edit:write-layout", layout),
+    setStart: (label) => invokeEdit("edit:set-start", label),
   },
   player: {
     status: () => ipcRenderer.invoke("player:status"),
