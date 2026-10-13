@@ -3,7 +3,7 @@ import { basename, join, resolve } from "node:path";
 
 import { BrowserWindow, Menu, app, dialog, ipcMain, shell, type MenuItemConstructorOptions } from "electron";
 
-import type { ProjectEdit, Settings, SourceFile, TerminalSpawn } from "@shared/types";
+import type { AnalyzeInput, ProjectEdit, Settings, TerminalSpawn } from "@shared/types";
 
 import { analyze } from "./analysis";
 import { chooseExportFolder, exportProject } from "./export";
@@ -148,7 +148,7 @@ function registerIpc(): void {
     return r.canceled || !r.filePath ? null : createFromTemplate(r.filePath);
   });
 
-  ipcMain.handle("analysis:analyze", (_e, files: SourceFile[]) => analyze(files));
+  ipcMain.handle("analysis:analyze", (_e, input: AnalyzeInput) => analyze(input));
   ipcMain.handle("player:status", () => playerStatus());
   ipcMain.handle("export:pick-folder", (e) => chooseExportFolder(e.sender));
   ipcMain.handle("project:export", (_e, target: "web" | "desktop", output: string) => exportProject(target, output));

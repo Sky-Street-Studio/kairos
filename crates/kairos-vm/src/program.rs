@@ -82,11 +82,11 @@ impl Program {
 
 /// Compiles parsed files in order. Labels fall through into the next label, as in Ren'Py.
 /// Diagnostics are paired with the index of the file they belong to.
-pub fn compile(files: &[Vec<Stmt>]) -> (Program, Vec<(usize, Diagnostic)>) {
+pub fn compile<S: AsRef<[Stmt]>>(files: &[S]) -> (Program, Vec<(usize, Diagnostic)>) {
     let mut c = Compiler::default();
     for (file, stmts) in files.iter().enumerate() {
         c.file = file;
-        for stmt in stmts {
+        for stmt in stmts.as_ref() {
             c.top_level(stmt);
         }
     }

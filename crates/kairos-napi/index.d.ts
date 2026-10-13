@@ -9,6 +9,15 @@
  */
 export declare const __napiBindingTarget: 'native' | 'wasm32-wasi' | 'wasm32-wasip1'
 
+export declare function analyze(input: AnalyzeInput): ProjectAnalysis
+
+export interface AnalyzeInput {
+  files: Array<SourceFile>
+  /** Project-relative paths such as `assets/images/bg room.png`. */
+  assets: Array<string>
+  spriteLayers: Record<string, SpriteLayers>
+}
+
 export declare function checkProject(files: Array<SourceFile>): CheckResult
 
 export interface CheckResult {
@@ -66,9 +75,22 @@ export interface ParseResult {
   diagnostics: Array<LineDiagnostic>
 }
 
+export interface ProjectAnalysis {
+  diagnostics: Array<FileDiagnostic>
+  outlines: Record<string, Outline>
+  graph: StoryGraph
+  /** Keyed by project-relative asset path; unused assets are absent. */
+  assetUsage: Record<string, number>
+}
+
 export interface SourceFile {
   path: string
   source: string
+}
+
+export interface SpriteLayers {
+  order: Array<string>
+  defaults: Record<string, string>
 }
 
 export declare function storyGraph(files: Array<SourceFile>): StoryGraph

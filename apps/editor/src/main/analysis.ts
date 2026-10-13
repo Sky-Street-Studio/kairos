@@ -3,12 +3,10 @@ import { join } from "node:path";
 
 import { app } from "electron";
 
-import type { Analysis, Outline, SourceFile, StoryGraph } from "@shared/types";
+import type { Analysis, AnalyzeInput } from "@shared/types";
 
 interface Addon {
-  checkProject(files: SourceFile[]): { diagnostics: Analysis["diagnostics"] };
-  outline(source: string): Outline;
-  storyGraph(files: SourceFile[]): StoryGraph;
+  analyze(input: AnalyzeInput): Analysis;
   exportGame(
     project: string,
     target: "web" | "desktop",
@@ -28,11 +26,6 @@ export function napi(): Addon {
   return addon;
 }
 
-export function analyze(files: SourceFile[]): Analysis {
-  const k = napi();
-  return {
-    diagnostics: k.checkProject(files).diagnostics,
-    outlines: Object.fromEntries(files.map((f) => [f.path, k.outline(f.source)])),
-    graph: k.storyGraph(files),
-  };
+export function analyze(input: AnalyzeInput): Analysis {
+  return napi().analyze(input);
 }

@@ -3,6 +3,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+use kairos_script::{Stmt, StmtKind};
+
 pub const ASSETS_DIR: &str = "assets";
 pub const IMAGE_EXTENSIONS: [&str; 4] = ["png", "jpg", "jpeg", "webp"];
 pub const AUDIO_EXTENSIONS: [&str; 4] = ["ogg", "mp3", "wav", "flac"];
@@ -169,6 +171,58 @@ impl LayerConfig {
     }
 }
 
+/// How many statements load each asset, keyed by path relative to `assets/`. Only the file the
+/// player would actually load counts: the first candidate, or each part of a layered sprite.
+pub fn usage<'a>(
+    scripts: impl IntoIterator<Item = &'a [Stmt]>,
+    index: &AssetIndex,
+    layers: &BTreeMap<String, LayerConfig>,
+) -> BTreeMap<String, u32> {
+    let mut counts = BTreeMap::new();
+    for stmts in scripts {
+        count_usage(stmts, index, layers, &mut counts);
+    }
+    counts
+}
+
+fn count_usage(
+    stmts: &[Stmt],
+    index: &AssetIndex,
+    layers: &BTreeMap<String, LayerConfig>,
+    counts: &mut BTreeMap<String, u32>,
+) {
+    for stmt in stmts {
+        let loaded = match &stmt.kind {
+            StmtKind::Scene { image: Some(words), .. } => index.image_candidates(words).into_iter().take(1).collect(),
+            StmtKind::Show { image, .. } => match layers.get(&image[0]) {
+                Some(config) => config.files(&image[0], &image[1..], index),
+                None => index.image_candidates(image).into_iter().take(1).collect(),
+            },
+            StmtKind::Play { asset, .. } => index.audio_candidates(asset).into_iter().take(1).collect(),
+            StmtKind::Label { body, .. } => {
+                count_usage(body, index, layers, counts);
+                Vec::new()
+            }
+            StmtKind::If(branches) => {
+                for branch in branches {
+                    count_usage(&branch.body, index, layers, counts);
+                }
+                Vec::new()
+            }
+            StmtKind::Menu { choices, .. } => {
+                for choice in choices {
+                    count_usage(&choice.body, index, layers, counts);
+                }
+                Vec::new()
+            }
+            _ => Vec::new(),
+        };
+        for path in loaded {
+            *counts.entry(path).or_insert(0) += 1;
+        }
+    }
+}
+
 pub fn collect_paths(root: &Path) -> std::io::Result<Vec<String>> {
     fn visit(root: &Path, dir: &Path, paths: &mut Vec<String>) -> std::io::Result<()> {
         for entry in std::fs::read_dir(dir)? {
@@ -308,6 +362,43 @@ mod tests {
         assert_eq!(
             config.files("e", &["happy".into()], &AssetIndex::new(paths)),
             ["images/sprites/e/base/body.png", "images/sprites/e/outfit/casual.png", "images/sprites/e/face/happy.png"]
+        );
+    }
+
+    #[test]
+    fn usage_counts_the_file_each_statement_loads() {
+        let index = AssetIndex::new([
+            "images/bg room.png",
+            "images/bg room.webp",
+            "images/bg/room.png",
+            "images/sprites/kai/kai smile.png",
+            "images/sprites/e/layers.toml",
+            "images/sprites/e/base/body.png",
+            "images/sprites/e/face/happy.png",
+            "images/sprites/e/face/neutral.png",
+            "audio/music/theme.ogg",
+            "audio/sfx/door.wav",
+        ]);
+        let layers: BTreeMap<String, LayerConfig> =
+            [("e".into(), toml::from_str("order = ['base', 'face']\n[default]\nface = 'neutral'\n").unwrap())].into();
+        let (main, _) = kairos_script::parse(
+            "label start:\n    scene bg room\n    show kai smile at left\n    show e\n    menu:\n        \"Go\":\n            show e happy\n            play music \"theme.ogg\"\n    if x:\n        play sound \"sfx/door\"\n    # show kai smile\n",
+        );
+        let (other, _) = kairos_script::parse("label more:\n    scene bg room\n    show missing\n");
+
+        let counts = usage([main.as_slice(), other.as_slice()], &index, &layers);
+
+        assert_eq!(
+            counts,
+            BTreeMap::from([
+                ("images/bg room.png".into(), 2),
+                ("images/sprites/kai/kai smile.png".into(), 1),
+                ("images/sprites/e/base/body.png".into(), 2),
+                ("images/sprites/e/face/neutral.png".into(), 1),
+                ("images/sprites/e/face/happy.png".into(), 1),
+                ("audio/music/theme.ogg".into(), 1),
+                ("audio/sfx/door.wav".into(), 1),
+            ])
         );
     }
 

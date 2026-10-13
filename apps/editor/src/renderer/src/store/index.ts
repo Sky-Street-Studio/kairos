@@ -11,7 +11,7 @@ import type { AnalysisSlice, AppState, PreviewSlice, SliceCreator, UiSlice } fro
 export type { AppState, FileBuffer, Tab, ViewKind } from "./types";
 export { isDirty } from "./project-slice";
 
-export const EMPTY_ANALYSIS = { diagnostics: [], outlines: {}, graph: { nodes: [], edges: [] } };
+export const EMPTY_ANALYSIS = { diagnostics: [], outlines: {}, graph: { nodes: [], edges: [] }, assetUsage: {} };
 export const ANALYZE_DELAY_MS = 250;
 
 export const DEFAULT_LAYOUT: LayoutPrefs = {
@@ -30,9 +30,14 @@ const createAnalysisSlice: SliceCreator<AnalysisSlice> = (set, get, api) => {
     analysis: EMPTY_ANALYSIS,
     async analyze() {
       clearTimeout(timer);
-      const files = Object.values(get().buffers).map(({ path, source }) => ({ path, source }));
+      const { buffers, project } = get();
+      const files = Object.values(buffers).map(({ path, source }) => ({ path, source }));
+      const assets = project?.assets.map((asset) => asset.path) ?? [];
+      const spriteLayers = Object.fromEntries(
+        Object.entries(project?.spriteLayers ?? {}).map(([tag, { order, defaults }]) => [tag, { order, defaults }]),
+      );
       const mine = ++generation;
-      const analysis = await api.analysis.analyze(files);
+      const analysis = await api.analysis.analyze({ files, assets, spriteLayers });
       if (mine === generation) set({ analysis });
     },
     scheduleAnalyze() {

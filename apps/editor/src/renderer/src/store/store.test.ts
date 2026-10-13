@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { insertJump } from "@shared/edits";
-import type { Analysis, KairosApi, ProjectEdit, ProjectSnapshot, SourceFile } from "@shared/types";
+import type { Analysis, AnalyzeInput, KairosApi, ProjectEdit, ProjectSnapshot } from "@shared/types";
 
 import { ANALYZE_DELAY_MS, createAppStore, isDirty } from "./index";
 
@@ -12,7 +12,7 @@ function fakeApi() {
     ["script/a.kai", SCRIPT],
     ["script/b.kai", "label other:\n    return\n"],
   ]);
-  const analyzed: SourceFile[][] = [];
+  const analyzed: AnalyzeInput[] = [];
   const snapshot = (): ProjectSnapshot => ({
     root: "/p",
     manifest: { name: "P", start: "start" },
@@ -22,7 +22,8 @@ function fakeApi() {
     scripts: [...disk].map(([path, source]) => ({ path, source })),
     translations: [],
     tree: [],
-    assets: [],
+    assets: [{ path: "assets/images/bg room.png", kind: "image", name: "bg room", category: "background" }],
+    spriteLayers: { e: { order: ["face"], defaults: { face: "happy" }, groups: { face: ["happy"] } } },
   });
   const api = {
     platform: "darwin",
@@ -45,8 +46,9 @@ function fakeApi() {
       export: vi.fn(async () => "/p/export"),
     },
     analysis: {
-      analyze: vi.fn(async (files: SourceFile[]): Promise<Analysis> => {
-        analyzed.push(files);
+      analyze: vi.fn(async (input: AnalyzeInput): Promise<Analysis> => {
+        analyzed.push(input);
+        const { files } = input;
         return {
           diagnostics: files.flatMap((f) =>
             f.source.includes("oops") ? [{ path: f.path, line: 1, message: "bad" }] : [],
@@ -59,6 +61,7 @@ function fakeApi() {
             ],
             edges: [],
           },
+          assetUsage: {},
         };
       }),
     },
@@ -100,8 +103,14 @@ describe("app store", () => {
     expect(isDirty(store.getState().buffers["script/a.kai"])).toBe(true);
     expect(env.analyzed).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(ANALYZE_DELAY_MS);
-    expect(env.analyzed[1]?.find((f) => f.path === "script/a.kai")?.source).toBe("oops");
+    expect(env.analyzed[1]?.files.find((f) => f.path === "script/a.kai")?.source).toBe("oops");
     expect(store.getState().analysis.diagnostics).toEqual([{ path: "script/a.kai", line: 1, message: "bad" }]);
+  });
+
+  it("analyzes scripts against the project's assets and sprite layers", () => {
+    const [input] = env.analyzed;
+    expect(input?.assets).toEqual(["assets/images/bg room.png"]);
+    expect(input?.spriteLayers).toEqual({ e: { order: ["face"], defaults: { face: "happy" } } });
   });
 
   it("saves to disk, clears dirty and bumps the preview", async () => {
