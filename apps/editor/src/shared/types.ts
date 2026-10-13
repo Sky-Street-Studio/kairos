@@ -169,6 +169,8 @@ export interface KairosApi {
     pick(): Promise<string | null>;
     open(root: string): Promise<ProjectSnapshot>;
     reload(): Promise<ProjectSnapshot | null>;
+    /** Reads a UTF-8 file inside the project for read-only preview; refuses files over 1 MB. */
+    readText(path: string): Promise<string>;
     writeFile(path: string, content: string): Promise<void>;
     importAsset(sourcePath: string | null, folder: string, convertWebp?: boolean): Promise<string | null>;
     renameAsset(path: string, name: string): Promise<void>;

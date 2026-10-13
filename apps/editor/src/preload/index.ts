@@ -21,6 +21,7 @@ const api: KairosApi = {
     pick: () => ipcRenderer.invoke("project:pick"),
     open: (root) => ipcRenderer.invoke("project:open", root),
     reload: () => ipcRenderer.invoke("project:reload"),
+    readText: (path) => ipcRenderer.invoke("project:read-text", path),
     writeFile: (path, content) => ipcRenderer.invoke("project:write", path, content),
     importAsset: (sourcePath, folder, convertWebp) =>
       ipcRenderer.invoke("project:asset-import", sourcePath, folder, convertWebp ?? false),

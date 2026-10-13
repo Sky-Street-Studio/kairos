@@ -6,6 +6,7 @@ export const createTabsSlice: SliceCreator<TabsSlice> = (set, get) => ({
   tabs: [],
   activeId: null,
   reveal: null,
+  assetReveal: null,
   cursor: null,
   selectedBlock: null,
 
@@ -34,6 +35,11 @@ export const createTabsSlice: SliceCreator<TabsSlice> = (set, get) => ({
       tabs: s.tabs.some((t) => t.id === kind) ? s.tabs : [...s.tabs, { id: kind, kind }],
       activeId: kind,
     }));
+  },
+
+  showAsset(path) {
+    get().openView("assets");
+    set({ assetReveal: path });
   },
 
   closeTab(id) {

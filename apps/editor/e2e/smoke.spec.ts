@@ -8,7 +8,7 @@ const editorDir = resolve(import.meta.dirname, "..");
 const example = resolve(editorDir, "../../examples/hello-kairos");
 const shots = process.env.KAIROS_SHOTS;
 
-test("opens a project, shows the graph, reports diagnostics, stages assets and runs a terminal", async () => {
+async function launch() {
   const work = await mkdtemp(join(tmpdir(), "kairos-e2e-"));
   const project = join(work, "hello-kairos");
   await cp(example, project, { recursive: true });
@@ -19,6 +19,11 @@ test("opens a project, shows the graph, reports diagnostics, stages assets and r
   });
   const page = await app.firstWindow();
   await page.setViewportSize({ width: 1480, height: 920 });
+  return { app, page, project };
+}
+
+test("opens a project, shows the graph, reports diagnostics, stages assets and runs a terminal", async () => {
+  const { app, page, project } = await launch();
   const mod = process.platform === "darwin" ? "Meta" : "Control";
 
   await expect(page.getByText("Hello Kairos", { exact: true })).toBeVisible();
@@ -83,5 +88,50 @@ test("opens a project, shows the graph, reports diagnostics, stages assets and r
   await page.keyboard.press("Enter");
   await expect(page.locator(".xterm-rows")).toContainText("kairos-42", { timeout: 15_000 });
 
+  await app.close();
+});
+
+test("previews images, audio and the manifest, and navigates settings", async () => {
+  const { app, page } = await launch();
+  await expect(page.getByText("Hello Kairos", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "bg room.png", exact: true }).click();
+  await expect(page.getByRole("tab", { name: /bg room\.png/ })).toHaveAttribute("aria-selected", "true");
+  const image = page.getByTestId("image-preview");
+  await expect(image).toBeVisible();
+  await expect.poll(() => image.evaluate((img) => (img as { naturalWidth: number }).naturalWidth)).toBeGreaterThan(0);
+  if (shots) await page.screenshot({ path: join(shots, "image-preview.png") });
+  await page.getByRole("button", { name: "Show in Assets" }).click();
+  await expect(page.getByTestId("managed-asset").filter({ hasText: "bg room" })).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  if (shots) await page.screenshot({ path: join(shots, "show-in-assets.png") });
+
+  await page.getByRole("button", { name: "theme.ogg", exact: true }).click();
+  const audio = page.getByTestId("audio-preview");
+  await expect.poll(() => audio.evaluate((el) => (el as { readyState: number }).readyState)).toBeGreaterThanOrEqual(1);
+  if (shots) await page.screenshot({ path: join(shots, "audio-preview.png") });
+
+  await page.getByRole("button", { name: "kairos.toml", exact: true }).click();
+  await expect(page.getByTestId("text-preview")).toContainText('name = "Hello Kairos"');
+  if (shots) await page.screenshot({ path: join(shots, "text-preview.png") });
+  await page.getByRole("button", { name: "audio.toml", exact: true }).click();
+  await expect(page.getByTestId("text-preview")).toContainText("loop_start");
+  if (shots) await page.screenshot({ path: join(shots, "audio-toml.png") });
+
+  await page.getByRole("tab", { name: /script\.kai/ }).click();
+  await expect(page.locator("[data-testid=monaco-host] .view-lines")).toContainText("label start");
+
+  await page.getByRole("button", { name: "Settings" }).click();
+  await expect(page.getByRole("heading", { name: "Appearance", level: 1 })).toBeVisible();
+  if (shots) await page.screenshot({ path: join(shots, "settings-appearance.png") });
+  await page.getByRole("navigation", { name: "Settings" }).getByRole("button", { name: "Layout" }).click();
+  const sidebarSwitch = page.getByRole("switch", { name: "Show sidebar" });
+  await expect(sidebarSwitch).toHaveAttribute("aria-checked", "true");
+  if (shots) await page.screenshot({ path: join(shots, "settings-layout.png") });
+  await page.getByLabel("Search settings").fill("recent");
+  await expect(page.getByRole("heading", { name: "Projects", level: 1 })).toBeVisible();
+  if (shots) await page.screenshot({ path: join(shots, "settings.png") });
   await app.close();
 });

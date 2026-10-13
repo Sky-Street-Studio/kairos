@@ -47,6 +47,22 @@ export function classifyAsset(path: string, characterIds: string[] = []): AssetE
   return { path, kind, name, ...categoryFor(path, kind, characterIds) };
 }
 
+export type FileKind = "script" | "text" | "image" | "audio";
+
+export const TEXT_EXTENSIONS = ["toml", "md", "txt", "json"];
+
+/** How the editor opens a project file, or `null` when it has no view for it. */
+export function fileKind(path: string): FileKind | null {
+  if (path.endsWith(".kai")) return "script";
+  const ext = extension(path);
+  if (TEXT_EXTENSIONS.includes(ext)) return "text";
+  // The asset protocol serves nothing outside assets/, so media elsewhere can't be previewed.
+  if (!path.startsWith("assets/")) return null;
+  if (IMAGE_EXTENSIONS.includes(ext)) return "image";
+  if (AUDIO_EXTENSIONS.includes(ext)) return "audio";
+  return null;
+}
+
 export function assetUrl(path: string): string {
   const rel = path.replace(/^assets\//, "");
   return `${ASSET_SCHEME}://project/${rel.split("/").map(encodeURIComponent).join("/")}`;

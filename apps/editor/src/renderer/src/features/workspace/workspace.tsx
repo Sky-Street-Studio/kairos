@@ -1,14 +1,17 @@
-import { Boxes, Clapperboard, FileCode2, Network, Settings2, UsersRound, X } from "lucide-react";
+import { Boxes, Clapperboard, Network, Settings2, UsersRound, X } from "lucide-react";
 import { lazy, Suspense } from "react";
 
 import { cn } from "@/lib/utils";
 import { basename } from "@/lib/utils";
 import { isDirty, useApp, type Tab } from "@/store";
+import { fileKind } from "@shared/assets";
 
 import { CharacterManager } from "../characters/character-manager";
 import { SettingsView } from "../settings/settings-view";
+import { FileIcon } from "../sidebar/file-icon";
 
 const EditorView = lazy(() => import("../editor/editor-view"));
+const FilePreview = lazy(() => import("../preview/file-preview"));
 const StoryGraphView = lazy(() => import("../graph/story-graph"));
 const AssetsManager = lazy(() =>
   import("../assets/assets-manager").then((module) => ({ default: module.AssetsManager })),
@@ -22,6 +25,11 @@ const VIEW_META = {
   assets: { title: "Assets", icon: Boxes },
 } as const;
 
+function ViewIcon({ kind }: { kind: keyof typeof VIEW_META }) {
+  const Icon = VIEW_META[kind].icon;
+  return <Icon className="size-3.5 shrink-0" />;
+}
+
 function TabButton({ tab, active }: { tab: Tab; active: boolean }) {
   const setActive = useApp((s) => s.setActive);
   const closeTab = useApp((s) => s.closeTab);
@@ -29,7 +37,6 @@ function TabButton({ tab, active }: { tab: Tab; active: boolean }) {
   const errors = useApp((s) =>
     tab.kind === "file" ? s.analysis.diagnostics.filter((d) => d.path === tab.path).length : 0,
   );
-  const Icon = tab.kind === "file" ? FileCode2 : tab.kind === "scene" ? Clapperboard : VIEW_META[tab.kind].icon;
   const title = tab.kind === "file" ? basename(tab.path) : tab.kind === "scene" ? tab.label : VIEW_META[tab.kind].title;
   return (
     <div
@@ -46,7 +53,16 @@ function TabButton({ tab, active }: { tab: Tab; active: boolean }) {
       )}
     >
       {active && <span className="bg-accent-gradient absolute inset-x-0 top-0 h-0.5" />}
-      <Icon className={cn("size-3.5 shrink-0", active && tab.kind === "file" && "text-primary")} />
+      {tab.kind === "file" ? (
+        <FileIcon
+          path={tab.path}
+          className={cn("size-3.5 shrink-0", active && fileKind(tab.path) === "script" && "text-primary")}
+        />
+      ) : tab.kind === "scene" ? (
+        <Clapperboard className="size-3.5 shrink-0" />
+      ) : (
+        <ViewIcon kind={tab.kind} />
+      )}
       <span className={cn("truncate", errors > 0 && "text-destructive")}>{title}</span>
       <button
         type="button"
@@ -88,7 +104,10 @@ export function Workspace() {
   const tabs = useApp((s) => s.tabs);
   const activeId = useApp((s) => s.activeId);
   const active = tabs.find((t) => t.id === activeId);
-  const hasFileTab = tabs.some((t) => t.kind === "file");
+  const isScript = (t: Tab | undefined): t is Extract<Tab, { kind: "file" }> =>
+    t?.kind === "file" && fileKind(t.path) === "script";
+  const hasScriptTab = tabs.some(isScript);
+  const preview = active?.kind === "file" && fileKind(active.path) !== "script" ? active.path : null;
 
   return (
     <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border bg-panel">
@@ -102,9 +121,16 @@ export function Workspace() {
       </div>
       <div className="relative flex min-h-0 flex-1">
         <Suspense fallback={null}>
-          {hasFileTab && (
-            <div className={cn("absolute inset-0 flex", active?.kind !== "file" && "invisible")}>
-              <EditorView path={active?.kind === "file" ? active.path : null} />
+          {hasScriptTab && (
+            <div
+              className={cn("absolute inset-0 flex", !isScript(active) && "pointer-events-none invisible opacity-0")}
+            >
+              <EditorView path={isScript(active) ? active.path : null} />
+            </div>
+          )}
+          {preview && (
+            <div className="absolute inset-0 flex bg-panel">
+              <FilePreview path={preview} />
             </div>
           )}
           {active?.kind === "graph" && <StoryGraphView />}

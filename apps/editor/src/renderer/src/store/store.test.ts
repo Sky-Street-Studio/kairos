@@ -47,6 +47,7 @@ function fakeApi() {
       pick: vi.fn(async () => null),
       open: vi.fn(async () => snapshot()),
       reload: vi.fn(async () => snapshot()),
+      readText: vi.fn(async (path: string) => disk.get(path) ?? ""),
       writeFile: vi.fn(async (path: string, content: string) => void disk.set(path, content)),
       importAsset: vi.fn(async () => null),
       renameAsset: vi.fn(async () => undefined),
@@ -333,6 +334,22 @@ describe("app store", () => {
       line: 3,
       mode: "seek",
     });
+  });
+
+  it("opens a preview tab and still inserts into the script under the cursor", () => {
+    const s = store.getState();
+    s.setCursor("script/a.kai", 3);
+    s.openFile("assets/audio/theme.ogg");
+    expect(store.getState().activeId).toBe("assets/audio/theme.ogg");
+    expect(s.insertAtCursor("play music theme")).toBe(true);
+    expect(store.getState().buffers["script/a.kai"]!.source.split("\n")[3]).toBe("    play music theme");
+  });
+
+  it("opens the asset manager at a given asset", () => {
+    const s = store.getState();
+    s.showAsset("assets/images/bg room.png");
+    expect(store.getState().activeId).toBe("assets");
+    expect(store.getState().assetReveal).toBe("assets/images/bg room.png");
   });
 
   it("toggles panels, persists layout and opens the preview on play", () => {

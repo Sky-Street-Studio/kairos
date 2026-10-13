@@ -154,6 +154,14 @@ export async function loadProject(root: string): Promise<ProjectSnapshot> {
   };
 }
 
+const MAX_PREVIEW_BYTES = 1024 * 1024;
+
+export async function readProjectText(rel: string): Promise<string> {
+  const abs = within(requireRoot(), rel);
+  if ((await stat(abs)).size > MAX_PREVIEW_BYTES) throw new Error(`${rel} is too large to preview`);
+  return readFile(abs, "utf8");
+}
+
 export async function writeProjectFile(rel: string, content: string): Promise<void> {
   const abs = within(requireRoot(), rel);
   await mkdir(dirname(abs), { recursive: true });

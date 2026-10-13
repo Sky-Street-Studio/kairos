@@ -3,7 +3,8 @@ import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } 
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useApp } from "@/store";
+import { cn } from "@/lib/utils";
+import { appStore, useApp } from "@/store";
 import { assetUrl, classifyAsset } from "@shared/assets";
 import type { AssetCategory, AssetEntry } from "@shared/types";
 
@@ -24,6 +25,7 @@ function AssetRow({
   usage,
   loopStart,
   playing,
+  revealed,
   onPlay,
   onRename,
 }: {
@@ -31,15 +33,25 @@ function AssetRow({
   usage: number;
   loopStart?: number;
   playing: boolean;
+  revealed: boolean;
   onPlay(): void;
   onRename(): void;
 }) {
   const image = asset.kind === "image";
+  const row = useRef<HTMLFieldSetElement>(null);
+  useEffect(() => {
+    if (revealed) row.current?.scrollIntoView({ block: "center" });
+  }, [revealed]);
   return (
     <fieldset
+      ref={row}
       draggable
       onDragStart={(event) => startAssetDrag(event, asset)}
-      className="group m-0 flex min-h-12 min-w-0 items-center gap-3 border-0 border-b border-border/50 p-0 px-2 py-1.5 last:border-b-0 hover:bg-accent/35"
+      aria-current={revealed || undefined}
+      className={cn(
+        "group m-0 flex min-h-12 min-w-0 items-center gap-3 border-0 border-b border-border/50 p-0 px-2 py-1.5 transition-colors duration-700 last:border-b-0 hover:bg-accent/35",
+        revealed && "bg-[var(--selection)] duration-0",
+      )}
       data-testid="managed-asset"
     >
       {image ? (
@@ -162,6 +174,7 @@ export function AssetsManager() {
   const [filter, setFilter] = useState("");
   const [playingPath, setPlayingPath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [revealedPath, setRevealedPath] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const characters = useMemo(
     () => [
@@ -181,6 +194,23 @@ export function AssetsManager() {
     return query ? assets.filter((asset) => `${asset.name} ${asset.path}`.toLowerCase().includes(query)) : assets;
   }, [assets, filter]);
   const byCategory = (category: AssetCategory) => visibleAssets.filter((asset) => asset.category === category);
+
+  useEffect(() => {
+    const reveal = (path: string | null) => {
+      if (!path) return;
+      setFilter("");
+      setRevealedPath(path);
+      appStore().setState({ assetReveal: null });
+    };
+    reveal(appStore().getState().assetReveal);
+    return appStore().subscribe((state) => reveal(state.assetReveal));
+  }, []);
+
+  useEffect(() => {
+    if (!revealedPath) return;
+    const timer = setTimeout(() => setRevealedPath(null), 1600);
+    return () => clearTimeout(timer);
+  }, [revealedPath]);
 
   useEffect(() => {
     if (!playingPath) return;
@@ -271,6 +301,7 @@ export function AssetsManager() {
         usage={assetUsage[asset.path] ?? 0}
         loopStart={project?.audioMetadata?.[relativeAudioPath]?.loopStart}
         playing={playingPath === asset.path}
+        revealed={revealedPath === asset.path}
         onPlay={() => setPlayingPath(playingPath === asset.path ? null : asset.path)}
         onRename={() => void rename(asset)}
       />

@@ -15,6 +15,7 @@ import {
   loadProject,
   projectRoot,
   renameProjectAsset,
+  readProjectText,
   writeProjectFile,
 } from "./project";
 import { handleProtocols, playerStatus, registerSchemes } from "./protocols";
@@ -88,6 +89,7 @@ function registerIpc(): void {
     const root = projectRoot();
     return root ? loadProject(root) : null;
   });
+  ipcMain.handle("project:read-text", (_e, path: string) => readProjectText(path));
   ipcMain.handle("project:write", (_e, path: string, content: string) => writeProjectFile(path, content));
   ipcMain.handle("project:asset-import", async (e, sourcePath: string | null, folder: string, convertWebp: boolean) => {
     let source = sourcePath;

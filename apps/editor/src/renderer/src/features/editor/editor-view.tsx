@@ -10,9 +10,9 @@ import { cn, modKey } from "@/lib/utils";
 import { appStore, useApp } from "@/store";
 
 import { droppedStatement, isAssetDrag } from "../stage/asset-drag";
-import { defineTheme, ensureModel, modelUri, monaco, pathOfUri, registerKairosLanguage } from "./monaco";
+import { defineTheme, ensureModel, modelUri, monaco, pathOfUri, registerLanguages } from "./monaco";
 
-registerKairosLanguage();
+registerLanguages();
 
 /** Model edits made to mirror the store must not echo back into it. */
 let mirroring = false;
