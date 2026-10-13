@@ -801,7 +801,8 @@ label start:
         .unwrap();
         let project = Project::load(&root).unwrap();
         let report = project.diagnostics_report();
-        assert!(report.contains("script/main.kai:4: unknown screen `absent`"), "{report}");
+        let script = Path::new("script").join("main.kai");
+        assert!(report.contains(&format!("{}:4: unknown screen `absent`", script.display())), "{report}");
         assert!(report.contains("ui/screens/phone.toml:0: node `items`: binding `missing`"), "{report}");
         assert!(!report.contains("node `display`"), "{report}");
         std::fs::remove_dir_all(root).unwrap();
