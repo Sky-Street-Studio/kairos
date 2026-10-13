@@ -186,8 +186,9 @@ describe("app store", () => {
 
   it("loads and persists graph positions", async () => {
     expect(store.getState().graphLayout.graph.start).toEqual({ x: 5, y: 6 });
-    store.getState().setNodePosition("end", 1, 2);
-    expect(env.api.edit.writeLayout).toHaveBeenCalledWith({ graph: { start: { x: 5, y: 6 }, end: { x: 1, y: 2 } } });
+    store.getState().setNodePositions({ start: { x: 3, y: 4 }, end: { x: 1, y: 2 } });
+    expect(env.api.edit.writeLayout).toHaveBeenCalledTimes(1);
+    expect(env.api.edit.writeLayout).toHaveBeenCalledWith({ graph: { start: { x: 3, y: 4 }, end: { x: 1, y: 2 } } });
   });
 
   it("resets history when a project opens", async () => {

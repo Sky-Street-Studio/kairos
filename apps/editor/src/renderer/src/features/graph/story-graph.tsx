@@ -24,7 +24,7 @@ import { cn } from "@/lib/utils";
 import { appStore, useApp } from "@/store";
 import type { EdgeKind } from "@shared/types";
 
-import { ghostTargets, positionsFor } from "./graph-model";
+import { ghostTargets, positionsFor, withSelection } from "./graph-model";
 import { NODE_HEIGHT, NODE_WIDTH, edgeId, mergeEdges } from "./layout";
 
 type LabelData = { label: string; path: string; line: number; start: boolean; problems: number };
@@ -108,7 +108,7 @@ function Graph() {
   const openFile = useApp((s) => s.openFile);
   const edit = useApp((s) => s.edit);
   const graphLayout = useApp((s) => s.graphLayout);
-  const setNodePosition = useApp((s) => s.setNodePosition);
+  const setNodePositions = useApp((s) => s.setNodePositions);
   const resetGraphLayout = useApp((s) => s.resetGraphLayout);
   const { fitView } = useReactFlow();
   const appearance = useResolvedAppearance();
@@ -173,7 +173,7 @@ function Graph() {
   }, [graph, diagnostics, start, graphLayout]);
 
   const [rfNodes, setNodes, onNodesChange] = useNodesState<GraphNodeType>(flow.nodes);
-  useEffect(() => setNodes(flow.nodes), [flow.nodes, setNodes]);
+  useEffect(() => setNodes((prev) => withSelection(flow.nodes, prev)), [flow.nodes, setNodes]);
 
   const shape = graph.nodes.map((n) => n.label).join("|");
   useEffect(() => {
@@ -188,7 +188,9 @@ function Graph() {
   };
 
   const saveDragged = (dragged: Node[]) => {
-    for (const n of dragged) if (n.type === "label") setNodePosition(n.id, n.position.x, n.position.y);
+    const labels = dragged.filter((n) => n.type === "label");
+    if (labels.length === 0) return;
+    setNodePositions(Object.fromEntries(labels.map((n) => [n.id, n.position])));
   };
 
   const onConnect = async (c: Connection) => {
@@ -217,11 +219,11 @@ function Graph() {
       nodeTypes={nodeTypes}
       onConnect={(c) => void onConnect(c)}
       onNodeClick={(_, n) => n.type === "label" && openFile(n.data.path, n.data.line)}
-      onNodeDragStop={(_, node, nodes) => saveDragged(nodes.length > 0 ? nodes : [node])}
-      onSelectionDragStop={(_, nodes) => saveDragged(nodes)}
+      onNodeDragStop={(_, __, nodes) => saveDragged(nodes)}
       selectionOnDrag
       multiSelectionKeyCode="Shift"
-      panOnDrag={[1, 2]}
+      panOnDrag={[1]}
+      panOnScroll
       nodesConnectable
       nodesDraggable
       minZoom={0.25}
@@ -263,6 +265,7 @@ function Graph() {
             {label}
           </span>
         ))}
+        <span className="border-l pl-3">Scroll or hold Space and drag to move around</span>
         <span className="border-l pl-3">Drag from a node’s bottom handle to add a jump</span>
         <button
           type="button"

@@ -12,3 +12,8 @@ export function ghostTargets(graph: StoryGraph, edgesTo: { from: string; to: str
   const known = new Set(graph.nodes.map((n) => n.label));
   return [...new Set(edgesTo.map((e) => e.to).filter((to) => !known.has(to)))];
 }
+
+export function withSelection<T extends { id: string; selected?: boolean }>(next: T[], prev: T[]): T[] {
+  const selected = new Set(prev.filter((n) => n.selected).map((n) => n.id));
+  return next.map((n) => (selected.has(n.id) ? { ...n, selected: true } : n));
+}

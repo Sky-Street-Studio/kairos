@@ -40,8 +40,8 @@ export const createEditSlice: SliceCreator<EditSlice> = (set, get, api) => ({
     set({ graphLayout: await api.edit.readLayout().catch(() => EMPTY_LAYOUT) });
   },
 
-  setNodePosition(label, x, y) {
-    const graphLayout = { graph: { ...get().graphLayout.graph, [label]: { x, y } } };
+  setNodePositions(positions) {
+    const graphLayout = { graph: { ...get().graphLayout.graph, ...positions } };
     set({ graphLayout });
     void api.edit.writeLayout(graphLayout);
   },

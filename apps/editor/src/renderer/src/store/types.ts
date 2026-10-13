@@ -54,7 +54,7 @@ export interface EditSlice {
   graphLayout: EditorLayout;
   edit(ops: EditOp[]): Promise<{ path: string; line: number } | null>;
   loadGraphLayout(): Promise<void>;
-  setNodePosition(label: string, x: number, y: number): void;
+  setNodePositions(positions: Record<string, { x: number; y: number }>): void;
   resetGraphLayout(): void;
 }
 

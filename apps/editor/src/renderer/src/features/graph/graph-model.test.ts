@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ghostTargets, positionsFor } from "./graph-model";
+import { ghostTargets, positionsFor, withSelection } from "./graph-model";
 
 const graph = {
   nodes: [
@@ -32,5 +32,13 @@ describe("ghost targets", () => {
 
   it("ignores targets that exist", () => {
     expect(ghostTargets(graph, [{ from: "start", to: "end" }])).toEqual([]);
+  });
+});
+
+describe("selection carry-over", () => {
+  it("keeps selected flags by id", () => {
+    const prev = [{ id: "a", selected: true }, { id: "b" }];
+    const next = [{ id: "a" }, { id: "b" }, { id: "c" }];
+    expect(withSelection(next, prev)).toEqual([{ id: "a", selected: true }, { id: "b" }, { id: "c" }]);
   });
 });
