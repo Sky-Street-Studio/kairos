@@ -13,6 +13,17 @@ fn hello_kairos_matches_its_golden_transcript() {
 }
 
 #[test]
+fn beginner_templates_load_without_diagnostics() {
+    let templates = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/beginner-templates");
+    for entry in std::fs::read_dir(&templates).unwrap() {
+        let root = entry.unwrap().path();
+        let project = Project::load(&root).unwrap();
+        assert!(project.diagnostics.is_empty(), "{}: {:?}", root.display(), project.diagnostics);
+        assert!(project.asset_diagnostics().unwrap().is_empty(), "{}", root.display());
+    }
+}
+
+#[test]
 fn check_reports_duplicate_asset_names_with_both_paths() {
     let root = std::env::temp_dir().join(format!("kairos-check-assets-{}", std::process::id()));
     std::fs::create_dir_all(root.join("script")).unwrap();

@@ -1,3 +1,5 @@
+character e "Mira" color="#f2b8c6"
+
 default affection = 0
 
 label start:
