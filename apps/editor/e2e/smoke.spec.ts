@@ -19,6 +19,7 @@ test("opens a project, shows the graph, reports diagnostics, stages assets and r
   });
   const page = await app.firstWindow();
   await page.setViewportSize({ width: 1480, height: 920 });
+  const mod = process.platform === "darwin" ? "Meta" : "Control";
 
   await expect(page.getByText("Hello Kairos", { exact: true })).toBeVisible();
   await expect(page.getByTestId("diagnostic-count")).toHaveText("No problems");
@@ -30,6 +31,10 @@ test("opens a project, shows the graph, reports diagnostics, stages assets and r
   if (playerBuilt) {
     await expect(page.getByLabel("running")).toBeVisible({ timeout: 20_000 });
     await expect(page.getByRole("complementary", { name: "Preview" }).getByRole("alert")).toHaveCount(0);
+    await page.keyboard.press(`${mod}+j`);
+    await page.getByRole("tab", { name: "Debug" }).click();
+    await expect(page.getByLabel("Value of curious")).toHaveValue("0");
+    await page.getByRole("tab", { name: "Terminal" }).click();
     if (shots) await page.screenshot({ path: join(shots, "preview.png") });
   } else {
     await expect(page.getByTestId("player-missing")).toBeVisible();
@@ -42,7 +47,6 @@ test("opens a project, shows the graph, reports diagnostics, stages assets and r
 
   await page.getByRole("tab", { name: /script\.kai/ }).click();
   await page.locator(".monaco-editor .view-lines").click();
-  const mod = process.platform === "darwin" ? "Meta" : "Control";
   await page.keyboard.press(process.platform === "darwin" ? "Meta+ArrowDown" : "Control+End");
   await page.keyboard.press("Enter");
   await page.keyboard.type("jump nowhere");
@@ -67,7 +71,12 @@ test("opens a project, shows the graph, reports diagnostics, stages assets and r
     .dragTo(stage, { targetPosition: { x: box.width * 0.9, y: box.height / 2 } });
   await expect(page.locator(".monaco-editor .view-lines")).toContainText("show e happy at right");
 
-  await page.keyboard.press(`${mod}+j`);
+  if (!playerBuilt) {
+    await page.keyboard.press(`${mod}+j`);
+    await expect(page.getByRole("tab", { name: "Debug" })).toBeVisible();
+    await page.getByRole("tab", { name: "Debug" }).click();
+    await page.getByRole("tab", { name: "Terminal" }).click();
+  }
   await page.locator(".xterm").click();
   await page.keyboard.type("echo kairos-$((40+2))");
   await page.keyboard.press("Enter");

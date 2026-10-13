@@ -3,9 +3,12 @@ import { ASSET_SCHEME, type SourceFile, type TranslationFile } from "@shared/typ
 /** The surface `crates/kairos-player` exports when built with `wasm-bindgen --target web`. */
 export interface WebPlayer {
   ready(): Promise<void>;
-  load(projectJson: string): void;
+  load(projectJson: string, onDebug: (state: string) => void): void;
   start(): void;
-  playFromLine(path: string, line: number): void;
+  playFromLine(path: string, line: number, overrides?: string): void;
+  debugState(): string;
+  setVariable(name: string, json: string): void;
+  rollbackTo(position: number): void;
   resize(width: number, height: number): void;
   destroy(): void;
 }

@@ -73,38 +73,45 @@ export function PreviewPane({ width }: { width: number }) {
   const playRequest = useApp((s) => s.playRequest);
   const openFile = useApp((s) => s.openFile);
   const cursor = useApp((s) => s.cursor);
-  const lastPlay = useRef<{ path: string; line: number } | null>(null);
+  const setDebugState = useApp((s) => s.setDebugState);
+  const setDebugControl = useApp((s) => s.setDebugControl);
+  const lastPlay = useRef<{ path: string; line: number; overrides?: Record<string, unknown> } | null>(null);
 
   const checkStatus = useCallback(() => void window.kairos.player.status().then(setStatus), []);
   useEffect(checkStatus, [checkStatus]);
 
-  const run = useCallback((from?: { path: string; line: number } | null) => {
-    const player = playerRef.current;
-    const { project, buffers } = appStore().getState();
-    if (!player || !project) return;
-    try {
-      const scripts = Object.values(buffers)
-        .map(({ path, source }) => ({ path, source }))
-        .toSorted((a, b) => a.path.localeCompare(b.path));
-      player.load(
-        projectJson(
-          project.manifestSource,
-          scripts,
-          project.uiTheme,
-          project.uiTitle,
-          project.assets.map((asset) => asset.path),
-          project.translations,
-        ),
-      );
-      if (from) player.playFromLine(from.path, from.line);
-      else player.start();
-      setError(null);
-      setRunning(true);
-    } catch (e) {
-      setError(parsePlayerError(e));
-      setRunning(false);
-    }
-  }, []);
+  const run = useCallback(
+    (from?: { path: string; line: number; overrides?: Record<string, unknown> } | null) => {
+      const player = playerRef.current;
+      const { project, buffers } = appStore().getState();
+      if (!player || !project) return;
+      try {
+        const scripts = Object.values(buffers)
+          .map(({ path, source }) => ({ path, source }))
+          .toSorted((a, b) => a.path.localeCompare(b.path));
+        setDebugState(null);
+        player.load(
+          projectJson(
+            project.manifestSource,
+            scripts,
+            project.uiTheme,
+            project.uiTitle,
+            project.assets.map((asset) => asset.path),
+            project.translations,
+          ),
+          (state) => setDebugState(JSON.parse(state)),
+        );
+        if (from) player.playFromLine(from.path, from.line, JSON.stringify(from.overrides ?? {}));
+        else player.start();
+        setError(null);
+        setRunning(true);
+      } catch (e) {
+        setError(parsePlayerError(e));
+        setRunning(false);
+      }
+    },
+    [setDebugState],
+  );
 
   useEffect(() => {
     if (!status?.available || !canvasRef.current) return;
@@ -118,6 +125,10 @@ export function PreviewPane({ width }: { width: number }) {
         await player.ready();
         if (disposed) return player.destroy();
         playerRef.current = player;
+        setDebugControl({
+          setVariable: (name, json) => player.setVariable(name, json),
+          rollbackTo: (position) => player.rollbackTo(position),
+        });
         const rect = canvas.getBoundingClientRect();
         player.resize(Math.round(rect.width), Math.round(rect.height));
         run(lastPlay.current);
@@ -137,8 +148,9 @@ export function PreviewPane({ width }: { width: number }) {
       observer.disconnect();
       playerRef.current?.destroy();
       playerRef.current = null;
+      setDebugControl(null);
     };
-  }, [status, run]);
+  }, [status, run, setDebugControl]);
 
   useEffect(() => {
     if (previewVersion > 0) run(lastPlay.current);
@@ -146,7 +158,7 @@ export function PreviewPane({ width }: { width: number }) {
 
   useEffect(() => {
     if (!playRequest) return;
-    lastPlay.current = { path: playRequest.path, line: playRequest.line };
+    lastPlay.current = { path: playRequest.path, line: playRequest.line, overrides: playRequest.overrides };
     if (playerRef.current) run(lastPlay.current);
     else if (status && !status.available)
       toast("Build the player to preview from a line", { description: status.buildHint });

@@ -69,8 +69,19 @@ let playNonce = 0;
 const createPreviewSlice: SliceCreator<PreviewSlice> = (set) => ({
   previewVersion: 0,
   playRequest: null,
-  playFromLine(path, line) {
-    set((s) => ({ playRequest: { path, line, nonce: ++playNonce }, layout: { ...s.layout, preview: true } }));
+  debugState: null,
+  debugControl: null,
+  setDebugState(debugState) {
+    set({ debugState });
+  },
+  setDebugControl(debugControl) {
+    set({ debugControl });
+  },
+  playFromLine(path, line, overrides) {
+    set((s) => ({
+      playRequest: { path, line, overrides, nonce: ++playNonce },
+      layout: { ...s.layout, preview: true },
+    }));
   },
 });
 

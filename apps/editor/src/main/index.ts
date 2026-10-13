@@ -6,6 +6,7 @@ import { BrowserWindow, Menu, app, dialog, ipcMain, shell, type MenuItemConstruc
 import type { ProjectEdit, Settings, SourceFile, TerminalSpawn } from "@shared/types";
 
 import { analyze } from "./analysis";
+import { chooseExportFolder, exportProject } from "./export";
 import {
   applyEdit,
   createFromTemplate,
@@ -149,6 +150,8 @@ function registerIpc(): void {
 
   ipcMain.handle("analysis:analyze", (_e, files: SourceFile[]) => analyze(files));
   ipcMain.handle("player:status", () => playerStatus());
+  ipcMain.handle("export:pick-folder", (e) => chooseExportFolder(e.sender));
+  ipcMain.handle("project:export", (_e, target: "web" | "desktop", output: string) => exportProject(target, output));
 
   ipcMain.handle("terminal:agents", () => agents());
   ipcMain.handle("terminal:spawn", (e, opts: TerminalSpawn) => spawnTerminal(e.sender, opts));

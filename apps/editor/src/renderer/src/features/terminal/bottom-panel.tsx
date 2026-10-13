@@ -15,6 +15,7 @@ import {
 import { Tooltip } from "@/components/ui/tooltip";
 import { useResolvedAppearance } from "@/hooks/use-theme";
 import { cn } from "@/lib/utils";
+import { DebugPanel } from "@/features/debug/debug-panel";
 import { useApp } from "@/store";
 import type { AgentInfo } from "@shared/types";
 
@@ -114,6 +115,7 @@ let nextKey = 1;
 export function BottomPanel({ open, height }: { open: boolean; height: number }) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [active, setActive] = useState<number | null>(null);
+  const [activeTab, setActiveTab] = useState<"debug" | "terminal">("terminal");
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const togglePanel = useApp((s) => s.togglePanel);
   const root = useApp((s) => s.project?.root);
@@ -122,6 +124,7 @@ export function BottomPanel({ open, height }: { open: boolean; height: number })
     const session = { key: nextKey++, title: agent?.name ?? "Terminal", agent: agent?.id };
     setSessions((s) => [...s, session]);
     setActive(session.key);
+    setActiveTab("terminal");
     togglePanel("bottom", true);
   };
 
@@ -159,13 +162,32 @@ export function BottomPanel({ open, height }: { open: boolean; height: number })
       aria-label="Terminal"
     >
       <div className="flex h-8 shrink-0 items-center gap-0.5 border-b bg-background/25 pr-1.5 pl-1">
-        <div role="tablist" className="flex min-w-0 items-center gap-0.5 overflow-x-auto">
+        <div
+          role="tablist"
+          aria-label="Bottom panel tabs"
+          className="flex min-w-0 items-center gap-0.5 overflow-x-auto"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "debug"}
+            onClick={() => setActiveTab("debug")}
+            className={cn(
+              "flex h-6 shrink-0 items-center rounded-md px-2 text-xs",
+              activeTab === "debug" ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            Debug
+          </button>
           {sessions.map((s) => (
             <div
               key={s.key}
               role="tab"
-              aria-selected={s.key === active}
-              onClick={() => setActive(s.key)}
+              aria-selected={activeTab === "terminal" && s.key === active}
+              onClick={() => {
+                setActive(s.key);
+                setActiveTab("terminal");
+              }}
               className={cn(
                 "group flex h-6 shrink-0 cursor-default items-center gap-1.5 rounded-md pr-1 pl-2 text-xs",
                 s.key === active ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground",
@@ -224,9 +246,13 @@ export function BottomPanel({ open, height }: { open: boolean; height: number })
         </Button>
       </div>
       <div className="relative min-h-0 flex-1">
-        {sessions.map((s) => (
-          <TerminalView key={s.key} session={s} visible={open && s.key === active} onExit={() => close(s.key)} />
-        ))}
+        {activeTab === "debug" ? (
+          <DebugPanel />
+        ) : (
+          sessions.map((s) => (
+            <TerminalView key={s.key} session={s} visible={open && s.key === active} onExit={() => close(s.key)} />
+          ))
+        )}
       </div>
     </section>
   );

@@ -41,6 +41,8 @@ function fakeApi() {
         return { path: edit.path, source: next, changed: next !== source };
       }),
       createFromTemplate: vi.fn(async () => null),
+      pickExportFolder: vi.fn(async () => null),
+      export: vi.fn(async () => "/p/export"),
     },
     analysis: {
       analyze: vi.fn(async (files: SourceFile[]): Promise<Analysis> => {

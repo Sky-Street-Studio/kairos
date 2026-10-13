@@ -21,6 +21,8 @@ const api: KairosApi = {
     renameAsset: (path, name) => ipcRenderer.invoke("project:asset-rename", path, name),
     applyEdit: (edit) => ipcRenderer.invoke("project:edit", edit),
     createFromTemplate: () => ipcRenderer.invoke("project:create"),
+    pickExportFolder: () => ipcRenderer.invoke("export:pick-folder"),
+    export: (target, output) => ipcRenderer.invoke("project:export", target, output),
   },
   analysis: {
     analyze: (files) => ipcRenderer.invoke("analysis:analyze", files),
