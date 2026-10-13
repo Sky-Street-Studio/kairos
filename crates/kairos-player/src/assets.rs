@@ -51,6 +51,13 @@ pub struct Assets {
     ready: std::rc::Rc<std::cell::RefCell<Vec<Loaded>>>,
 }
 
+#[cfg(target_arch = "wasm32")]
+#[derive(Default)]
+struct PackCache {
+    bytes: Option<Vec<u8>>,
+    pending: Option<js_sys::Promise>,
+}
+
 enum Source {
     #[cfg(not(target_arch = "wasm32"))]
     Dir { root: std::path::PathBuf, index: AssetIndex },
@@ -60,22 +67,22 @@ enum Source {
     Url {
         base: String,
         index: AssetIndex,
-        pack: Option<(String, Option<String>, std::rc::Rc<std::cell::RefCell<Option<Vec<u8>>>>)>,
+        pack: Option<(String, Option<String>, std::rc::Rc<std::cell::RefCell<PackCache>>)>,
     },
 }
 
 impl Assets {
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn dir(dir: std::path::PathBuf, key: Option<&str>) -> Assets {
+    pub fn dir(dir: std::path::PathBuf, key: Option<&str>) -> Result<Assets, String> {
         let pack_path = dir.parent().unwrap_or(&dir).join(kairos_project::assets::PACK_FILE);
-        if pack_path.is_file()
-            && let Ok(index) = kairos_project::assets::PackIndex::open(&pack_path, key)
-        {
+        if pack_path.is_file() {
+            let index = kairos_project::assets::PackIndex::open(&pack_path, key)
+                .map_err(|error| format!("{}: {error}", pack_path.display()))?;
             let assets = AssetIndex::new(index.paths());
-            return Assets { source: Source::Pack { index, assets }, ready: Default::default() };
+            return Ok(Assets { source: Source::Pack { index, assets }, ready: Default::default() });
         }
         let index = collect_paths(&dir).map(AssetIndex::new).unwrap_or_default();
-        Assets { source: Source::Dir { root: dir, index }, ready: Default::default() }
+        Ok(Assets { source: Source::Dir { root: dir, index }, ready: Default::default() })
     }
 
     /// Fetches `base` + the asset path, e.g. `kairos-asset://project/` + `images/bg room.png`.
@@ -183,7 +190,7 @@ pub fn encode_path(path: &str) -> String {
 fn fetch_request(
     base: String,
     index: AssetIndex,
-    pack: Option<(String, Option<String>, std::rc::Rc<std::cell::RefCell<Option<Vec<u8>>>>)>,
+    pack: Option<(String, Option<String>, std::rc::Rc<std::cell::RefCell<PackCache>>)>,
     request: Request,
     ready: std::rc::Rc<std::cell::RefCell<Vec<Loaded>>>,
 ) {
@@ -202,7 +209,7 @@ async fn fetch_image(
     base: &str,
     index: &AssetIndex,
     name: &str,
-    pack: Option<&(String, Option<String>, std::rc::Rc<std::cell::RefCell<Option<Vec<u8>>>>)>,
+    pack: Option<&(String, Option<String>, std::rc::Rc<std::cell::RefCell<PackCache>>)>,
 ) -> Option<(String, Vec<u8>)> {
     let tag = name.split(' ').next().unwrap_or_default();
     let manifest = index.layer_manifest(tag);
@@ -227,18 +234,10 @@ async fn fetch_image(
 async fn fetch_paths(
     base: &str,
     paths: &[String],
-    pack: Option<&(String, Option<String>, std::rc::Rc<std::cell::RefCell<Option<Vec<u8>>>>)>,
+    pack: Option<&(String, Option<String>, std::rc::Rc<std::cell::RefCell<PackCache>>)>,
 ) -> Option<(String, Vec<u8>)> {
     if let Some((pack_path, key, cache)) = pack {
-        let cached = cache.borrow().clone();
-        let bytes = match cached {
-            Some(bytes) => bytes,
-            None => {
-                let bytes = fetch_bytes(&format!("{base}{}", encode_path(pack_path))).await?;
-                *cache.borrow_mut() = Some(bytes.clone());
-                bytes
-            }
-        };
+        let bytes = fetch_pack_singleflight(base, pack_path, cache).await?;
         for path in paths {
             if let Ok(Some(bytes)) = kairos_project::assets::pack_entry(&bytes, path, key.as_deref()) {
                 return Some((path.clone(), bytes));
@@ -252,6 +251,37 @@ async fn fetch_paths(
         }
     }
     None
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn fetch_pack_singleflight(
+    base: &str,
+    path: &str,
+    cache: &std::rc::Rc<std::cell::RefCell<PackCache>>,
+) -> Option<Vec<u8>> {
+    use wasm_bindgen_futures::JsFuture;
+
+    if let Some(bytes) = cache.borrow().bytes.clone() {
+        return Some(bytes);
+    }
+    let pending = if let Some(pending) = cache.borrow().pending.clone() {
+        pending
+    } else {
+        let url = format!("{base}{}", encode_path(path));
+        let pending = wasm_bindgen_futures::future_to_promise(async move {
+            let bytes = fetch_bytes(&url).await.ok_or(wasm_bindgen::JsValue::NULL)?;
+            Ok(wasm_bindgen::JsValue::from(js_sys::Uint8Array::from(bytes.as_slice())))
+        });
+        cache.borrow_mut().pending = Some(pending.clone());
+        pending
+    };
+    let result = JsFuture::from(pending).await.ok().map(|value| js_sys::Uint8Array::new(&value).to_vec());
+    let mut cache = cache.borrow_mut();
+    cache.pending = None;
+    if let Some(bytes) = &result {
+        cache.bytes = Some(bytes.clone());
+    }
+    result
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -306,7 +336,7 @@ mod tests {
         std::fs::create_dir_all(dir.join("audio/music")).unwrap();
         std::fs::write(dir.join("images/backgrounds/bg room.jpg"), b"jpg").unwrap();
         std::fs::write(dir.join("audio/music/theme.ogg"), b"ogg").unwrap();
-        let mut assets = Assets::dir(dir.clone(), None);
+        let mut assets = Assets::dir(dir.clone(), None).unwrap();
         assets.request(Request::Image("bg room".into()));
         assets.request(Request::Audio {
             channel: "music".into(),
@@ -324,6 +354,17 @@ mod tests {
     }
 
     #[test]
+    fn corrupt_archive_returns_an_error_instead_of_using_loose_assets() {
+        let root = std::env::temp_dir().join(format!("kairos-corrupt-assets-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("assets")).unwrap();
+        std::fs::write(root.join("assets/images.png"), b"loose fallback").unwrap();
+        std::fs::write(root.join(kairos_project::assets::PACK_FILE), b"not a pack").unwrap();
+        let result = Assets::dir(root.join("assets"), None);
+        assert!(result.err().unwrap().contains("corrupt kpak archive"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn packed_sources_resolve_assets_without_loose_files() {
         let root = std::env::temp_dir().join(format!("kairos-packed-assets-{}", std::process::id()));
         let assets_dir = root.join("assets");
@@ -332,7 +373,7 @@ mod tests {
         kairos_project::assets::pack(&assets_dir, &root.join(kairos_project::assets::PACK_FILE), Some("paper-key"))
             .unwrap();
         std::fs::remove_dir_all(&assets_dir).unwrap();
-        let mut assets = Assets::dir(assets_dir, Some("paper-key"));
+        let mut assets = Assets::dir(assets_dir, Some("paper-key")).unwrap();
         assets.request(Request::Image("bg room".into()));
         assert_eq!(assets.poll()[0].bytes.as_deref(), Some(&b"packed image"[..]));
         std::fs::remove_dir_all(root).unwrap();
@@ -356,7 +397,7 @@ mod tests {
             let image = image::RgbaImage::from_pixel(1, 1, color);
             image.save(dir.join(path)).unwrap();
         }
-        let mut assets = Assets::dir(dir.clone(), None);
+        let mut assets = Assets::dir(dir.clone(), None).unwrap();
         assets.request(Request::Image("e happy".into()));
         let bytes = assets.poll().remove(0).bytes.unwrap();
         let composed = image::load_from_memory(&bytes).unwrap().into_rgba8();

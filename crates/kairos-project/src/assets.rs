@@ -11,6 +11,14 @@ pub const IMAGE_EXTENSIONS: [&str; 4] = ["png", "jpg", "jpeg", "webp"];
 pub const AUDIO_EXTENSIONS: [&str; 4] = ["ogg", "mp3", "wav", "flac"];
 pub const PACK_FILE: &str = "assets.kpak";
 
+#[derive(Debug, thiserror::Error)]
+pub enum PackError {
+    #[error("corrupt kpak archive: {0}")]
+    CorruptArchive(String),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct PackEntry {
     offset: u64,
@@ -25,28 +33,9 @@ pub struct PackIndex {
 }
 
 impl PackIndex {
-    pub fn open(path: &Path, key: Option<&str>) -> std::io::Result<PackIndex> {
+    pub fn open(path: &Path, key: Option<&str>) -> Result<PackIndex, PackError> {
         let mut file = std::fs::File::open(path)?;
-        let mut magic = [0; 8];
-        file.read_exact(&mut magic)?;
-        if &magic != b"KPAK0001" {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid kpak header"));
-        }
-        let count = read_u32(&mut file)? as usize;
-        let mut entries = BTreeMap::new();
-        for _ in 0..count {
-            let path_len = read_u32(&mut file)? as usize;
-            let mut path_bytes = vec![0; path_len];
-            file.read_exact(&mut path_bytes)?;
-            let entry_path = String::from_utf8(path_bytes)
-                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-            let offset = read_u64(&mut file)?;
-            let size = read_u64(&mut file)?;
-            if entry_path.starts_with('/') || entry_path.split('/').any(|part| part == "..") {
-                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid path in kpak index"));
-            }
-            entries.insert(entry_path, PackEntry { offset, size });
-        }
+        let entries = parse_pack_index(&mut file)?;
         Ok(PackIndex { path: path.to_path_buf(), entries, key: key.map(str::as_bytes).map(<[u8]>::to_vec) })
     }
 
@@ -67,44 +56,96 @@ impl PackIndex {
     }
 }
 
-pub fn pack_entry(data: &[u8], wanted: &str, key: Option<&str>) -> std::io::Result<Option<Vec<u8>>> {
+pub fn pack_entry(data: &[u8], wanted: &str, key: Option<&str>) -> Result<Option<Vec<u8>>, PackError> {
     let mut cursor = std::io::Cursor::new(data);
-    let mut magic = [0; 8];
-    cursor.read_exact(&mut magic)?;
-    if &magic != b"KPAK0001" {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid kpak header"));
-    }
-    let count = read_cursor_u32(&mut cursor)?;
-    for _ in 0..count {
-        let path_len = read_cursor_u32(&mut cursor)? as usize;
-        let mut path = vec![0; path_len];
-        cursor.read_exact(&mut path)?;
-        let path =
-            std::str::from_utf8(&path).map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-        let offset = read_cursor_u64(&mut cursor)? as usize;
-        let size = read_cursor_u64(&mut cursor)? as usize;
-        if path == wanted {
-            let end = offset
-                .checked_add(size)
-                .filter(|end| *end <= data.len())
-                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "kpak entry is outside archive"))?;
-            let mut bytes = data[offset..end].to_vec();
-            xor_bytes(&mut bytes, key.map(str::as_bytes));
-            return Ok(Some(bytes));
-        }
-    }
-    Ok(None)
+    let entries = parse_pack_index(&mut cursor)?;
+    let Some(entry) = entries.get(wanted) else { return Ok(None) };
+    let start = usize::try_from(entry.offset).map_err(|_| corrupt_pack("entry offset is too large"))?;
+    let size = usize::try_from(entry.size).map_err(|_| corrupt_pack("entry size is too large"))?;
+    let end = start.checked_add(size).ok_or_else(|| corrupt_pack("entry range overflows"))?;
+    let mut bytes = data[start..end].to_vec();
+    xor_bytes(&mut bytes, key.map(str::as_bytes));
+    Ok(Some(bytes))
 }
 
-fn read_cursor_u32(cursor: &mut std::io::Cursor<&[u8]>) -> std::io::Result<u32> {
+fn parse_pack_index<R: Read + Seek>(reader: &mut R) -> Result<BTreeMap<String, PackEntry>, PackError> {
+    let archive_len = reader.seek(SeekFrom::End(0))?;
+    reader.seek(SeekFrom::Start(0))?;
+    if archive_len < 12 {
+        return Err(corrupt_pack("truncated header"));
+    }
+    let mut magic = [0; 8];
+    reader.read_exact(&mut magic).map_err(|_| corrupt_pack("truncated header"))?;
+    if &magic != b"KPAK0001" {
+        return Err(corrupt_pack("invalid header"));
+    }
+    let count = read_u32_checked(reader)? as u64;
+    if count > (archive_len - 12) / 20 {
+        return Err(corrupt_pack("entry count exceeds index size"));
+    }
+    let mut entries = BTreeMap::new();
+    let mut ranges = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        let position = reader.stream_position()?;
+        if archive_len.saturating_sub(position) < 20 {
+            return Err(corrupt_pack("truncated index entry"));
+        }
+        let path_len = read_u32_checked(reader)? as u64;
+        let remaining = archive_len.saturating_sub(reader.stream_position()?);
+        if path_len > remaining.saturating_sub(16) {
+            return Err(corrupt_pack("path length exceeds remaining index"));
+        }
+        let path_len = usize::try_from(path_len).map_err(|_| corrupt_pack("path length is too large"))?;
+        let mut path_bytes = vec![0; path_len];
+        reader.read_exact(&mut path_bytes).map_err(|_| corrupt_pack("truncated path"))?;
+        let entry_path = String::from_utf8(path_bytes).map_err(|_| corrupt_pack("path is not UTF-8"))?;
+        if !safe_pack_path(&entry_path) {
+            return Err(corrupt_pack("invalid path"));
+        }
+        let offset = read_u64_checked(reader)?;
+        let size = read_u64_checked(reader)?;
+        let end = offset.checked_add(size).ok_or_else(|| corrupt_pack("entry range overflows"))?;
+        if end > archive_len {
+            return Err(corrupt_pack("entry is outside archive"));
+        }
+        ranges.push((offset, end));
+        if entries.insert(entry_path, PackEntry { offset, size }).is_some() {
+            return Err(corrupt_pack("duplicate path"));
+        }
+    }
+    let data_start = reader.stream_position()?;
+    ranges.sort_unstable();
+    let mut previous_end = data_start;
+    for (start, end) in ranges {
+        if start < data_start || start < previous_end {
+            return Err(corrupt_pack("entry ranges overlap or intersect the index"));
+        }
+        previous_end = end;
+    }
+    Ok(entries)
+}
+
+fn safe_pack_path(path: &str) -> bool {
+    !path.is_empty()
+        && !path.starts_with('/')
+        && !path.starts_with('\\')
+        && !path.contains(':')
+        && !path.split(['/', '\\']).any(|part| part.is_empty() || part == "." || part == "..")
+}
+
+fn corrupt_pack(message: &str) -> PackError {
+    PackError::CorruptArchive(message.into())
+}
+
+fn read_u32_checked(reader: &mut impl Read) -> Result<u32, PackError> {
     let mut bytes = [0; 4];
-    cursor.read_exact(&mut bytes)?;
+    reader.read_exact(&mut bytes).map_err(|_| corrupt_pack("truncated index"))?;
     Ok(u32::from_le_bytes(bytes))
 }
 
-fn read_cursor_u64(cursor: &mut std::io::Cursor<&[u8]>) -> std::io::Result<u64> {
+fn read_u64_checked(reader: &mut impl Read) -> Result<u64, PackError> {
     let mut bytes = [0; 8];
-    cursor.read_exact(&mut bytes)?;
+    reader.read_exact(&mut bytes).map_err(|_| corrupt_pack("truncated index"))?;
     Ok(u64::from_le_bytes(bytes))
 }
 
@@ -136,18 +177,6 @@ pub fn pack(root: &Path, destination: &Path, key: Option<&str>) -> std::io::Resu
         file.write_all(&bytes)?;
     }
     Ok(paths)
-}
-
-fn read_u32(file: &mut std::fs::File) -> std::io::Result<u32> {
-    let mut bytes = [0; 4];
-    file.read_exact(&mut bytes)?;
-    Ok(u32::from_le_bytes(bytes))
-}
-
-fn read_u64(file: &mut std::fs::File) -> std::io::Result<u64> {
-    let mut bytes = [0; 8];
-    file.read_exact(&mut bytes)?;
-    Ok(u64::from_le_bytes(bytes))
 }
 
 fn xor_bytes(bytes: &mut [u8], key: Option<&[u8]>) {
@@ -462,6 +491,36 @@ mod tests {
         assert_eq!(index.read("images/bg room.png").unwrap().as_deref(), Some(&b"image bytes"[..]));
         assert_eq!(index.read("missing.png").unwrap(), None);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_truncated_oversized_overlapping_and_unsafe_indexes() {
+        fn archive(count: u32, entry: &[u8]) -> Vec<u8> {
+            let mut bytes = b"KPAK0001".to_vec();
+            bytes.extend_from_slice(&count.to_le_bytes());
+            bytes.extend_from_slice(entry);
+            bytes
+        }
+        let truncated = archive(1, &[0; 4]);
+        let oversized_count = archive(u32::MAX, &[]);
+        let oversized_path = archive(1, &u32::MAX.to_le_bytes());
+        let mut traversal = Vec::new();
+        traversal.extend_from_slice(&3u32.to_le_bytes());
+        traversal.extend_from_slice(b"../");
+        traversal.extend_from_slice(&28u64.to_le_bytes());
+        traversal.extend_from_slice(&0u64.to_le_bytes());
+        let mut overlapping = Vec::new();
+        for path in [b"a".as_slice(), b"b".as_slice()] {
+            overlapping.extend_from_slice(&(path.len() as u32).to_le_bytes());
+            overlapping.extend_from_slice(path);
+            overlapping.extend_from_slice(&54u64.to_le_bytes());
+            overlapping.extend_from_slice(&4u64.to_le_bytes());
+        }
+        let cases = [truncated, oversized_count, oversized_path, archive(1, &traversal), archive(2, &overlapping)];
+        for bytes in cases {
+            let error = pack_entry(&bytes, "a", None).unwrap_err();
+            assert!(matches!(error, PackError::CorruptArchive(_)), "{error}");
+        }
     }
 
     #[test]
