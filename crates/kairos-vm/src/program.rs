@@ -2,6 +2,8 @@ use std::collections::{BTreeMap, HashMap};
 
 use kairos_script::{AssignOp, Diagnostic, Expr, Speaker, Stmt, StmtKind};
 
+use crate::eval;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct MenuChoice {
     pub text: String,
@@ -22,7 +24,8 @@ pub enum Instr {
     OpenLoad,
     OpenSettings,
     Quit,
-    Assign { name: String, op: AssignOp, value: Expr },
+    Assign { name: String, index: Vec<Expr>, op: AssignOp, value: Expr },
+    Mutate { name: String, method: String, args: Vec<Expr> },
     Scene { image: Option<Vec<String>>, with: Option<String> },
     Show { image: Vec<String>, at: Option<String>, with: Option<String> },
     Hide { tag: String, with: Option<String> },
@@ -158,7 +161,48 @@ impl Compiler {
         }
     }
 
+    fn check_names(&mut self, stmt: &Stmt) {
+        let mut exprs: Vec<&Expr> = Vec::new();
+        let mut texts: Vec<&str> = Vec::new();
+        let mut problems = Vec::new();
+        match &stmt.kind {
+            StmtKind::Define { value, .. } | StmtKind::Default { value, .. } => exprs.push(value),
+            StmtKind::Assign { index, value, .. } => exprs.extend(index.iter().chain([value])),
+            StmtKind::Mutate { method, args, .. } => {
+                problems.extend(eval::unknown_mutation(method));
+                exprs.extend(args);
+            }
+            StmtKind::If(branches) => exprs.extend(branches.iter().filter_map(|b| b.cond.as_ref())),
+            StmtKind::Say { text, .. } => texts.push(text),
+            StmtKind::Menu { caption, choices } => {
+                texts.extend(caption.iter().map(|(_, t)| t.as_str()));
+                for choice in choices {
+                    texts.push(&choice.text);
+                    exprs.extend(&choice.guard);
+                }
+            }
+            _ => {}
+        }
+        let parsed: Vec<Expr> = texts
+            .iter()
+            .flat_map(|t| match eval::interpolations(t) {
+                Ok(found) => found,
+                Err(message) => {
+                    problems.push(message);
+                    Vec::new()
+                }
+            })
+            .collect();
+        for e in exprs.into_iter().chain(&parsed) {
+            eval::unknown_names(e, &mut problems);
+        }
+        for message in problems {
+            self.diags.push((self.file, Diagnostic::new(stmt.line, message)));
+        }
+    }
+
     fn stmt(&mut self, stmt: &Stmt) {
+        self.check_names(stmt);
         let (line, src) = (stmt.line, stmt.source.as_str());
         let simple = match &stmt.kind {
             StmtKind::Label { name, body } => {
@@ -239,7 +283,12 @@ impl Compiler {
             StmtKind::OpenSettings => Instr::OpenSettings,
             StmtKind::Quit => Instr::Quit,
             StmtKind::Say { speaker, text } => Instr::Say { speaker: speaker.clone(), text: text.clone() },
-            StmtKind::Assign { name, op, value } => Instr::Assign { name: name.clone(), op: *op, value: value.clone() },
+            StmtKind::Assign { name, index, op, value } => {
+                Instr::Assign { name: name.clone(), index: index.clone(), op: *op, value: value.clone() }
+            }
+            StmtKind::Mutate { name, method, args } => {
+                Instr::Mutate { name: name.clone(), method: method.clone(), args: args.clone() }
+            }
             StmtKind::Scene { image, with } => Instr::Scene { image: image.clone(), with: with.clone() },
             StmtKind::Show { image, at, with } => {
                 Instr::Show { image: image.clone(), at: at.clone(), with: with.clone() }

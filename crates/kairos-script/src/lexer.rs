@@ -9,9 +9,9 @@ pub enum Tok {
     Op(&'static str),
 }
 
-const OPS: [&str; 22] = [
+const OPS: [&str; 25] = [
     "==", "!=", "<=", ">=", "+=", "-=", "*=", "/=", "(", ")", ":", ",", "=", "<", ">", "+", "-", "*", "/", "%", "$",
-    "[",
+    "[", "]", "{", "}",
 ];
 
 /// Strips a `#` comment that is not inside a string literal.

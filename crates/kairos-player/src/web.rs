@@ -255,8 +255,11 @@ fn from_json(value: serde_json::Value, name: &str) -> Result<Value, JsError> {
             .or_else(|| value.as_f64().map(Value::Float))
             .ok_or_else(|| error(format!("variable `{name}` number is out of range"))),
         serde_json::Value::String(value) => Ok(Value::Str(value)),
-        serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
-            Err(error(format!("variable `{name}` does not support arrays or objects")))
+        serde_json::Value::Array(items) => {
+            Ok(Value::List(items.into_iter().map(|item| from_json(item, name)).collect::<Result<_, _>>()?))
+        }
+        serde_json::Value::Object(map) => {
+            Ok(Value::Dict(map.into_iter().map(|(k, v)| Ok((k, from_json(v, name)?))).collect::<Result<_, JsError>>()?))
         }
     }
 }
@@ -270,6 +273,8 @@ fn to_json(value: &Value) -> serde_json::Value {
             serde_json::Number::from_f64(*value).map(serde_json::Value::Number).unwrap_or(serde_json::Value::Null)
         }
         Value::Str(value) => value.clone().into(),
+        Value::List(items) => items.iter().map(to_json).collect(),
+        Value::Dict(map) => map.iter().map(|(k, v)| (k.clone(), to_json(v))).collect(),
     }
 }
 

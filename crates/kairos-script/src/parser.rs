@@ -8,6 +8,14 @@ struct Line {
     text: String,
 }
 
+/// Parses one expression, such as the inside of a `[...]` interpolation in dialogue.
+pub fn parse_expr(text: &str) -> Result<Expr, Diagnostic> {
+    let mut c = Cursor::new(tokenize(text, 0)?, 0);
+    let e = c.expr()?;
+    c.end()?;
+    Ok(e)
+}
+
 pub fn parse(src: &str) -> (Vec<Stmt>, Vec<Diagnostic>) {
     let mut diags = Vec::new();
     let lines: Vec<Line> = src
@@ -114,6 +122,21 @@ impl Parser {
             Some(Tok::Op("$")) => {
                 c.next();
                 let name = c.ident()?;
+                if c.peek() == Some(&Tok::Op("(")) {
+                    let Some((name, method)) = name.rsplit_once('.') else {
+                        return Err(c.err("expected an assignment like `$ x = 1` or a change like `$ xs.append(1)`"));
+                    };
+                    c.next();
+                    let args = c.list_of(")", Cursor::expr)?;
+                    c.end()?;
+                    return Ok(StmtKind::Mutate { name: name.into(), method: method.into(), args });
+                }
+                let mut index = Vec::new();
+                while c.peek() == Some(&Tok::Op("[")) {
+                    c.next();
+                    index.push(c.expr()?);
+                    c.op("]")?;
+                }
                 let op = match c.next() {
                     Some(Tok::Op("=")) => AssignOp::Set,
                     Some(Tok::Op("+=")) => AssignOp::Add,
@@ -122,7 +145,7 @@ impl Parser {
                     Some(Tok::Op("/=")) => AssignOp::Div,
                     _ => return Err(c.err("expected an assignment like `$ x = 1`")),
                 };
-                StmtKind::Assign { name, op, value: c.expr()? }
+                StmtKind::Assign { name, index, op, value: c.expr()? }
             }
             Some(Tok::Str(_)) | Some(Tok::Ident(_)) if is_say(&c) => say(&mut c)?,
             Some(Tok::Ident(kw)) => {
@@ -457,15 +480,21 @@ impl Cursor {
 
     fn binary(&mut self, min_prec: u8) -> Result<Expr, Diagnostic> {
         let mut lhs = self.unary()?;
-        while let Some((op, prec)) = self.peek().and_then(binop) {
+        while let Some((op, prec)) = self.peek_binop() {
             if prec < min_prec {
                 break;
             }
-            self.pos += 1;
+            self.pos += if op == BinOp::NotIn { 2 } else { 1 };
             let rhs = self.binary(prec + 1)?;
             lhs = Expr::Binary(op, Box::new(lhs), Box::new(rhs));
         }
         Ok(lhs)
+    }
+
+    fn peek_binop(&self) -> Option<(BinOp, u8)> {
+        let not_in = matches!(self.peek(), Some(Tok::Ident(s)) if s == "not")
+            && matches!(self.toks.get(self.pos + 1), Some(Tok::Ident(s)) if s == "in");
+        if not_in { Some((BinOp::NotIn, 4)) } else { self.peek().and_then(binop) }
     }
 
     fn unary(&mut self) -> Result<Expr, Diagnostic> {
@@ -484,10 +513,29 @@ impl Cursor {
     }
 
     fn primary(&mut self) -> Result<Expr, Diagnostic> {
+        let mut e = self.atom()?;
+        while self.peek() == Some(&Tok::Op("[")) {
+            self.pos += 1;
+            let index = self.expr()?;
+            self.op("]")?;
+            e = Expr::Index(Box::new(e), Box::new(index));
+        }
+        Ok(e)
+    }
+
+    fn atom(&mut self) -> Result<Expr, Diagnostic> {
         match self.next() {
             Some(Tok::Int(n)) => Ok(Expr::Lit(Value::Int(n))),
             Some(Tok::Float(n)) => Ok(Expr::Lit(Value::Float(n))),
             Some(Tok::Str(s)) => Ok(Expr::Lit(Value::Str(s))),
+            Some(Tok::Ident(s)) if self.peek() == Some(&Tok::Op("(")) => {
+                self.pos += 1;
+                let args = self.list_of(")", Self::expr)?;
+                Ok(match s.rsplit_once('.') {
+                    Some((receiver, method)) => Expr::Method(Box::new(Expr::Var(receiver.into())), method.into(), args),
+                    None => Expr::Call(s, args),
+                })
+            }
             Some(Tok::Ident(s)) => Ok(match s.as_str() {
                 "True" | "true" => Expr::Lit(Value::Bool(true)),
                 "False" | "false" => Expr::Lit(Value::Bool(false)),
@@ -499,8 +547,35 @@ impl Cursor {
                 self.op(")")?;
                 Ok(e)
             }
+            Some(Tok::Op("[")) => Ok(Expr::List(self.list_of("]", Self::expr)?)),
+            Some(Tok::Op("{")) => Ok(Expr::Dict(self.list_of("}", |c| {
+                let key = c.expr()?;
+                c.colon()?;
+                Ok((key, c.expr()?))
+            })?)),
             Some(t) => Err(self.err(format!("unexpected {} in expression", describe(&t)))),
             None => Err(self.err("expected an expression")),
+        }
+    }
+
+    /// Comma-separated items up to `close`, allowing a trailing comma.
+    fn list_of<T>(
+        &mut self,
+        close: &'static str,
+        mut item: impl FnMut(&mut Self) -> Result<T, Diagnostic>,
+    ) -> Result<Vec<T>, Diagnostic> {
+        let mut items = Vec::new();
+        loop {
+            if self.peek() == Some(&Tok::Op(close)) {
+                self.pos += 1;
+                return Ok(items);
+            }
+            items.push(item(self)?);
+            match self.next() {
+                Some(Tok::Op(",")) => {}
+                Some(Tok::Op(op)) if op == close => return Ok(items),
+                _ => return Err(self.err(format!("expected `,` or `{close}`"))),
+            }
         }
     }
 }
@@ -509,6 +584,7 @@ fn binop(t: &Tok) -> Option<(BinOp, u8)> {
     Some(match t {
         Tok::Ident(s) if s == "or" => (BinOp::Or, 1),
         Tok::Ident(s) if s == "and" => (BinOp::And, 2),
+        Tok::Ident(s) if s == "in" => (BinOp::In, 4),
         Tok::Op("==") => (BinOp::Eq, 4),
         Tok::Op("!=") => (BinOp::Ne, 4),
         Tok::Op("<") => (BinOp::Lt, 4),

@@ -93,6 +93,30 @@ label start:
 
 `default` sets a starting value only the first time the game runs. A `persistent.*` name that was never set reads as `None`.
 
+### Lists, dictionaries and random numbers
+
+Variables can hold lists and dictionaries. Dictionary keys are strings.
+
+```
+default inventory = []
+default affection = {"kai": 0, "eileen": 0}
+
+label start:
+    $ inventory.append("map")
+    $ affection["kai"] += randint(1, 3)
+    if "map" in inventory and affection["kai"] > 2:
+        "You have [len(inventory)] items. The first is [inventory[0]]."
+    $ ending = choice(["rain", "sun"])
+```
+
+- Read with `xs[0]`, `xs[-1]`, `d["key"]`, `x in xs`, `"key" in d`, `x not in xs`, and `+` to join lists.
+- Change in place with `$ xs.append(v)`, `extend(list)`, `insert(i, v)`, `remove(v)`, `pop()`, `pop(i)`, `clear()`, `$ d.pop("key")`, and assignment such as `$ d["a"]["b"] = 1`.
+- Read-only methods: `d.get("key", default)`, `d.keys()`, `d.values()`, `xs.count(v)`, `xs.index(v)`.
+- Functions: `len`, `min`, `max`, `abs`, `int`, `float`, `str`, `round`, `range`, `random()` (0 to 1), `randint(a, b)` (inclusive) and `choice(list)`.
+- `[...]` in dialogue takes any expression: `"[affection['kai'] + 1]"`.
+
+Each new game gets its own random seed. Rollback and loading replay the same draws, so a player cannot reroll a result by stepping back. `kairos check` reports unknown functions and methods.
+
 ## Project layout
 
 ```

@@ -8,7 +8,7 @@ use crate::program::{Instr, Program};
 use crate::vm::{RuntimeError, Stage, State, Track, Vm};
 
 const MAGIC: &[u8; 4] = b"KSAV";
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 /// How many earlier statement IDs a save keeps for finding its place after a patch.
 const CONTEXT: usize = 32;
 
@@ -29,6 +29,25 @@ struct SaveData {
     store: BTreeMap<String, Value>,
     stage: Stage,
     audio: BTreeMap<String, Track>,
+    rng: u64,
+}
+
+/// The version 2 layout, from before random numbers.
+#[derive(Deserialize)]
+struct SaveDataV2 {
+    pc: Position,
+    stack: Vec<Position>,
+    store: BTreeMap<String, Value>,
+    stage: Stage,
+    audio: BTreeMap<String, Track>,
+}
+
+impl From<SaveDataV2> for SaveData {
+    fn from(v2: SaveDataV2) -> SaveData {
+        // Any seed works; deriving it from the saved line keeps old saves from sharing one.
+        let rng = v2.pc.id.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3));
+        SaveData { pc: v2.pc, stack: v2.stack, store: v2.store, stage: v2.stage, audio: v2.audio, rng }
+    }
 }
 
 /// The version 1 layout, which stored bare IDs.
@@ -41,10 +60,10 @@ struct SaveDataV1 {
     audio: BTreeMap<String, Track>,
 }
 
-impl From<SaveDataV1> for SaveData {
-    fn from(v1: SaveDataV1) -> SaveData {
+impl From<SaveDataV1> for SaveDataV2 {
+    fn from(v1: SaveDataV1) -> SaveDataV2 {
         let position = |id: String| Position { id, before: Vec::new() };
-        SaveData {
+        SaveDataV2 {
             pc: position(v1.pc),
             stack: v1.stack.into_iter().map(position).collect(),
             store: v1.store,
@@ -122,6 +141,7 @@ impl Vm {
             store: state.store.clone(),
             stage: state.stage.clone(),
             audio: state.audio.clone(),
+            rng: state.rng.get(),
         };
         let mut out = MAGIC.to_vec();
         out.extend(postcard::to_allocvec(&VERSION).expect("a version always serialises"));
@@ -134,7 +154,8 @@ impl Vm {
         let body = bytes.strip_prefix(MAGIC).ok_or(LoadError::NotASave)?;
         let (version, body) = postcard::take_from_bytes::<u32>(body)?;
         let data: SaveData = match version {
-            1 => postcard::from_bytes::<SaveDataV1>(body)?.into(),
+            1 => SaveDataV2::from(postcard::from_bytes::<SaveDataV1>(body)?).into(),
+            2 => postcard::from_bytes::<SaveDataV2>(body)?.into(),
             VERSION => postcard::from_bytes(body)?,
             _ => return Err(LoadError::UnsupportedVersion(version)),
         };
@@ -147,7 +168,15 @@ impl Vm {
         }
         let mut vm = Vm::new(program.clone())?;
         vm.state.store.extend(data.store);
-        vm.state = State { pc, stack, stage: data.stage, audio: data.audio, menu: None, store: vm.state.store.clone() };
+        vm.state = State {
+            pc,
+            stack,
+            stage: data.stage,
+            audio: data.audio,
+            menu: None,
+            store: vm.state.store.clone(),
+            rng: data.rng.into(),
+        };
         vm.relocated = relocated;
         Ok(vm)
     }
@@ -205,7 +234,7 @@ mod tests {
         bytes.extend([0xff; 8]);
         assert!(matches!(
             Vm::load(program("label start:\n    return\n"), &bytes),
-            Err(LoadError::UnsupportedVersion(3))
+            Err(LoadError::UnsupportedVersion(v)) if v == VERSION + 1
         ));
     }
 }

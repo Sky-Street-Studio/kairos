@@ -5,7 +5,7 @@ mod lexer;
 mod parser;
 
 pub use ast::*;
-pub use parser::parse;
+pub use parser::{parse, parse_expr};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
