@@ -111,7 +111,7 @@ export const createProjectSlice: SliceCreator<ProjectSlice> = (set, get, api) =>
     insertAtCursor(statement, line) {
       const { cursor, activeId, tabs, buffers } = get();
       const active = tabs.find((t) => t.id === activeId);
-      const path = active?.kind === "file" ? active.path : cursor?.path;
+      const path = active?.kind === "file" && active.path in buffers ? active.path : cursor?.path;
       const buffer = path ? buffers[path] : undefined;
       if (!path || !buffer) return false;
       const at = line ?? (cursor?.path === path ? cursor.line : buffer.source.split("\n").length);

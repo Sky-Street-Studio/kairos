@@ -1,28 +1,15 @@
-import {
-  ChevronRight,
-  FileCode2,
-  FileCog,
-  FileImage,
-  FileMusic,
-  FileText,
-  Folder,
-  FolderOpen,
-  Music,
-  Images,
-  Plus,
-  RefreshCw,
-  UserRound,
-} from "lucide-react";
+import { ChevronRight, Folder, FolderOpen, Music, Images, Plus, RefreshCw, UserRound } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { isDirty, useApp } from "@/store";
-import { assetUrl } from "@shared/assets";
+import { assetUrl, fileKind } from "@shared/assets";
 import type { TreeNode } from "@shared/types";
 
 import { startAssetDrag } from "../stage/asset-drag";
+import { FileIcon } from "./file-icon";
 
 function Section({
   title,
@@ -62,14 +49,6 @@ function Section({
   );
 }
 
-function fileIcon(path: string) {
-  if (path.endsWith(".kai")) return <FileCode2 className="text-primary" />;
-  if (path.endsWith(".toml")) return <FileCog />;
-  if (/\.(png|jpe?g|webp)$/i.test(path)) return <FileImage />;
-  if (/\.(ogg|mp3|wav|flac)$/i.test(path)) return <FileMusic />;
-  return <FileText />;
-}
-
 function TreeRows({ nodes, depth }: { nodes: TreeNode[]; depth: number }) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const activeId = useApp((s) => s.activeId);
@@ -97,21 +76,22 @@ function TreeRows({ nodes, depth }: { nodes: TreeNode[]; depth: number }) {
             </div>
           );
         }
-        const editable = n.path in buffers;
+        const kind = fileKind(n.path);
+        const openable = kind === "script" ? n.path in buffers : kind !== null;
         const errors = diagnostics.filter((d) => d.path === n.path).length;
         return (
           <button
             key={n.path}
             type="button"
             style={pad}
-            disabled={!editable}
+            disabled={!openable}
             onClick={() => openFile(n.path)}
             className={cn(
               "flex h-6 w-full items-center gap-1.5 pr-2 text-xs hover:bg-accent disabled:cursor-default disabled:text-muted-foreground disabled:hover:bg-transparent [&_svg]:size-3.5 [&_svg]:shrink-0",
               activeId === n.path && "bg-accent font-medium text-foreground",
             )}
           >
-            {fileIcon(n.path)}
+            <FileIcon path={n.path} className={cn(kind === "script" && "text-primary")} />
             <span className="truncate">{n.name}</span>
             {isDirty(buffers[n.path]) && (
               <span
@@ -181,6 +161,7 @@ function Assets() {
   const images = assets.filter((a) => a.kind === "image").slice(0, 6);
   const audio = assets.filter((a) => a.kind === "audio").slice(0, 4);
   const openView = useApp((s) => s.openView);
+  const openFile = useApp((s) => s.openFile);
   return (
     <Section
       title="Assets"
@@ -204,8 +185,9 @@ function Assets() {
             <button
               type="button"
               key={a.path}
-              aria-label={`Drag ${a.name} image`}
+              aria-label={`Open ${a.name} image`}
               draggable
+              onClick={() => openFile(a.path)}
               onDragStart={(e) => startAssetDrag(e, a)}
               className="flex h-7 cursor-grab items-center gap-2 px-3 text-xs hover:bg-accent active:cursor-grabbing"
               data-testid="asset-thumb"
@@ -219,8 +201,9 @@ function Assets() {
             <button
               type="button"
               key={a.path}
-              aria-label={`Drag ${a.name} audio`}
+              aria-label={`Open ${a.name} audio`}
               draggable
+              onClick={() => openFile(a.path)}
               onDragStart={(e) => startAssetDrag(e, a)}
               className="flex h-7 cursor-grab items-center gap-2 px-3 text-xs hover:bg-accent active:cursor-grabbing"
             >

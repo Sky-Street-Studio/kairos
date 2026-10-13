@@ -156,6 +156,15 @@ describe("app store", () => {
     expect(store.getState().reveal).toMatchObject({ path: "script/a.kai", line: 4 });
   });
 
+  it("opens a preview tab and still inserts into the script under the cursor", () => {
+    const s = store.getState();
+    s.setCursor("script/a.kai", 3);
+    s.openFile("assets/audio/theme.ogg");
+    expect(store.getState().activeId).toBe("assets/audio/theme.ogg");
+    expect(s.insertAtCursor("play music theme")).toBe(true);
+    expect(store.getState().buffers["script/a.kai"]!.source.split("\n")[3]).toBe("    play music theme");
+  });
+
   it("toggles panels, persists layout and opens the preview on play", () => {
     const s = store.getState();
     s.togglePanel("bottom");
