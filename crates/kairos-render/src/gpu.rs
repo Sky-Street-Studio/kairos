@@ -274,6 +274,10 @@ impl Renderer {
         self.images.get(name).map(|i| i.size)
     }
 
+    pub fn remove_image(&mut self, name: &str) {
+        self.images.remove(name);
+    }
+
     /// Snapshots the last rendered scene; the next frames blend from it to the new scene.
     pub fn begin_transition(&mut self, kind: TransitionKind, seconds: f32) {
         let mut encoder = self.device.create_command_encoder(&Default::default());

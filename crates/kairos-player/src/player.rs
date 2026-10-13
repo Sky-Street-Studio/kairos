@@ -1,6 +1,6 @@
 //! Ties the game, renderer, audio and assets together. Platform shells feed it input and frames.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use kairos_audio::{Audio, Bus, Sound};
 use kairos_project::{
@@ -81,6 +81,11 @@ pub struct Player {
     pending_audio: Vec<Loaded>,
     assets: Assets,
     images: HashMap<String, ImageInfo>,
+    image_lru: HashMap<String, u64>,
+    image_clock: u64,
+    image_memory_used: usize,
+    image_memory_budget: usize,
+    active_images: HashSet<String>,
     saves: SaveStore,
     slots: Vec<Option<String>>,
     mouse: (f32, f32),
@@ -150,6 +155,11 @@ impl Player {
             pending_audio: Vec::new(),
             assets,
             images: HashMap::new(),
+            image_lru: HashMap::new(),
+            image_clock: 0,
+            image_memory_used: 0,
+            image_memory_budget: (project.manifest.assets.memory_budget_mb as usize).max(1).saturating_mul(1024 * 1024),
+            active_images: HashSet::new(),
             saves,
             slots: Vec::new(),
             mouse: (-1.0, -1.0),
@@ -837,12 +847,18 @@ impl Player {
                 }
             }
         }
+        self.active_images = names.iter().cloned().collect();
+        names.extend(self.game.prefetch_images(20));
         for name in names {
-            if !self.images.contains_key(&name) {
+            if self.images.contains_key(&name) {
+                self.image_clock = self.image_clock.wrapping_add(1);
+                self.image_lru.insert(name, self.image_clock);
+            } else {
                 self.images.insert(name.clone(), ImageInfo::Loading);
                 self.assets.request(Request::Image(name));
             }
         }
+        self.evict_images();
     }
 
     fn receive_assets(&mut self) {
@@ -884,6 +900,11 @@ impl Player {
                     Ok(image) => {
                         let size = image.dimensions();
                         self.renderer.upload_image(&name, size, image.as_raw());
+                        self.image_memory_used = self
+                            .image_memory_used
+                            .saturating_add((size.0 as usize).saturating_mul(size.1 as usize).saturating_mul(4));
+                        self.image_clock = self.image_clock.wrapping_add(1);
+                        self.image_lru.insert(name.clone(), self.image_clock);
                         ImageInfo::Ready(size.0, size.1)
                     }
                     Err(e) => {
@@ -910,6 +931,27 @@ impl Player {
             }
             (Request::FallbackFont(path), None) => log(&format!("fallback font `{path}` not found under assets")),
             _ => {}
+        }
+    }
+
+    fn evict_images(&mut self) {
+        while self.image_memory_used > self.image_memory_budget {
+            let Some(name) = self
+                .image_lru
+                .iter()
+                .filter(|(name, _)| !self.active_images.contains(*name))
+                .min_by_key(|(_, used)| *used)
+                .map(|(name, _)| name.clone())
+            else {
+                break;
+            };
+            if let Some(ImageInfo::Ready(width, height)) = self.images.remove(&name) {
+                self.image_memory_used = self
+                    .image_memory_used
+                    .saturating_sub((width as usize).saturating_mul(height as usize).saturating_mul(4));
+            }
+            self.image_lru.remove(&name);
+            self.renderer.remove_image(&name);
         }
     }
 

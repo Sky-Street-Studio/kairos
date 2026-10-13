@@ -91,10 +91,11 @@ mod bindings {
         project: String,
         #[napi(ts_arg_type = "'web' | 'desktop' | 'windows-x64' | 'linux-x64' | 'macos'")] target: String,
         output: String,
+        pack_assets: bool,
         player_binary: Option<String>,
         player_pkg: Option<String>,
     ) -> napi::Result<String> {
-        export::export_game(&project, &target, &output, player_binary.as_deref(), player_pkg.as_deref())
+        export::export_game(&project, &target, &output, player_binary.as_deref(), player_pkg.as_deref(), pack_assets)
             .map_err(napi::Error::from_reason)
     }
 

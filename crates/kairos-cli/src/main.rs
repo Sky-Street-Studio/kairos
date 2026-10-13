@@ -33,6 +33,8 @@ enum Command {
         player_pkg: Option<PathBuf>,
         #[arg(long)]
         player_binary: Option<PathBuf>,
+        #[arg(long)]
+        pack_assets: bool,
     },
     /// Explore every reachable route and report problems.
     TestRoutes {
@@ -98,7 +100,7 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
-    if let Command::Export { project, target, out, player_pkg, player_binary } = &cli.command {
+    if let Command::Export { project, target, out, player_pkg, player_binary, pack_assets } = &cli.command {
         let target = match target {
             ExportTarget::Web => kairos_project::export::ExportTarget::Web,
             ExportTarget::Desktop => kairos_project::export::ExportTarget::Desktop,
@@ -111,7 +113,14 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             None if is_host_target(target) => Some(std::env::current_exe()?),
             None => None,
         };
-        let result = kairos_project::export::export(project, out, target, player.as_deref(), player_pkg.as_deref())?;
+        let result = kairos_project::export::export(
+            project,
+            out,
+            target,
+            player.as_deref(),
+            player_pkg.as_deref(),
+            *pack_assets,
+        )?;
         println!("exported to {}", result.display());
         return Ok(ExitCode::SUCCESS);
     }

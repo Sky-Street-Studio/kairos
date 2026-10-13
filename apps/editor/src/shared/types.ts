@@ -182,7 +182,7 @@ export interface KairosApi {
     pickProjectLocation(): Promise<string | null>;
     createFromTemplate(template: string, name: string, parent: string): Promise<string | null>;
     pickExportFolder(): Promise<string | null>;
-    export(target: ExportTarget, output: string): Promise<string>;
+    export(target: ExportTarget, output: string, packAssets: boolean): Promise<string>;
   };
   analysis: {
     analyze(input: AnalyzeInput): Promise<Analysis>;

@@ -13,6 +13,7 @@ export function ExportDialog({ open, onClose }: { open: boolean; onClose(): void
   const [output, setOutput] = useState<string | null>(null);
   const [result, setResult] = useState<{ path?: string; error?: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [packAssets, setPackAssets] = useState(false);
 
   const chooseFolder = async () => {
     const path = await window.kairos.project.pickExportFolder();
@@ -28,7 +29,7 @@ export function ExportDialog({ open, onClose }: { open: boolean; onClose(): void
     setResult(null);
     try {
       await saveAll();
-      setResult({ path: await window.kairos.project.export(target, output) });
+      setResult({ path: await window.kairos.project.export(target, output, packAssets) });
     } catch (error) {
       setResult({ error: error instanceof Error ? error.message : String(error) });
     } finally {
@@ -61,6 +62,10 @@ export function ExportDialog({ open, onClose }: { open: boolean; onClose(): void
           <option value="linux-x64">Linux x64</option>
           <option value="macos">macOS</option>
         </select>
+        <label className="mt-4 flex items-center gap-2 text-xs">
+          <input type="checkbox" checked={packAssets} onChange={(event) => setPackAssets(event.target.checked)} />
+          Pack assets into a .kpak archive
+        </label>
         <div className="mt-4 flex items-center gap-2">
           <div className="min-w-0 flex-1 truncate rounded-md border bg-background/60 px-2 py-1.5 text-xs text-muted-foreground">
             {output ?? "No output folder selected"}

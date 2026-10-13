@@ -18,7 +18,7 @@ export async function pickExportFolder(parent: Electron.BrowserWindow): Promise<
   return result.canceled ? null : (result.filePaths[0] ?? null);
 }
 
-export function exportProject(target: ExportTarget, output: string): string {
+export function exportProject(target: ExportTarget, output: string, packAssets: boolean): string {
   const root = projectRoot();
   if (!root) throw new Error("No project is open");
   const hostPlayerBinary =
@@ -40,7 +40,7 @@ export function exportProject(target: ExportTarget, output: string): string {
       target === "desktop" ? "KAIROS_PLAYER_BINARY" : `KAIROS_PLAYER_BINARY_${target.toUpperCase().replace("-", "_")}`;
     throw new Error(`Kairos ${target} player binary not found; set ${setting}.`);
   }
-  return napi().exportGame(root, target, output, playerBinary, playerPkgDir());
+  return napi().exportGame(root, target, output, packAssets, playerBinary, playerPkgDir());
 }
 
 export async function chooseExportFolder(sender: Electron.WebContents): Promise<string | null> {

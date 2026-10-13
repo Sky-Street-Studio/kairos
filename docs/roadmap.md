@@ -43,16 +43,19 @@ Windows and Linux export, optional macOS signing and notarization, and optional 
 
 The contract and implementation decisions are in `text-and-staging.md`. Script diagnostics reject malformed markup with file and line; the shared renderer handles formatting, inline waits, inline ruby, and NVL. CJK wrapping and native system/theme-provided fallback fonts are implemented. Sprite/camera timelines and screen effects are saved, roll back, and snap under skip. Ruby annotation positioning, animated text shake, and bundled fallback fonts remain; per-image shaders are deferred.
 
-## 5. Route testing (done)
+## 6. Route testing (done)
 
 `kairos test-routes` explores reachable branches and reports unreachable labels, missing reachable assets, runtime dead ends and unresolved menu choices. Contract: `route-testing.md`.
+
+## 7. Asset streaming and packing (done)
+
+The player loads images on demand, prefetches upcoming ones and evicts textures beyond a memory budget. Exports can bundle assets in `.kpak` archives with optional XOR obfuscation. Contract: `asset-packing.md`.
 
 ## Next in line
 
 Ordered by how often they block a release:
 
 - **Video playback.** Opening movies and animated cutscenes.
-- **Asset streaming and packing.** Load and evict images on demand, and pack assets into archives (optionally encrypted) instead of shipping loose files.
 - **Voice workflow.** Voice files resolved by line ID, per-character volume and voice replay from the history screen.
 - **Accessibility.** Controller input, text-to-speech, font scaling.
 - **Mobile and console ports.** The wgpu player can target iOS, Android and Switch, which Ren'Py struggles with.

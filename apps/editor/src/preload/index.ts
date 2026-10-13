@@ -29,7 +29,7 @@ const api: KairosApi = {
     pickProjectLocation: () => ipcRenderer.invoke("project:pick-location"),
     createFromTemplate: (template, name, parent) => ipcRenderer.invoke("project:create", template, name, parent),
     pickExportFolder: () => ipcRenderer.invoke("export:pick-folder"),
-    export: (target, output) => ipcRenderer.invoke("project:export", target, output),
+    export: (target, output, packAssets) => ipcRenderer.invoke("project:export", target, output, packAssets),
   },
   analysis: {
     analyze: (input) => ipcRenderer.invoke("analysis:analyze", input),

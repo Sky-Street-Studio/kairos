@@ -1,13 +1,162 @@
 //! Asset names resolve to paths relative to the project's `assets/` directory.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
 
 use kairos_script::{Stmt, StmtKind};
 
 pub const ASSETS_DIR: &str = "assets";
 pub const IMAGE_EXTENSIONS: [&str; 4] = ["png", "jpg", "jpeg", "webp"];
 pub const AUDIO_EXTENSIONS: [&str; 4] = ["ogg", "mp3", "wav", "flac"];
+pub const PACK_FILE: &str = "assets.kpak";
+
+#[derive(Debug, Clone, Copy)]
+pub struct PackEntry {
+    offset: u64,
+    size: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct PackIndex {
+    path: PathBuf,
+    entries: BTreeMap<String, PackEntry>,
+    key: Option<Vec<u8>>,
+}
+
+impl PackIndex {
+    pub fn open(path: &Path, key: Option<&str>) -> std::io::Result<PackIndex> {
+        let mut file = std::fs::File::open(path)?;
+        let mut magic = [0; 8];
+        file.read_exact(&mut magic)?;
+        if &magic != b"KPAK0001" {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid kpak header"));
+        }
+        let count = read_u32(&mut file)? as usize;
+        let mut entries = BTreeMap::new();
+        for _ in 0..count {
+            let path_len = read_u32(&mut file)? as usize;
+            let mut path_bytes = vec![0; path_len];
+            file.read_exact(&mut path_bytes)?;
+            let entry_path = String::from_utf8(path_bytes)
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+            let offset = read_u64(&mut file)?;
+            let size = read_u64(&mut file)?;
+            if entry_path.starts_with('/') || entry_path.split('/').any(|part| part == "..") {
+                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid path in kpak index"));
+            }
+            entries.insert(entry_path, PackEntry { offset, size });
+        }
+        Ok(PackIndex { path: path.to_path_buf(), entries, key: key.map(str::as_bytes).map(<[u8]>::to_vec) })
+    }
+
+    pub fn paths(&self) -> impl Iterator<Item = &str> {
+        self.entries.keys().map(String::as_str)
+    }
+
+    pub fn read(&self, path: &str) -> std::io::Result<Option<Vec<u8>>> {
+        let Some(entry) = self.entries.get(path) else { return Ok(None) };
+        let size = usize::try_from(entry.size)
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "kpak entry is too large"))?;
+        let mut bytes = vec![0; size];
+        let mut file = std::fs::File::open(&self.path)?;
+        file.seek(SeekFrom::Start(entry.offset))?;
+        file.read_exact(&mut bytes)?;
+        xor_bytes(&mut bytes, self.key.as_deref());
+        Ok(Some(bytes))
+    }
+}
+
+pub fn pack_entry(data: &[u8], wanted: &str, key: Option<&str>) -> std::io::Result<Option<Vec<u8>>> {
+    let mut cursor = std::io::Cursor::new(data);
+    let mut magic = [0; 8];
+    cursor.read_exact(&mut magic)?;
+    if &magic != b"KPAK0001" {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid kpak header"));
+    }
+    let count = read_cursor_u32(&mut cursor)?;
+    for _ in 0..count {
+        let path_len = read_cursor_u32(&mut cursor)? as usize;
+        let mut path = vec![0; path_len];
+        cursor.read_exact(&mut path)?;
+        let path =
+            std::str::from_utf8(&path).map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+        let offset = read_cursor_u64(&mut cursor)? as usize;
+        let size = read_cursor_u64(&mut cursor)? as usize;
+        if path == wanted {
+            let end = offset
+                .checked_add(size)
+                .filter(|end| *end <= data.len())
+                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "kpak entry is outside archive"))?;
+            let mut bytes = data[offset..end].to_vec();
+            xor_bytes(&mut bytes, key.map(str::as_bytes));
+            return Ok(Some(bytes));
+        }
+    }
+    Ok(None)
+}
+
+fn read_cursor_u32(cursor: &mut std::io::Cursor<&[u8]>) -> std::io::Result<u32> {
+    let mut bytes = [0; 4];
+    cursor.read_exact(&mut bytes)?;
+    Ok(u32::from_le_bytes(bytes))
+}
+
+fn read_cursor_u64(cursor: &mut std::io::Cursor<&[u8]>) -> std::io::Result<u64> {
+    let mut bytes = [0; 8];
+    cursor.read_exact(&mut bytes)?;
+    Ok(u64::from_le_bytes(bytes))
+}
+
+pub fn pack(root: &Path, destination: &Path, key: Option<&str>) -> std::io::Result<Vec<String>> {
+    let paths = collect_paths(root)?;
+    let header_size = 12u64 + paths.iter().map(|path| 4 + path.len() as u64 + 16).sum::<u64>();
+    let mut data_offset = header_size;
+    let mut entries = Vec::with_capacity(paths.len());
+    for path in &paths {
+        let size = std::fs::metadata(root.join(path))?.len();
+        entries.push((path, data_offset, size));
+        data_offset += size;
+    }
+    if let Some(parent) = destination.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut file = std::fs::File::create(destination)?;
+    file.write_all(b"KPAK0001")?;
+    file.write_all(&(paths.len() as u32).to_le_bytes())?;
+    for (path, offset, size) in &entries {
+        file.write_all(&(path.len() as u32).to_le_bytes())?;
+        file.write_all(path.as_bytes())?;
+        file.write_all(&offset.to_le_bytes())?;
+        file.write_all(&size.to_le_bytes())?;
+    }
+    for path in &paths {
+        let mut bytes = std::fs::read(root.join(path))?;
+        xor_bytes(&mut bytes, key.map(str::as_bytes));
+        file.write_all(&bytes)?;
+    }
+    Ok(paths)
+}
+
+fn read_u32(file: &mut std::fs::File) -> std::io::Result<u32> {
+    let mut bytes = [0; 4];
+    file.read_exact(&mut bytes)?;
+    Ok(u32::from_le_bytes(bytes))
+}
+
+fn read_u64(file: &mut std::fs::File) -> std::io::Result<u64> {
+    let mut bytes = [0; 8];
+    file.read_exact(&mut bytes)?;
+    Ok(u64::from_le_bytes(bytes))
+}
+
+fn xor_bytes(bytes: &mut [u8], key: Option<&[u8]>) {
+    if let Some(key) = key.filter(|key| !key.is_empty()) {
+        for (index, byte) in bytes.iter_mut().enumerate() {
+            *byte ^= key[index % key.len()];
+        }
+    }
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct AssetIndex {
@@ -292,6 +441,27 @@ mod tests {
 
     fn words(s: &str) -> Vec<String> {
         s.split(' ').map(String::from).collect()
+    }
+
+    #[test]
+    fn kpak_index_reads_entries_with_or_without_xor_obfuscation() {
+        let root = std::env::temp_dir().join(format!("kairos-kpak-{}", std::process::id()));
+        let assets = root.join("assets");
+        std::fs::create_dir_all(assets.join("images")).unwrap();
+        std::fs::write(assets.join("images/bg room.png"), b"image bytes").unwrap();
+        let packed = root.join(PACK_FILE);
+        let paths = pack(&assets, &packed, Some("paper-key")).unwrap();
+        assert_eq!(paths, ["images/bg room.png"]);
+        let index = PackIndex::open(&packed, Some("paper-key")).unwrap();
+        assert_eq!(index.paths().collect::<Vec<_>>(), ["images/bg room.png"]);
+        let archive = std::fs::read(&packed).unwrap();
+        assert_eq!(
+            pack_entry(&archive, "images/bg room.png", Some("paper-key")).unwrap().as_deref(),
+            Some(&b"image bytes"[..])
+        );
+        assert_eq!(index.read("images/bg room.png").unwrap().as_deref(), Some(&b"image bytes"[..]));
+        assert_eq!(index.read("missing.png").unwrap(), None);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
