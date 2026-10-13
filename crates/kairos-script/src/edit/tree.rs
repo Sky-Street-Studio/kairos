@@ -13,8 +13,6 @@ pub(crate) struct Node<'a> {
 pub(crate) struct Body<'a> {
     pub header: usize,
     pub nodes: Vec<Node<'a>>,
-    // Read by the scene operations in Task 5; drop this allow once they land.
-    #[allow(dead_code)]
     pub end: usize,
 }
 
@@ -75,6 +73,17 @@ pub(crate) fn find_body<'a, 'b>(nodes: &'b [Node<'a>], header: usize) -> Option<
     })
 }
 
+/// The statement with a body headed on `header`: a label, a menu (choice lines) or an `if` (branch lines).
+pub(crate) fn owner<'a, 'b>(nodes: &'b [Node<'a>], header: usize) -> Option<&'b Node<'a>> {
+    nodes.iter().find_map(|n| {
+        if n.bodies.iter().any(|b| b.header == header) {
+            Some(n)
+        } else {
+            n.bodies.iter().find_map(|b| owner(&b.nodes, header))
+        }
+    })
+}
+
 pub(crate) fn parent_body<'a, 'b>(nodes: &'b [Node<'a>], line: usize) -> Option<&'b Body<'a>> {
     nodes.iter().find_map(|n| {
         n.bodies
@@ -129,6 +138,8 @@ label other:
         assert_eq!(find(&nodes, 15).map(|n| n.line), Some(15));
         assert_eq!(find_body(&nodes, 14).map(|b| b.nodes.len()), Some(1));
         assert_eq!(parent_body(&nodes, 5).map(|b| b.header), Some(4));
+        assert_eq!(owner(&nodes, 14).map(|n| n.line), Some(11));
+        assert_eq!(owner(&nodes, 1).map(|n| n.line), Some(1));
         assert_eq!(label(&nodes, "other").map(|n| n.line), Some(16));
     }
 }

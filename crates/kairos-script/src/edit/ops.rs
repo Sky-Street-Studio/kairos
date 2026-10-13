@@ -32,6 +32,14 @@ pub enum Op {
     AddChoiceOption { path: String, line: usize, text: String },
     SetBranchCondition { path: String, line: usize, condition: String },
     AddBranch { path: String, line: usize, condition: Option<String> },
+    AddScene { path: String, name: String, after: Option<String> },
+    RenameScene { from: String, to: String },
+    DeleteScene { label: String, remove_references: bool },
+    DuplicateScene { label: String, name: String },
+    Connect { from: String, to: String, choice: Option<String> },
+    RemoveLink { from: String, to: String, choice: Option<String> },
+    EndScene { label: String },
+    SetCharacter { path: String, id: String, name: String, color: Option<String> },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -116,6 +124,12 @@ fn missing(line: usize) -> EditError {
     EditError::NotFound(format!("no statement starts on line {line}"))
 }
 
+/// Fails unless `header` heads a body of a statement whose kind passes `kind`, so a choice edit
+/// can never rewrite a label or branch line.
+fn owned_by(nodes: &[Node], header: usize, kind: impl Fn(&StmtKind) -> bool) -> Result<(), EditError> {
+    tree::owner(nodes, header).filter(|n| kind(&n.stmt.kind)).map(|_| ()).ok_or_else(|| missing(header))
+}
+
 /// Where `place` puts new lines: the 1-based line to insert before, the indentation, and the line
 /// of a lone `pass` there that the new lines replace.
 fn resolve(nodes: &[Node], lines: &Lines, place: &Place) -> Result<(usize, usize, Option<usize>), EditError> {
@@ -168,6 +182,9 @@ fn trailing_comment(s: &str) -> &str {
 }
 
 fn apply_one(ws: &mut Workspace, op: &Op) -> Result<Focus, EditError> {
+    if let Some(focus) = super::scenes::apply_scene_op(ws, op)? {
+        return Ok(focus);
+    }
     let path = match op {
         Op::Insert { path, .. }
         | Op::Replace { path, .. }
@@ -178,6 +195,7 @@ fn apply_one(ws: &mut Workspace, op: &Op) -> Result<Focus, EditError> {
         | Op::AddChoiceOption { path, .. }
         | Op::SetBranchCondition { path, .. }
         | Op::AddBranch { path, .. } => path.clone(),
+        _ => unreachable!("scene ops are handled above"),
     };
     let source = ws.source(&path)?.to_string();
     let (stmts, _) = crate::parse(&source);
@@ -235,7 +253,7 @@ fn apply_one(ws: &mut Workspace, op: &Op) -> Result<Focus, EditError> {
             insert_lines(&mut lines, at, pass, reindent(&text, from, indent))
         }
         Op::SetChoiceText { line, text, .. } => {
-            tree::find_body(&nodes, *line).ok_or_else(|| missing(*line))?;
+            owned_by(&nodes, *line, |k| matches!(k, StmtKind::Menu { .. }))?;
             let raw = lines.text(*line).to_string();
             let start = raw.len() - raw.trim_start().len();
             let rest = after_string(&raw[start..]);
@@ -243,7 +261,7 @@ fn apply_one(ws: &mut Workspace, op: &Op) -> Result<Focus, EditError> {
             *line
         }
         Op::SetChoiceCondition { line, condition, .. } => {
-            tree::find_body(&nodes, *line).ok_or_else(|| missing(*line))?;
+            owned_by(&nodes, *line, |k| matches!(k, StmtKind::Menu { .. }))?;
             let raw = lines.text(*line).to_string();
             let start = raw.len() - raw.trim_start().len();
             let after = after_string(&raw[start..]);
@@ -265,7 +283,7 @@ fn apply_one(ws: &mut Workspace, op: &Op) -> Result<Focus, EditError> {
             n.end + 1
         }
         Op::SetBranchCondition { line, condition, .. } => {
-            tree::find_body(&nodes, *line).ok_or_else(|| missing(*line))?;
+            owned_by(&nodes, *line, |k| matches!(k, StmtKind::If(_)))?;
             let raw = lines.text(*line).to_string();
             let head = raw.trim_start();
             if head.starts_with("else") {
@@ -290,6 +308,7 @@ fn apply_one(ws: &mut Workspace, op: &Op) -> Result<Focus, EditError> {
             lines.splice(n.end + 1, n.end, vec![format!("{pad}{head}"), format!("{pad}{}pass", " ".repeat(step))]);
             n.end + 1
         }
+        _ => unreachable!("scene ops are handled above"),
     };
     ws.set(&path, lines.join());
     Ok(Focus { path, line })

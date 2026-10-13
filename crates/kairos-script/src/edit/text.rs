@@ -67,7 +67,43 @@ pub(crate) fn quote(s: &str) -> String {
     out
 }
 
+const KEYWORDS: &[&str] = &[
+    "label",
+    "menu",
+    "if",
+    "elif",
+    "else",
+    "jump",
+    "call",
+    "return",
+    "show",
+    "hide",
+    "scene",
+    "play",
+    "queue",
+    "stop",
+    "pause",
+    "with",
+    "define",
+    "default",
+    "character",
+    "transform",
+    "voice",
+    "open",
+    "quit",
+    "pass",
+    "not",
+    "and",
+    "or",
+    "in",
+    "true",
+    "false",
+    "none",
+];
+
 /// Turns a name a person typed into a label: lowercase letters, digits and `_`, unique among `taken`.
+/// A typed keyword such as "Return" gets a suffix so the label never reads like a statement; the
+/// `scene` fallback for a name with no usable characters is kept as is.
 pub fn label_from_name(name: &str, taken: &[String]) -> String {
     let mut base = String::new();
     for c in name.trim().chars().flat_map(char::to_lowercase) {
@@ -78,13 +114,14 @@ pub fn label_from_name(name: &str, taken: &[String]) -> String {
         }
     }
     let mut base = base.trim_end_matches('_').to_string();
+    let keyword = KEYWORDS.contains(&base.as_str());
     if base.is_empty() {
         base = "scene".into();
     }
     if base.starts_with(|c: char| c.is_ascii_digit()) {
         base.insert(0, '_');
     }
-    if !taken.contains(&base) {
+    if !keyword && !taken.contains(&base) {
         return base;
     }
     (2..).map(|n| format!("{base}_{n}")).find(|c| !taken.contains(c)).expect("some suffix is free")
@@ -134,5 +171,7 @@ mod tests {
         assert_eq!(label_from_name("  Café — night!", &[]), "caf_night");
         assert_eq!(label_from_name("2nd act", &[]), "_2nd_act");
         assert_eq!(label_from_name("!!!", &[]), "scene");
+        assert_eq!(label_from_name("Return", &[]), "return_2");
+        assert_eq!(label_from_name("None", &[]), "none_2");
     }
 }

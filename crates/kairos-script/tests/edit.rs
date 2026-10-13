@@ -1,4 +1,4 @@
-use kairos_script::edit::{BlockKind, EditError, Op, Place, SourceFile, apply, scene_blocks};
+use kairos_script::edit::{BlockKind, EditError, Op, Place, RefKind, SourceFile, apply, references, scene_blocks};
 
 fn file(source: &str) -> Vec<SourceFile> {
     vec![SourceFile { path: "script/a.kai".into(), source: source.into() }]
@@ -118,6 +118,156 @@ fn edits_allowed_when_file_already_has_errors() {
 fn unknown_lines_are_not_found() {
     let err = apply(&file("label start:\n    \"A\"\n"), &[Op::Delete { path: P.into(), line: 9 }]).unwrap_err();
     assert!(matches!(err, EditError::NotFound(_)));
+}
+
+#[test]
+fn move_to_a_later_position() {
+    let src = "label s:\n    \"A\"\n    \"B\"\n    \"C\"\n    \"D\"\n";
+    let out = run(src, vec![Op::Move { path: P.into(), line: 2, place: Place::After { line: 5 } }]);
+    assert_eq!(out, "label s:\n    \"B\"\n    \"C\"\n    \"D\"\n    \"A\"\n");
+}
+
+#[test]
+fn header_ops_need_the_right_owner() {
+    let src = "label start:\n    if a:\n        pass\n    else:\n        pass\n    menu:\n        \"Go\":\n            pass\n";
+    let err = |op: Op| apply(&file(src), &[op]).unwrap_err();
+    assert!(matches!(
+        err(Op::SetBranchCondition { path: P.into(), line: 1, condition: "x".into() }),
+        EditError::NotFound(_)
+    ));
+    assert!(matches!(err(Op::SetChoiceText { path: P.into(), line: 1, text: "x".into() }), EditError::NotFound(_)));
+    assert!(matches!(err(Op::SetChoiceText { path: P.into(), line: 2, text: "x".into() }), EditError::NotFound(_)));
+    assert!(matches!(err(Op::SetChoiceCondition { path: P.into(), line: 4, condition: None }), EditError::NotFound(_)));
+    assert!(matches!(
+        err(Op::SetBranchCondition { path: P.into(), line: 7, condition: "x".into() }),
+        EditError::NotFound(_)
+    ));
+    assert!(matches!(
+        err(Op::SetBranchCondition { path: P.into(), line: 4, condition: "x".into() }),
+        EditError::Invalid(_)
+    ));
+    assert!(matches!(err(Op::AddBranch { path: P.into(), line: 2, condition: None }), EditError::Invalid(_)));
+}
+
+fn files(a: &str, b: &str) -> Vec<SourceFile> {
+    vec![
+        SourceFile { path: "script/a.kai".into(), source: a.into() },
+        SourceFile { path: "script/b.kai".into(), source: b.into() },
+    ]
+}
+
+fn run_all(fs: &[SourceFile], ops: Vec<Op>) -> Vec<String> {
+    let applied = apply(fs, &ops).unwrap();
+    fs.iter()
+        .map(|f| applied.files.iter().find(|c| c.path == f.path).map_or(f.source.clone(), |c| c.source.clone()))
+        .collect()
+}
+
+#[test]
+fn add_scene_after_a_label_or_at_the_end() {
+    let fs = files("label start:\n    jump day\nlabel day:\n    return\n", "");
+    let out = run_all(
+        &fs,
+        vec![Op::AddScene { path: "script/a.kai".into(), name: "beach".into(), after: Some("start".into()) }],
+    );
+    assert_eq!(out[0], "label start:\n    jump day\n\nlabel beach:\n    \"\"\n    return\nlabel day:\n    return\n");
+    let out = run_all(&fs, vec![Op::AddScene { path: "script/b.kai".into(), name: "end".into(), after: None }]);
+    assert_eq!(out[1], "label end:\n    \"\"\n    return\n");
+    assert!(matches!(
+        apply(&fs, &[Op::AddScene { path: "script/a.kai".into(), name: "day".into(), after: None }]),
+        Err(EditError::Invalid(_))
+    ));
+}
+
+#[test]
+fn rename_changes_only_exact_references() {
+    let fs = files(
+        "label day:\n    jump day_two\n    call day\nlabel day_two:\n    jump day\n",
+        "label other:\n    menu:\n        \"Back\":\n            jump day\n",
+    );
+    let out = run_all(&fs, vec![Op::RenameScene { from: "day".into(), to: "morning".into() }]);
+    assert_eq!(out[0], "label morning:\n    jump day_two\n    call morning\nlabel day_two:\n    jump morning\n");
+    assert_eq!(out[1], "label other:\n    menu:\n        \"Back\":\n            jump morning\n");
+}
+
+#[test]
+fn references_report_jumps_calls_and_choices() {
+    let fs = files(
+        "label a:\n    jump x\n    call x\n",
+        "label b:\n    menu:\n        \"Go\":\n            jump x\nlabel x:\n    return\n",
+    );
+    let refs: Vec<_> = references(&fs, "x").into_iter().map(|r| (r.path, r.line, r.kind, r.choice)).collect();
+    assert_eq!(
+        refs,
+        [
+            ("script/a.kai".into(), 2, RefKind::Jump, None),
+            ("script/a.kai".into(), 3, RefKind::Call, None),
+            ("script/b.kai".into(), 4, RefKind::Jump, Some("Go".into())),
+        ]
+    );
+}
+
+#[test]
+fn delete_scene_can_remove_links_to_it() {
+    let fs = files(
+        "label a:\n    \"Hi\"\n    jump x\n    menu:\n        \"Go\":\n            jump x\n        \"Stay\":\n            \"Ok\"\n",
+        "label x:\n    return\n",
+    );
+    let out = run_all(&fs, vec![Op::DeleteScene { label: "x".into(), remove_references: true }]);
+    assert_eq!(out[0], "label a:\n    \"Hi\"\n    menu:\n        \"Stay\":\n            \"Ok\"\n");
+    assert_eq!(out[1], "");
+    let out = run_all(&fs, vec![Op::DeleteScene { label: "x".into(), remove_references: false }]);
+    assert!(out[0].contains("jump x"));
+
+    let fs = files("label a:\n    jump x\n", "label x:\n    return\n");
+    let out = run_all(&fs, vec![Op::DeleteScene { label: "x".into(), remove_references: true }]);
+    assert_eq!(out[0], "label a:\n    pass\n");
+}
+
+#[test]
+fn connect_adds_jumps_and_choices_and_remove_link_undoes_them() {
+    let fs = files("label a:\n    \"Hi\"\nlabel b:\n    return\nlabel c:\n    return\n", "");
+    let out = run_all(
+        &fs,
+        vec![
+            Op::Connect { from: "a".into(), to: "b".into(), choice: Some("To B".into()) },
+            Op::Connect { from: "a".into(), to: "c".into(), choice: Some("To C".into()) },
+        ],
+    );
+    assert_eq!(
+        out[0],
+        "label a:\n    \"Hi\"\n    menu:\n        \"To B\":\n            jump b\n        \"To C\":\n            jump c\nlabel b:\n    return\nlabel c:\n    return\n"
+    );
+    let fs2 = files(&out[0], "");
+    let out = run_all(&fs2, vec![Op::RemoveLink { from: "a".into(), to: "b".into(), choice: Some("To B".into()) }]);
+    assert!(!out[0].contains("To B") && out[0].contains("To C"));
+    let out = run_all(
+        &fs,
+        vec![Op::Connect { from: "a".into(), to: "b".into(), choice: None }, Op::EndScene { label: "b".into() }],
+    );
+    assert!(out[0].starts_with("label a:\n    \"Hi\"\n    jump b\n"));
+}
+
+#[test]
+fn duplicate_and_set_character() {
+    let fs = files("character e \"Eileen\"\nlabel a:\n    e \"Hi\"\n", "");
+    let out = run_all(
+        &fs,
+        vec![
+            Op::DuplicateScene { label: "a".into(), name: "a_copy".into() },
+            Op::SetCharacter {
+                path: "script/a.kai".into(),
+                id: "e".into(),
+                name: "Eve".into(),
+                color: Some("#ffcc00".into()),
+            },
+            Op::SetCharacter { path: "script/a.kai".into(), id: "k".into(), name: "Kai".into(), color: None },
+        ],
+    );
+    assert_eq!(
+        out[0],
+        "character e \"Eve\" color=\"#ffcc00\"\ncharacter k \"Kai\"\nlabel a:\n    e \"Hi\"\n\nlabel a_copy:\n    e \"Hi\"\n"
+    );
 }
 
 proptest::proptest! {
