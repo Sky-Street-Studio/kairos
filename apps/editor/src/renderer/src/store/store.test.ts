@@ -7,6 +7,10 @@ import { ANALYZE_DELAY_MS, createAppStore, isDirty } from "./index";
 
 const SCRIPT = 'character e "Eileen"\nlabel start:\n    e "Hi."\nlabel end:\n    return\n';
 
+const unused = async (): Promise<never> => {
+  throw new Error("unused");
+};
+
 function fakeApi() {
   const disk = new Map<string, string>([
     ["script/a.kai", SCRIPT],
@@ -64,6 +68,15 @@ function fakeApi() {
           assetUsage: {},
         };
       }),
+    },
+    edit: {
+      blocks: vi.fn(unused),
+      apply: vi.fn(unused),
+      references: vi.fn(unused),
+      labelFromName: vi.fn(unused),
+      readLayout: vi.fn(unused),
+      writeLayout: vi.fn(unused),
+      setStart: vi.fn(unused),
     },
     player: { status: vi.fn() },
     terminal: {} as KairosApi["terminal"],

@@ -27,6 +27,18 @@ const api: KairosApi = {
   analysis: {
     analyze: (input) => ipcRenderer.invoke("analysis:analyze", input),
   },
+  edit: {
+    blocks: (source, label) => ipcRenderer.invoke("edit:blocks", source, label),
+    apply: (files, ops) =>
+      ipcRenderer.invoke("edit:apply", files, ops).catch((e: Error) => {
+        throw new Error(e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, ""));
+      }),
+    references: (files, label) => ipcRenderer.invoke("edit:references", files, label),
+    labelFromName: (name, taken) => ipcRenderer.invoke("edit:label-from-name", name, taken),
+    readLayout: () => ipcRenderer.invoke("edit:read-layout"),
+    writeLayout: (layout) => ipcRenderer.invoke("edit:write-layout", layout),
+    setStart: (label) => ipcRenderer.invoke("edit:set-start", label),
+  },
   player: {
     status: () => ipcRenderer.invoke("player:status"),
   },

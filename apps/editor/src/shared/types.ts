@@ -1,5 +1,7 @@
 import type { ThemeConfig } from "@kairos/theme";
 
+import type { Applied, EditOp, EditorLayout, Reference, Scene } from "./edit-types";
+
 export interface SourceFile {
   path: string;
   source: string;
@@ -186,6 +188,16 @@ export interface KairosApi {
   };
   analysis: {
     analyze(input: AnalyzeInput): Promise<Analysis>;
+  };
+  edit: {
+    blocks(source: string, label: string): Promise<Scene | null>;
+    /** Rejects with the plain error message. */
+    apply(files: SourceFile[], ops: EditOp[]): Promise<Applied>;
+    references(files: SourceFile[], label: string): Promise<Reference[]>;
+    labelFromName(name: string, taken: string[]): Promise<string>;
+    readLayout(): Promise<EditorLayout>;
+    writeLayout(layout: EditorLayout): Promise<void>;
+    setStart(label: string): Promise<void>;
   };
   player: {
     status(): Promise<PlayerStatus>;

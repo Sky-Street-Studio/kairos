@@ -3,9 +3,11 @@ import { basename, join, resolve } from "node:path";
 
 import { BrowserWindow, Menu, app, dialog, ipcMain, shell, type MenuItemConstructorOptions } from "electron";
 
-import type { AnalyzeInput, ProjectEdit, Settings, TerminalSpawn } from "@shared/types";
+import type { EditOp, EditorLayout } from "@shared/edit-types";
+import type { AnalyzeInput, ProjectEdit, Settings, SourceFile, TerminalSpawn } from "@shared/types";
 
 import { analyze } from "./analysis";
+import { applyEdits, labelFromName, readLayout, references, sceneBlocks, setStartLabel, writeLayout } from "./edit";
 import { chooseExportFolder, exportProject } from "./export";
 import {
   applyEdit,
@@ -60,6 +62,12 @@ function createWindow(): BrowserWindow {
   }
   return win;
 }
+
+const requireOpenRoot = (): string =>
+  projectRoot() ??
+  (() => {
+    throw new Error("Open a project first");
+  })();
 
 function registerIpc(): void {
   ipcMain.handle("project:initial", async () => initialProjectArg() ?? (await getSettings()).recentProjects[0] ?? null);
@@ -149,6 +157,13 @@ function registerIpc(): void {
   });
 
   ipcMain.handle("analysis:analyze", (_e, input: AnalyzeInput) => analyze(input));
+  ipcMain.handle("edit:blocks", (_e, source: string, label: string) => sceneBlocks(source, label));
+  ipcMain.handle("edit:apply", (_e, files: SourceFile[], ops: EditOp[]) => applyEdits(files, ops));
+  ipcMain.handle("edit:references", (_e, files: SourceFile[], label: string) => references(files, label));
+  ipcMain.handle("edit:label-from-name", (_e, name: string, taken: string[]) => labelFromName(name, taken));
+  ipcMain.handle("edit:read-layout", () => readLayout(requireOpenRoot()));
+  ipcMain.handle("edit:write-layout", (_e, layout: EditorLayout) => writeLayout(requireOpenRoot(), layout));
+  ipcMain.handle("edit:set-start", (_e, label: string) => setStartLabel(requireOpenRoot(), label));
   ipcMain.handle("player:status", () => playerStatus());
   ipcMain.handle("export:pick-folder", (e) => chooseExportFolder(e.sender));
   ipcMain.handle("project:export", (_e, target: "web" | "desktop", output: string) => exportProject(target, output));
