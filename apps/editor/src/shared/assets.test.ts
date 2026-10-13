@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { AUDIO_EXTENSIONS, classifyAsset } from "./assets";
+import { AUDIO_EXTENSIONS, classifyAsset, fileKind } from "./assets";
 
 describe("asset categories", () => {
   it("uses folder categories and declared character ids for fallback images", () => {
@@ -24,5 +24,24 @@ describe("asset categories", () => {
     expect(classifyAsset("assets/images/sprites/e/e happy.png").name).toBe("e happy");
     expect(classifyAsset("assets/images/bg/room.png").name).toBe("room");
     expect(classifyAsset("assets/images/sprites/e/face/happy.png").name).toBe("e happy");
+  });
+});
+
+describe("fileKind", () => {
+  it("opens scripts, project toml, and images or audio under assets", () => {
+    expect(fileKind("script/script.kai")).toBe("script");
+    expect(fileKind("kairos.toml")).toBe("text");
+    expect(fileKind("ui/theme.toml")).toBe("text");
+    expect(fileKind("ui/title.toml")).toBe("text");
+    expect(fileKind("assets/images/bg garden.png")).toBe("image");
+    expect(fileKind("assets/images/sprites/e/face/happy.WEBP")).toBe("image");
+    expect(fileKind("assets/audio/theme.ogg")).toBe("audio");
+  });
+
+  it("refuses files it has no view for or cannot serve", () => {
+    expect(fileKind("ui/logo.png")).toBeNull();
+    expect(fileKind("tl/ja.toml")).toBeNull();
+    expect(fileKind("assets/notes.txt")).toBeNull();
+    expect(fileKind("assets/audio/theme.m4a")).toBeNull();
   });
 });
