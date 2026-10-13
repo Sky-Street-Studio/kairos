@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 
 import type { Block, BlockKind, EditOp, Scene } from "@shared/edit-types";
 import { assetUrl } from "@shared/assets";
-import type { AssetEntry } from "@shared/types";
+import type { AssetEntry, OutlineCharacter } from "@shared/types";
 
 import { Button } from "@/components/ui/button";
 import { appStore, useApp } from "@/store";
@@ -16,6 +16,9 @@ import {
   resolveOption,
   type BlockPosition,
 } from "./pending-edits";
+
+// A selector must not return a fresh [] each render, or zustand re-renders forever.
+const NO_CHARACTERS: OutlineCharacter[] = [];
 
 const control =
   "h-8 w-full rounded-md border bg-background px-2 text-xs outline-none focus-visible:ring-1 focus-visible:ring-ring";
@@ -230,7 +233,7 @@ export function BlockEditor({
   const selectBlock = useApp((state) => state.selectBlock);
   const project = useApp((state) => state.project);
   const buffers = useApp((state) => state.buffers);
-  const characters = useApp((state) => state.analysis.outlines[path]?.characters ?? []);
+  const characters = useApp((state) => state.analysis.outlines[path]?.characters) ?? NO_CHARACTERS;
   const [localCode, setLocalCode] = useState({
     line: block.line,
     baseText: block.kind === "code" ? block.text : "",

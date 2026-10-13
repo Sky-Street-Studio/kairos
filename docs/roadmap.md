@@ -21,12 +21,20 @@ Lists, dictionaries, functions and a seeded random source in the script language
 - Unlocks affection and stat systems, inventories, unlockable glossaries (Steins;Gate's TIPS) and randomized events.
 - Random draws must replay identically under rollback, so the seed belongs in VM state and in saves.
 
-## 3. Custom screens
+## 3a. Visual story editor (done)
+
+Build and edit a branching story from the visual flow and block editors, with the script available for direct edits.
+
+## 3b. Custom screens
 
 A declarative way to build interactive UI, with layout, buttons, text and images bound to script variables. Today the customization surface is `ui/theme.toml` and `ui/title.toml`.
 
 - Unlocks phone and messaging systems, stat screens, maps, custom save/load and settings screens, and simple minigames.
 - This item needs the most design work. Write a contract doc before building it, the same way `creator-toolkit.md` came first.
+
+## 3c. Beginner path
+
+Templates, a guided first project and code hidden until wanted.
 
 Items 3 and 4 can swap. Take export first if you want a game on Steam early. Take screens first if the next milestone is a demo that shows off custom UI.
 

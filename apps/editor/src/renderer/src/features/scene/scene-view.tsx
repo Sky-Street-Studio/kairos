@@ -1,5 +1,5 @@
 import type { Block, Place, Scene } from "@shared/edit-types";
-import type { AssetEntry } from "@shared/types";
+import type { AssetEntry, OutlineCharacter } from "@shared/types";
 import {
   AudioLines,
   Braces,
@@ -42,6 +42,9 @@ import { flushPendingEdits, resolveBlock, type BlockPosition } from "./pending-e
 import { ASSET_MIME } from "../stage/asset-drag";
 import { assetToBlock } from "./stage-drop";
 import { useScene } from "./use-scene";
+
+// A selector must not return a fresh [] each render, or zustand re-renders forever.
+const NO_CHARACTERS: OutlineCharacter[] = [];
 
 function blockIcon(block: Block): LucideIcon {
   switch (block.kind) {
@@ -216,7 +219,7 @@ function BlockList({
   positionPrefix?: BlockPosition;
 }) {
   const diagnostics = useApp((state) => state.analysis.diagnostics);
-  const characters = useApp((state) => state.analysis.outlines[path]?.characters ?? []);
+  const characters = useApp((state) => state.analysis.outlines[path]?.characters) ?? NO_CHARACTERS;
   const selectedBlock = useApp((state) => state.selectedBlock);
   const selectBlock = useApp((state) => state.selectBlock);
   const edit = useApp((state) => state.edit);
@@ -488,9 +491,10 @@ function BlockList({
 export function SceneView({ label }: { label: string }) {
   const { path, scene } = useScene(label);
   const goToLabel = useApp((state) => state.goToLabel);
-  const characters = useApp((state) => state.analysis.outlines[path]?.characters ?? []);
+  const characters = useApp((state) => state.analysis.outlines[path]?.characters) ?? NO_CHARACTERS;
   const project = useApp((state) => state.project);
-  const scenes = useApp((state) => state.analysis.graph.nodes.map((node) => node.label));
+  const sceneNodes = useApp((state) => state.analysis.graph.nodes);
+  const scenes = sceneNodes.map((node) => node.label);
   const backgrounds =
     project?.assets.filter((asset) => asset.category === "background").map((asset) => asset.name.split(/\s+/)) ?? [];
   const music = project?.assets.filter((asset) => asset.category === "music").map((asset) => asset.name) ?? [];
