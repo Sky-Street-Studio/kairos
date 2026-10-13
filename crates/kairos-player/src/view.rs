@@ -68,6 +68,30 @@ pub struct ViewInput<'a> {
     pub notice: Option<&'a str>,
 }
 
+pub(crate) fn sprite_rects(
+    stage: &kairos_vm::Stage,
+    image: &dyn Fn(&str) -> ImageInfo,
+    (w, h): (f32, f32),
+) -> Vec<(String, Rect)> {
+    stage
+        .sprites
+        .iter()
+        .map(|sprite| {
+            let mut words = vec![sprite.tag.clone()];
+            words.extend(sprite.attrs.iter().cloned());
+            let at = sprite.at.as_deref();
+            let rect = match image(&image_name(&words)) {
+                ImageInfo::Ready(iw, ih) => sprite_rect(at, (iw as f32, ih as f32), (w, h)),
+                _ => {
+                    let (pw, ph) = (h * 0.34, h * 0.78);
+                    Rect::new((w - pw) * xalign(at), h - ph, pw, ph)
+                }
+            };
+            (sprite.tag.clone(), rect)
+        })
+        .collect()
+}
+
 /// The texture name for an image's words, e.g. `bg room`.
 pub fn image_name(words: &[String]) -> String {
     words.join(" ")
@@ -152,25 +176,21 @@ impl Builder<'_, '_> {
                 ImageInfo::Loading => {}
             }
         }
-        for sprite in stage.sprites.iter().filter(|_| self.input.game.screen != Screen::Title) {
-            let mut words = vec![sprite.tag.clone()];
-            words.extend(sprite.attrs.iter().cloned());
-            let name = image_name(&words);
-            let at = sprite.at.as_deref();
-            match (self.input.image)(&name) {
-                ImageInfo::Ready(iw, ih) => {
-                    let rect = sprite_rect(at, (iw as f32, ih as f32), (w, h));
-                    layer.push(Draw::Image { name, rect, opacity: 1.0 });
+        if self.input.game.screen != Screen::Title {
+            for (sprite, (_, rect)) in stage.sprites.iter().zip(sprite_rects(stage, self.input.image, (w, h))) {
+                let mut words = vec![sprite.tag.clone()];
+                words.extend(sprite.attrs.iter().cloned());
+                let name = image_name(&words);
+                match (self.input.image)(&name) {
+                    ImageInfo::Ready(_, _) => layer.push(Draw::Image { name, rect, opacity: 1.0 }),
+                    ImageInfo::Missing => {
+                        let fill = Color::rgba(255, 255, 255, 34);
+                        layer.push(Draw::Fill { rect, top: fill, bottom: fill.with_alpha(0.3), radius: 18.0 });
+                        let label = Rect::new(rect.x, rect.y + 24.0, rect.w, 40.0);
+                        layer.push(self.ui_text(placeholder_label(&name), label, 20.0, gray(0.85), TextAlign::Center));
+                    }
+                    ImageInfo::Loading => {}
                 }
-                ImageInfo::Missing => {
-                    let (pw, ph) = (h * 0.34, h * 0.78);
-                    let rect = Rect::new((w - pw) * xalign(at), h - ph, pw, ph);
-                    let fill = Color::rgba(255, 255, 255, 34);
-                    layer.push(Draw::Fill { rect, top: fill, bottom: fill.with_alpha(0.3), radius: 18.0 });
-                    let label = Rect::new(rect.x, rect.y + 24.0, rect.w, 40.0);
-                    layer.push(self.ui_text(placeholder_label(&name), label, 20.0, gray(0.85), TextAlign::Center));
-                }
-                ImageInfo::Loading => {}
             }
         }
         layer
@@ -815,5 +835,19 @@ mod tests {
     fn long_slot_previews_are_shortened() {
         assert_eq!(ellipsize("short", 10), "short");
         assert_eq!(ellipsize("a much longer preview", 8), "a much…");
+    }
+
+    #[test]
+    fn sprite_rects_follow_draw_order() {
+        let stage = kairos_vm::Stage {
+            background: None,
+            sprites: vec![
+                kairos_vm::Sprite { tag: "e".into(), attrs: vec!["happy".into()], at: Some("left".into()) },
+                kairos_vm::Sprite { tag: "k".into(), attrs: vec![], at: Some("right".into()) },
+            ],
+        };
+        let rects = sprite_rects(&stage, &|_: &str| ImageInfo::Ready(400, 800), (1280.0, 720.0));
+        assert_eq!(rects.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>(), ["e", "k"]);
+        assert!(rects[0].1.x < rects[1].1.x);
     }
 }

@@ -161,6 +161,35 @@ impl Game {
         Ok(())
     }
 
+    /// Plays from `start` until the first interaction at or after `target`, so the editor can show
+    /// a scene's state at any line. Menus pick the choice that leads toward `target`.
+    pub fn seek_to(&mut self, start: usize, target: usize) {
+        let speed = self.settings.text_speed;
+        self.start_at(start);
+        self.settings.text_speed = Settings::INSTANT;
+        for _ in 0..500 {
+            let at = self.vm.last_pc();
+            match &self.shown {
+                Shown::Say { .. } | Shown::Pause { .. } if at < target => self.step(),
+                Shown::Menu { .. } if at < target => {
+                    let kairos_vm::Instr::Menu { choices, .. } = &self.program.instrs[at] else { break };
+                    let pick = choices.iter().rposition(|c| c.target <= target).unwrap_or(0);
+                    self.choose(pick);
+                }
+                _ => {
+                    self.settings.text_speed = speed;
+                    return;
+                }
+            }
+        }
+        self.start_at(target);
+        self.settings.text_speed = speed;
+    }
+
+    pub fn program(&self) -> &Arc<Program> {
+        &self.program
+    }
+
     pub fn stage(&self) -> &Stage {
         &self.vm.state().stage
     }
@@ -776,5 +805,20 @@ label start:
         let mut game = game();
         game.start("nowhere");
         assert!(matches!(&game.shown, Shown::Error(m) if m.contains("nowhere")));
+    }
+
+    #[test]
+    fn seek_plays_up_to_a_line_keeping_the_stage_built_before_it() {
+        let source = "label start:\n    scene bg room\n    show e happy\n    \"One\"\n    menu:\n        \"A\":\n            \"In A\"\n        \"B\":\n            show e sad\n            \"In B\"\n";
+        let project =
+            kairos_project::Project::from_sources("name = \"t\"", [(PathBuf::from("script/a.kai"), source.into())])
+                .unwrap();
+        let mut game = Game::new(project.program.clone()).unwrap();
+        let program = project.program.clone();
+        let target = program.pc_at(0, 10).unwrap();
+        game.seek_to(program.labels["start"], target);
+        assert_eq!(text(&game), "In B");
+        assert_eq!(game.stage().background.as_deref(), Some(&["bg".to_string(), "room".to_string()][..]));
+        assert_eq!(game.stage().sprites[0].attrs, ["sad"]);
     }
 }

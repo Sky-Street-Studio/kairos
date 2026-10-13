@@ -186,6 +186,24 @@ impl Player {
         self.game.start_at(pc);
     }
 
+    pub fn preview_at(&mut self, pc: usize) {
+        self.in_splashscreen = false;
+        let program = self.game.program().clone();
+        let start = program.label_at(pc).and_then(|l| program.labels.get(l).copied()).unwrap_or(pc);
+        self.game.seek_to(start, pc);
+    }
+
+    pub fn sprite_at(&self, x: f32, y: f32) -> Option<String> {
+        let images = &self.images;
+        let lookup = |name: &str| images.get(name).copied().unwrap_or(ImageInfo::Loading);
+        let (x, y) = self.renderer.letterbox().to_virtual(x, y);
+        view::sprite_rects(self.game.stage(), &lookup, self.renderer.virtual_size())
+            .into_iter()
+            .rev()
+            .find(|(_, r)| r.contains(x, y))
+            .map(|(tag, _)| tag)
+    }
+
     pub fn debug_start_at(
         &mut self,
         pc: usize,

@@ -183,6 +183,27 @@ impl WebPlayer {
         Ok(())
     }
 
+    #[wasm_bindgen(js_name = previewAt)]
+    pub fn preview_at(&self, path: &str, line: u32) -> Result<(), JsError> {
+        let mut inner = self.inner.borrow_mut();
+        let pc = {
+            let loaded = inner.loaded.as_ref().ok_or_else(|| error("call load() before previewAt()"))?;
+            loaded
+                .project
+                .pc_at(Path::new(path), line as usize)
+                .ok_or_else(|| error(format!("{path}:{line}: no statement here")))?
+        };
+        let player = inner.player.as_mut().ok_or_else(|| error("call ready() before previewAt()"))?;
+        player.preview_at(pc);
+        inner.last_debug_state = None;
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = spriteAt)]
+    pub fn sprite_at(&self, x: f32, y: f32) -> Option<String> {
+        self.inner.borrow().player.as_ref().and_then(|p| p.sprite_at(x, y))
+    }
+
     #[wasm_bindgen(js_name = debugState)]
     pub fn debug_state(&self) -> Result<String, JsError> {
         debug_state(&self.inner.borrow())
