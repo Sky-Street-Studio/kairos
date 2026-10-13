@@ -15,7 +15,7 @@ The web player exposes a read-mostly debug surface to the editor. All values cro
 
 The player calls `onDebug` (a JS callback passed at load) after every statement that changes the stage, variables or position. It is called at most once per frame.
 
-Values are the VM's values: numbers, strings, booleans, `None` as `null`, lists and dicts as arrays and objects.
+Values are the VM's scalar values: numbers, strings, booleans and `None` as `null`. JSON arrays and objects are rejected with an error naming the variable.
 
 The editor shows a Debug tab in the bottom panel: a variables table (editable cells call `setVariable`), the call stack (click jumps the editor to that line), and a history slider bound to `rollbackTo`. The play-from-here button opens a small overrides form prefilled with the current variables.
 
