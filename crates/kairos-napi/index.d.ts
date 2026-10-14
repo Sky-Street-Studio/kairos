@@ -89,8 +89,6 @@ export interface ProjectAnalysis {
 
 export declare function references(filesJson: string, label: string): string
 
-export declare function sceneBlocks(source: string, label: string): string
-
 export interface RouteIssue {
   label: string
   line: number
@@ -107,6 +105,8 @@ export interface RouteTestReport {
   routesExplored: number
 }
 
+export declare function sceneBlocks(source: string, label: string): string
+
 export interface SourceFile {
   path: string
   source: string
@@ -119,10 +119,10 @@ export interface SpriteLayers {
 
 export declare function storyGraph(files: Array<SourceFile>): StoryGraph
 
-export declare function testRoutes(project: string): RouteTestReport
-
 export interface StoryGraph {
   nodes: Array<GraphNode>
   edges: Array<GraphEdge>
   missing: Array<GraphEdge>
 }
+
+export declare function testRoutes(project: string): RouteTestReport

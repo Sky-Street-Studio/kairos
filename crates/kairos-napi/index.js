@@ -788,3 +788,4 @@ module.exports.parse = nativeBinding.parse
 module.exports.references = nativeBinding.references
 module.exports.sceneBlocks = nativeBinding.sceneBlocks
 module.exports.storyGraph = nativeBinding.storyGraph
+module.exports.testRoutes = nativeBinding.testRoutes
