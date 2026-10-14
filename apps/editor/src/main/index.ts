@@ -5,7 +5,7 @@ import { realpath } from "node:fs/promises";
 import { BrowserWindow, Menu, app, dialog, ipcMain, shell, type MenuItemConstructorOptions } from "electron";
 
 import type { EditOp, EditorLayout } from "@shared/edit-types";
-import type { AnalyzeInput, ExportTarget, Settings, SourceFile, TerminalSpawn } from "@shared/types";
+import type { AnalyzeInput, ExportTarget, MenuCommand, Settings, SourceFile, TerminalSpawn } from "@shared/types";
 
 import { analyze } from "./analysis";
 import { applyEdits, labelFromName, readLayout, references, sceneBlocks, setStartLabel, writeLayout } from "./edit";
@@ -218,13 +218,54 @@ function registerIpc(): void {
   });
 }
 
+function menuCommand(label: string, command: MenuCommand, accelerator: string): MenuItemConstructorOptions {
+  return {
+    label,
+    accelerator,
+    // The renderer owns these shortcuts so they also work in tests and with focus in the editor; the menu only lists them.
+    registerAccelerator: false,
+    click: (_item, win) => {
+      if (win instanceof BrowserWindow) win.webContents.send("menu:command", command);
+    },
+  };
+}
+
 function buildMenu(): void {
+  const settings = menuCommand("Settings…", "settings", "CmdOrCtrl+,");
   const template: MenuItemConstructorOptions[] = [
-    ...(process.platform === "darwin" ? [{ role: "appMenu" as const }] : []),
+    ...(process.platform === "darwin"
+      ? [
+          {
+            label: app.name,
+            submenu: [
+              { role: "about" },
+              { type: "separator" },
+              settings,
+              { type: "separator" },
+              { role: "services" },
+              { type: "separator" },
+              { role: "hide" },
+              { role: "hideOthers" },
+              { role: "unhide" },
+              { type: "separator" },
+              { role: "quit" },
+            ] satisfies MenuItemConstructorOptions[],
+          },
+        ]
+      : [
+          {
+            label: "File",
+            submenu: [settings, { type: "separator" }, { role: "quit" }],
+          } satisfies MenuItemConstructorOptions,
+        ]),
     { role: "editMenu" },
     {
       label: "View",
       submenu: [
+        menuCommand("Toggle Sidebar", "toggle-sidebar", "CmdOrCtrl+B"),
+        menuCommand("Toggle Terminal", "toggle-terminal", "CmdOrCtrl+J"),
+        menuCommand("Toggle Preview", "toggle-preview", "CmdOrCtrl+\\"),
+        { type: "separator" },
         { role: "reload" },
         { role: "toggleDevTools" },
         { type: "separator" },

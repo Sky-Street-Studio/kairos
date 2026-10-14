@@ -1,4 +1,4 @@
-import { Boxes, Clapperboard, Network, Play, Plus, UsersRound, X } from "lucide-react";
+import { Boxes, Clapperboard, Network, PanelLeft, PanelRight, Play, Plus, UsersRound, X } from "lucide-react";
 import { lazy, Suspense } from "react";
 
 import { ViewBoundary } from "@/components/view-boundary";
@@ -9,7 +9,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { basename, cn } from "@/lib/utils";
+import { basename, cn, isMac, modKey } from "@/lib/utils";
 import { isDirty, useApp, type Tab } from "@/store";
 import { fileKind } from "@shared/assets";
 
@@ -134,10 +134,29 @@ export function Workspace() {
     t?.kind === "file" && fileKind(t.path) === "script";
   const hasScriptTab = tabs.some(isScript);
   const preview = active?.kind === "file" && fileKind(active.path) !== "script" ? active.path : null;
+  const sidebarHidden = useApp((s) => !s.layout.sidebar);
+  const previewHidden = useApp((s) => !s.layout.preview);
+  const togglePanel = useApp((s) => s.togglePanel);
 
   return (
     <section className="flex min-h-0 flex-1 flex-col overflow-hidden bg-panel">
-      <div className="drag-region flex h-9 shrink-0 items-center border-b bg-sidebar/70">
+      <div
+        className={cn(
+          "drag-region flex h-9 shrink-0 items-center border-b bg-sidebar/70",
+          sidebarHidden && isMac() && "pl-[78px]",
+        )}
+      >
+        {sidebarHidden && (
+          <button
+            type="button"
+            aria-label="Show sidebar"
+            title={`Show sidebar (${modKey()}B)`}
+            onClick={() => togglePanel("sidebar")}
+            className="no-drag grid size-8 shrink-0 place-items-center text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            <PanelLeft className="size-3.5" />
+          </button>
+        )}
         <div role="tablist" className="flex h-full min-w-0 flex-1 overflow-x-auto [scrollbar-width:none]">
           {tabs.map((t) => (
             <TabButton key={t.id} tab={t} active={t.id === activeId} />
@@ -159,6 +178,17 @@ export function Workspace() {
           <Play className="size-3" />
           Run
         </button>
+        {previewHidden && (
+          <button
+            type="button"
+            aria-label="Show preview"
+            title={`Show preview (${modKey()}\\)`}
+            onClick={() => togglePanel("preview")}
+            className="no-drag -ml-1 mr-1 grid size-8 shrink-0 place-items-center text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            <PanelRight className="size-3.5" />
+          </button>
+        )}
       </div>
       <div className="relative flex min-h-0 flex-1">
         {hasScriptTab && (

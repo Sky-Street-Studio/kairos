@@ -58,6 +58,9 @@ const api: KairosApi = {
   shell: {
     reveal: (path) => invokeEdit("shell:reveal", path),
   },
+  menu: {
+    onCommand: (listener) => subscribe("menu:command", listener),
+  },
   settings: {
     get: () => ipcRenderer.invoke("settings:get"),
     update: (patch) => ipcRenderer.invoke("settings:update", patch),

@@ -122,6 +122,33 @@ test("copies an absolute path from the Files tree context menu", async () => {
   await app.close();
 });
 
+test("brings hidden panels back from the tab strip and the application menu", async () => {
+  const { app, page } = await launch();
+  const mod = process.platform === "darwin" ? "Meta" : "Control";
+  const sidebar = page.getByRole("button", { name: "Toggle sidebar" });
+  await expect(sidebar).toBeVisible();
+
+  await sidebar.click();
+  await expect(sidebar).toBeHidden();
+  if (shots) await page.screenshot({ path: join(shots, "sidebar-hidden.png") });
+  await page.getByRole("button", { name: "Show sidebar" }).click();
+  await expect(sidebar).toBeVisible();
+
+  await page.keyboard.press(`${mod}+\\`);
+  await page.getByRole("button", { name: "Show preview" }).click();
+  await expect(page.getByRole("button", { name: "Show preview" })).toBeHidden();
+
+  await app.evaluate(({ BrowserWindow, Menu }) => {
+    const win = BrowserWindow.getAllWindows()[0]!;
+    const item = Menu.getApplicationMenu()!
+      .items.flatMap((menu) => menu.submenu?.items ?? [])
+      .find((i) => i.label === "Toggle Sidebar")!;
+    item.click(undefined, win, undefined);
+  });
+  await expect(sidebar).toBeHidden();
+  await app.close();
+});
+
 test("previews images, audio and the manifest, and navigates settings", async () => {
   const { app, page } = await launch();
   await expect(page.getByText("Hello Kairos", { exact: true })).toBeVisible();
