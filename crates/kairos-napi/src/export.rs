@@ -8,6 +8,7 @@ pub fn export_game(
     output: &str,
     player_binary: Option<&str>,
     player_pkg: Option<&str>,
+    pack_assets: bool,
 ) -> Result<String, String> {
     let target = match target {
         "web" => ExportTarget::Web,
@@ -23,7 +24,7 @@ pub fn export_game(
     };
     let player_binary = player_binary.map(Path::new);
     let player_pkg = player_pkg.map(Path::new);
-    export::export(Path::new(project), Path::new(output), target, player_binary, player_pkg)
+    export::export(Path::new(project), Path::new(output), target, player_binary, player_pkg, pack_assets)
         .map(|path: PathBuf| path.to_string_lossy().into_owned())
         .map_err(|error| error.to_string())
 }
@@ -39,7 +40,7 @@ mod tests {
         std::fs::create_dir_all(root.join("script")).unwrap();
         std::fs::write(root.join("kairos.toml"), "name = 'test'").unwrap();
         std::fs::write(root.join("script/start.kai"), "label start:\n    return\n").unwrap();
-        let error = export_game(root.to_str().unwrap(), "desktop", "out", None, None).unwrap_err();
+        let error = export_game(root.to_str().unwrap(), "desktop", "out", None, None, false).unwrap_err();
         assert!(error.contains("desktop export requires an explicit Kairos player binary path"));
         let _ = std::fs::remove_dir_all(root);
     }

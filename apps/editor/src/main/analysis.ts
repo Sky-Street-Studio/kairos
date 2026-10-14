@@ -7,7 +7,14 @@ import type { Analysis, AnalyzeInput, ExportTarget } from "@shared/types";
 
 interface Addon {
   analyze(input: AnalyzeInput): Analysis;
-  exportGame(project: string, target: ExportTarget, output: string, playerBinary?: string, playerPkg?: string): string;
+  exportGame(
+    project: string,
+    target: ExportTarget,
+    output: string,
+    packAssets: boolean,
+    playerBinary?: string,
+    playerPkg?: string,
+  ): string;
   sceneBlocks(source: string, label: string): string;
   applyEdits(files: string, ops: string): string;
   references(files: string, label: string): string;

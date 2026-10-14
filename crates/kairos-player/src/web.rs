@@ -24,6 +24,8 @@ struct Loaded {
     title: Option<String>,
     asset_base_url: String,
     assets: Vec<String>,
+    asset_pack: Option<String>,
+    asset_key: Option<String>,
 }
 
 type Handler = Box<dyn Fn(&mut Inner, web_sys::Event)>;
@@ -166,6 +168,7 @@ impl WebPlayer {
             return Err(error(project.diagnostics_report().trim_end()));
         }
         let theme = Theme::parse(json.theme.as_deref().unwrap_or_default()).map_err(error)?;
+        let asset_key = project.manifest.assets.packing_key.clone();
         let mut inner = self.inner.borrow_mut();
         inner.debug_callback = on_debug;
         inner.last_debug_state = None;
@@ -175,6 +178,8 @@ impl WebPlayer {
             title: json.title,
             asset_base_url: json.asset_base_url,
             assets: json.assets,
+            asset_pack: json.asset_pack,
+            asset_key,
         });
         inner.build_player().map_err(error)
     }
@@ -368,7 +373,12 @@ impl Inner {
             (window.width, window.height),
             gpu.size(),
         );
-        let assets = Assets::url(loaded.asset_base_url.clone(), loaded.assets.clone());
+        let assets = Assets::url(
+            loaded.asset_base_url.clone(),
+            loaded.assets.clone(),
+            loaded.asset_pack.clone(),
+            loaded.asset_key.clone(),
+        );
         let saves = SaveStore::for_project(&loaded.project.manifest.name);
         let mut player = Player::new(renderer, &loaded.project, loaded.theme.clone(), assets, saves, false)?;
         if let Some(title) = &loaded.title {

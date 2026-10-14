@@ -1,6 +1,6 @@
 //! Ties the game, renderer, audio and assets together. Platform shells feed it input and frames.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use kairos_audio::{Audio, Bus, Sound};
 use kairos_project::{
@@ -10,6 +10,8 @@ use kairos_project::{
 use kairos_render::{Fonts, Renderer, TransitionKind};
 use kairos_vm::{Effect, Persistent, PersistentError, Value};
 
+#[cfg(not(target_arch = "wasm32"))]
+use crate::assets::decode_image;
 use crate::assets::{Assets, Loaded, Request};
 use crate::game::{Game, Screen, Shown, Signal};
 use crate::saves::SaveStore;
@@ -81,6 +83,12 @@ pub struct Player {
     pending_audio: Vec<Loaded>,
     assets: Assets,
     images: HashMap<String, ImageInfo>,
+    image_lru: HashMap<String, u64>,
+    image_clock: u64,
+    image_memory_used: usize,
+    image_memory_budget: usize,
+    active_images: HashSet<String>,
+    wanted_images: HashSet<String>,
     saves: SaveStore,
     slots: Vec<Option<String>>,
     mouse: (f32, f32),
@@ -150,6 +158,12 @@ impl Player {
             pending_audio: Vec::new(),
             assets,
             images: HashMap::new(),
+            image_lru: HashMap::new(),
+            image_clock: 0,
+            image_memory_used: 0,
+            image_memory_budget: (project.manifest.assets.memory_budget_mb as usize).max(1).saturating_mul(1024 * 1024),
+            active_images: HashSet::new(),
+            wanted_images: HashSet::new(),
             saves,
             slots: Vec::new(),
             mouse: (-1.0, -1.0),
@@ -325,7 +339,6 @@ impl Player {
 
     pub fn frame(&mut self, dt: f32, target: &wgpu::TextureView) {
         let dt = dt.clamp(0.0, 0.25);
-        self.receive_assets();
         self.game.tick(dt);
         if self.in_splashscreen && matches!(self.game.shown, Shown::End) {
             self.show_title();
@@ -345,6 +358,7 @@ impl Player {
         self.audio.update();
         self.handle_signals();
         self.request_stage_images();
+        self.receive_assets();
         if let Some((_, left)) = &mut self.notice {
             *left -= dt;
             if *left <= 0.0 {
@@ -837,12 +851,19 @@ impl Player {
                 }
             }
         }
+        self.active_images = names.iter().cloned().collect();
+        names.extend(self.game.prefetch_images(20));
+        self.wanted_images = names.iter().cloned().collect();
         for name in names {
-            if !self.images.contains_key(&name) {
+            if self.images.contains_key(&name) {
+                self.image_clock = self.image_clock.wrapping_add(1);
+                self.image_lru.insert(name, self.image_clock);
+            } else {
                 self.images.insert(name.clone(), ImageInfo::Loading);
                 self.assets.request(Request::Image(name));
             }
         }
+        self.evict_images();
     }
 
     fn receive_assets(&mut self) {
@@ -878,24 +899,34 @@ impl Player {
             self.receive_audio(loaded);
             return;
         }
+        let decoded_image = loaded.decoded_image;
         match (loaded.request, loaded.bytes) {
-            (Request::Image(name), Some(bytes)) => {
-                let info = match decode_image(&bytes, self.renderer.max_texture_size()) {
-                    Ok(image) => {
+            (Request::Image(name), _) if !self.wanted_images.contains(&name) => {
+                self.images.remove(&name);
+            }
+            (Request::Image(name), bytes) => {
+                let decoded_image = decoded_image.or_else(|| {
+                    bytes.map(|bytes| decode_image(&bytes, self.renderer.max_texture_size()).map_err(|e| e.to_string()))
+                });
+                let info = match decoded_image {
+                    Some(Ok(image)) => {
                         let size = image.dimensions();
+                        account_loaded_image(&mut self.image_memory_used, &name, &self.wanted_images, size);
                         self.renderer.upload_image(&name, size, image.as_raw());
+                        self.image_clock = self.image_clock.wrapping_add(1);
+                        self.image_lru.insert(name.clone(), self.image_clock);
                         ImageInfo::Ready(size.0, size.1)
                     }
-                    Err(e) => {
+                    Some(Err(e)) => {
                         log(&format!("image `{name}`: {e}"));
+                        ImageInfo::Missing
+                    }
+                    None => {
+                        log(&format!("image `{name}` not found under assets/images"));
                         ImageInfo::Missing
                     }
                 };
                 self.images.insert(name, info);
-            }
-            (Request::Image(name), None) => {
-                log(&format!("image `{name}` not found under assets/images"));
-                self.images.insert(name, ImageInfo::Missing);
             }
             (Request::Font { dialogue, path }, Some(bytes)) => match self.fonts.load(bytes) {
                 Some(family) if dialogue => self.dialogue_family = Some(family),
@@ -910,6 +941,25 @@ impl Player {
             }
             (Request::FallbackFont(path), None) => log(&format!("fallback font `{path}` not found under assets")),
             _ => {}
+        }
+    }
+
+    fn evict_images(&mut self) {
+        while self.image_memory_used > self.image_memory_budget {
+            let Some(name) = self
+                .image_lru
+                .iter()
+                .filter(|(name, _)| !self.active_images.contains(*name))
+                .min_by_key(|(_, used)| *used)
+                .map(|(name, _)| name.clone())
+            else {
+                break;
+            };
+            if let Some(ImageInfo::Ready(width, height)) = self.images.remove(&name) {
+                release_image_memory(&mut self.image_memory_used, (width, height));
+            }
+            self.image_lru.remove(&name);
+            self.renderer.remove_image(&name);
         }
     }
 
@@ -945,10 +995,27 @@ impl Player {
     }
 }
 
+fn account_loaded_image(memory_used: &mut usize, name: &str, wanted: &HashSet<String>, size: (u32, u32)) -> bool {
+    if !wanted.contains(name) {
+        return false;
+    }
+    *memory_used = memory_used.saturating_add(image_memory_size(size));
+    true
+}
+
+fn release_image_memory(memory_used: &mut usize, size: (u32, u32)) {
+    *memory_used = memory_used.saturating_sub(image_memory_size(size));
+}
+
+fn image_memory_size((width, height): (u32, u32)) -> usize {
+    (width as usize).saturating_mul(height as usize).saturating_mul(4)
+}
+
 fn audio_loop(metadata: &AudioMetadata, resolved_path: Option<&str>) -> Option<AudioLoop> {
     resolved_path.and_then(|path| path.strip_prefix("audio/")).and_then(|path| metadata.get(path)).copied()
 }
 
+#[cfg(target_arch = "wasm32")]
 fn decode_image(bytes: &[u8], max: u32) -> Result<image::RgbaImage, image::ImageError> {
     let image = image::load_from_memory(bytes)?;
     let image = if image.width() > max || image.height() > max {
@@ -997,6 +1064,19 @@ mod tests {
     fn set_actions_reject_toml_datetimes() {
         let parsed: toml::Value = toml::from_str("value = 2024-01-02").unwrap();
         assert!(toml_value(parsed["value"].clone()).is_none());
+    }
+
+    #[test]
+    fn stale_image_results_and_evictions_keep_memory_accounting_consistent() {
+        let mut memory_used = 0;
+        let wanted = HashSet::from(["active".to_string()]);
+        assert!(!account_loaded_image(&mut memory_used, "prefetched", &wanted, (4, 4)));
+        assert_eq!(memory_used, 0);
+
+        assert!(account_loaded_image(&mut memory_used, "active", &wanted, (4, 4)));
+        assert_eq!(memory_used, 64);
+        release_image_memory(&mut memory_used, (4, 4));
+        assert_eq!(memory_used, 0);
     }
 
     #[test]

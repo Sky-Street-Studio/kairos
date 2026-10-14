@@ -27,6 +27,8 @@ pub struct PlayerProjectJson {
     #[serde(default)]
     pub assets: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset_pack: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub theme: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
@@ -63,7 +65,22 @@ pub struct Manifest {
     #[serde(default)]
     pub audio: AudioSettings,
     #[serde(default)]
+    pub assets: AssetSettings,
+    #[serde(default)]
     pub steam: Option<SteamConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct AssetSettings {
+    pub memory_budget_mb: u32,
+    pub packing_key: Option<String>,
+}
+
+impl Default for AssetSettings {
+    fn default() -> Self {
+        AssetSettings { memory_budget_mb: 256, packing_key: None }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -752,6 +769,25 @@ mod tests {
         )
         .unwrap();
         assert!(project.diagnostics_report().contains("script/main.kai:2: unclosed text tag `{b}`"));
+    }
+
+    #[test]
+    fn asset_settings_default_and_read_streaming_and_obfuscation_values() {
+        let base = Project::from_sources(
+            "name = 'test'",
+            [(PathBuf::from("script/start.kai"), "label start:\n    return\n".into())],
+        )
+        .unwrap();
+        assert_eq!(base.manifest.assets.memory_budget_mb, 256);
+        assert_eq!(base.manifest.assets.packing_key, None);
+
+        let configured = Project::from_sources(
+            "name = 'test'\n[assets]\nmemory_budget_mb = 512\npacking_key = 'paper-key'",
+            [(PathBuf::from("script/start.kai"), "label start:\n    return\n".into())],
+        )
+        .unwrap();
+        assert_eq!(configured.manifest.assets.memory_budget_mb, 512);
+        assert_eq!(configured.manifest.assets.packing_key.as_deref(), Some("paper-key"));
     }
 
     #[test]

@@ -34,6 +34,7 @@ pub fn export(
     target: ExportTarget,
     player_binary: Option<&Path>,
     player_pkg: Option<&Path>,
+    pack_assets: bool,
 ) -> Result<PathBuf, ExportError> {
     let project = Project::load(root)?;
     let mut errors = project.diagnostics_report();
@@ -47,8 +48,8 @@ pub fn export(
 
     reject_overlapping_output(root, output)?;
     match target {
-        ExportTarget::Web => export_web(root, output, &project, player_pkg),
-        target => export_desktop(root, output, &project, player_binary, target),
+        ExportTarget::Web => export_web(root, output, &project, player_pkg, pack_assets),
+        target => export_desktop(root, output, &project, player_binary, target, pack_assets),
     }
 }
 
@@ -57,6 +58,7 @@ fn export_web(
     output: &Path,
     project: &Project,
     player_pkg: Option<&Path>,
+    pack_assets: bool,
 ) -> Result<PathBuf, ExportError> {
     let default_pkg = Path::new(env!("CARGO_MANIFEST_DIR")).join("../kairos-player/pkg");
     let pkg = player_pkg.unwrap_or(&default_pkg);
@@ -68,7 +70,7 @@ fn export_web(
     }
     std::fs::create_dir_all(output)?;
     copy_directory(pkg, output)?;
-    copy_project_files(root, output)?;
+    copy_project_files(root, output, pack_assets, project.manifest.assets.packing_key.as_deref())?;
 
     let scripts = project
         .files
@@ -108,8 +110,9 @@ fn export_web(
         scripts,
         screens,
         translations,
-        asset_base_url: "./assets/".into(),
+        asset_base_url: if pack_assets { "./" } else { "./assets/" }.into(),
         assets,
+        asset_pack: pack_assets.then(|| crate::assets::PACK_FILE.into()),
         theme: read_optional(root, "ui/theme.toml")?,
         title: read_optional(root, "ui/title.toml")?,
     };
@@ -126,6 +129,7 @@ fn export_desktop(
     project: &Project,
     player_binary: Option<&Path>,
     target: ExportTarget,
+    pack_assets: bool,
 ) -> Result<PathBuf, ExportError> {
     let target = match target {
         ExportTarget::Desktop => host_target(),
@@ -144,7 +148,7 @@ fn export_desktop(
     }
 
     if target == ExportTarget::MacOS {
-        let app = export_macos(root, output, project, binary)?;
+        let app = export_macos(root, output, project, binary, pack_assets)?;
         sign_macos(&app)?;
         return Ok(app);
     }
@@ -157,7 +161,7 @@ fn export_desktop(
         _ => return Err(ExportError::Player(format!("unsupported desktop target {}", target_name(target)))),
     };
     std::fs::copy(binary, &executable)?;
-    copy_project_files(root, &game)?;
+    copy_project_files(root, &game, pack_assets, project.manifest.assets.packing_key.as_deref())?;
     let launcher_text = if target == ExportTarget::WindowsX64 {
         format!("@echo off\r\ncd /d \"%~dp0\"\r\n\"%~dp0\\{name}.exe\"\r\n")
     } else {
@@ -172,7 +176,13 @@ fn export_desktop(
     Ok(output.to_path_buf())
 }
 
-fn export_macos(root: &Path, output: &Path, project: &Project, binary: &Path) -> Result<PathBuf, ExportError> {
+fn export_macos(
+    root: &Path,
+    output: &Path,
+    project: &Project,
+    binary: &Path,
+    pack_assets: bool,
+) -> Result<PathBuf, ExportError> {
     let name = safe_name(&project.manifest.name);
     let app = output.join(format!("{}.app", bundle_name(&project.manifest.name)));
     let executable = app.join("Contents/MacOS").join(&name);
@@ -180,7 +190,7 @@ fn export_macos(root: &Path, output: &Path, project: &Project, binary: &Path) ->
     std::fs::create_dir_all(executable.parent().unwrap())?;
     std::fs::create_dir_all(&game)?;
     std::fs::copy(binary, &executable)?;
-    copy_project_files(root, &game)?;
+    copy_project_files(root, &game, pack_assets, project.manifest.assets.packing_key.as_deref())?;
     std::fs::write(
         app.join("Contents/Info.plist"),
         format!(
@@ -298,8 +308,17 @@ fn resolve_existing_prefix(path: &Path) -> Result<PathBuf, std::io::Error> {
     Ok(resolved)
 }
 
-fn copy_project_files(root: &Path, destination: &Path) -> Result<(), std::io::Error> {
+fn copy_project_files(
+    root: &Path,
+    destination: &Path,
+    pack_assets: bool,
+    key: Option<&str>,
+) -> Result<(), std::io::Error> {
     for name in PROJECT_ENTRIES {
+        if name == "assets" && pack_assets {
+            crate::assets::pack(&root.join(name), &destination.join(crate::assets::PACK_FILE), key)?;
+            continue;
+        }
         let source = root.join(name);
         if !source.exists() {
             continue;
@@ -396,7 +415,7 @@ mod tests {
         std::fs::write(root.join("assets/image.png"), []).unwrap();
         std::fs::write(&binary, "player binary").unwrap();
 
-        export(&root, &output, ExportTarget::Desktop, Some(&binary), None).unwrap();
+        export(&root, &output, ExportTarget::Desktop, Some(&binary), None, false).unwrap();
         #[cfg(target_os = "macos")]
         let (executable, game) = (
             output.join("Demo Game.app/Contents/MacOS/demo-game"),
@@ -409,11 +428,24 @@ mod tests {
         assert_eq!(std::fs::read_to_string(executable).unwrap(), "player binary");
         assert_eq!(std::fs::read_to_string(game.join("script/start.kai")).unwrap(), "label start:\n    return\n");
         assert!(game.join("assets/image.png").is_file());
+        let packed_output = output.with_extension("packed");
+        let _ = std::fs::remove_dir_all(&packed_output);
+        export(&root, &packed_output, ExportTarget::Desktop, Some(&binary), None, true).unwrap();
+        #[cfg(target_os = "macos")]
+        let packed_game = packed_output.join("Demo Game.app/Contents/Resources/game");
+        #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+        let packed_game = packed_output.join("game");
+        #[cfg(target_os = "windows")]
+        let packed_game = packed_output.join("game");
+        let packed_index = crate::assets::PackIndex::open(&packed_game.join(crate::assets::PACK_FILE), None).unwrap();
+        assert_eq!(packed_index.read("image.png").unwrap().as_deref(), Some(&b""[..]));
+        assert!(!packed_game.join("assets").exists());
         #[cfg(target_os = "macos")]
         assert!(output.join("Demo Game.app/Contents/Info.plist").is_file());
 
         let _ = std::fs::remove_dir_all(root);
         let _ = std::fs::remove_dir_all(output);
+        let _ = std::fs::remove_dir_all(packed_output);
         let _ = std::fs::remove_file(binary);
     }
 
@@ -432,7 +464,7 @@ mod tests {
         {
             let output = root.with_extension(target_name(target));
             let _ = std::fs::remove_dir_all(&output);
-            export(&root, &output, target, Some(&binary), None).unwrap();
+            export(&root, &output, target, Some(&binary), None, false).unwrap();
             assert_eq!(std::fs::read_to_string(output.join(executable)).unwrap(), "player binary");
             assert!(output.join(launcher).is_file());
             assert!(output.join("game/script/start.kai").is_file());
@@ -440,7 +472,7 @@ mod tests {
         }
         let output = root.with_extension("macos");
         let _ = std::fs::remove_dir_all(&output);
-        let app = export_macos(&root, &output, &Project::load(&root).unwrap(), &binary).unwrap();
+        let app = export_macos(&root, &output, &Project::load(&root).unwrap(), &binary, false).unwrap();
         assert!(app.join("Contents/MacOS/demo-game").is_file());
         assert!(app.join("Contents/Resources/game/script/start.kai").is_file());
         assert!(app.join("Contents/Info.plist").is_file());
@@ -460,7 +492,7 @@ mod tests {
         std::fs::write(root.join("script/start.kai"), "label start:\n    return\n").unwrap();
         let target =
             if host_target() == ExportTarget::WindowsX64 { ExportTarget::LinuxX64 } else { ExportTarget::WindowsX64 };
-        let error = export(&root, &output, target, None, None).unwrap_err();
+        let error = export(&root, &output, target, None, None, false).unwrap_err();
         assert!(error.to_string().contains("requires a matching player binary"));
         let _ = std::fs::remove_dir_all(root);
     }
@@ -488,7 +520,7 @@ mod tests {
         std::fs::write(pkg.join("kairos_player.js"), "export class WebPlayer {}").unwrap();
         std::fs::write(pkg.join("kairos_player_bg.wasm"), []).unwrap();
 
-        export(&root, &output, ExportTarget::Web, None, Some(&pkg)).unwrap();
+        export(&root, &output, ExportTarget::Web, None, Some(&pkg), false).unwrap();
         let json: PlayerProjectJson =
             serde_json::from_slice(&std::fs::read(output.join("game.json")).unwrap()).unwrap();
         assert_eq!(json.manifest, "name = 'test'");
@@ -504,19 +536,30 @@ mod tests {
         assert!(std::fs::read_to_string(output.join("index.html")).unwrap().contains("<title>test</title>"));
         assert_eq!(std::fs::read_to_string(output.join("script/start.kai")).unwrap(), "label start:\n    return\n");
 
+        let packed_output = root.with_extension("web-packed");
+        let _ = std::fs::remove_dir_all(&packed_output);
+        export(&root, &packed_output, ExportTarget::Web, None, Some(&pkg), true).unwrap();
+        let packed_json: PlayerProjectJson =
+            serde_json::from_slice(&std::fs::read(packed_output.join("game.json")).unwrap()).unwrap();
+        assert_eq!(packed_json.asset_pack.as_deref(), Some(crate::assets::PACK_FILE));
+        assert_eq!(packed_json.asset_base_url, "./");
+        assert!(packed_output.join(crate::assets::PACK_FILE).is_file());
+        assert!(!packed_output.join("assets").exists());
+
         for inside in [root.clone(), root.join("assets/export"), root.join("script")] {
-            let error = export(&root, &inside, ExportTarget::Web, None, Some(&pkg)).unwrap_err();
+            let error = export(&root, &inside, ExportTarget::Web, None, Some(&pkg), false).unwrap_err();
             assert!(matches!(error, ExportError::Output(_)), "{inside:?} should be rejected");
         }
         assert!(!root.join("assets/export").exists());
-        export(&root, &root.join("build"), ExportTarget::Web, None, Some(&pkg)).unwrap();
+        export(&root, &root.join("build"), ExportTarget::Web, None, Some(&pkg), false).unwrap();
 
         std::fs::write(root.join("script/start.kai"), "label start:\n    jump missing\n").unwrap();
-        let error = export(&root, &output, ExportTarget::Web, None, Some(&pkg)).unwrap_err();
+        let error = export(&root, &output, ExportTarget::Web, None, Some(&pkg), false).unwrap_err();
         assert!(error.to_string().contains("unknown label `missing`"));
 
         let _ = std::fs::remove_dir_all(root);
         let _ = std::fs::remove_dir_all(output);
+        let _ = std::fs::remove_dir_all(packed_output);
         let _ = std::fs::remove_dir_all(pkg);
     }
 }

@@ -141,6 +141,21 @@ impl Game {
         self.program.labels.contains_key(name)
     }
 
+    pub fn prefetch_images(&self, limit: usize) -> Vec<String> {
+        let start = self.vm.last_pc().saturating_add(1);
+        self.program
+            .instrs
+            .iter()
+            .skip(start)
+            .take(limit)
+            .filter_map(|instr| match instr {
+                kairos_vm::Instr::Scene { image: Some(words), .. } => Some(words.join(" ")),
+                kairos_vm::Instr::Show { image, .. } => Some(image.join(" ")),
+                _ => None,
+            })
+            .collect()
+    }
+
     pub fn show_title(&mut self) {
         self.shown = Shown::Nothing;
         self.reset();
@@ -611,6 +626,27 @@ label start:
         game.proceed();
         game.proceed();
         assert!(matches!(game.shown, Shown::Menu { .. }), "{:?}", game.shown);
+    }
+
+    #[test]
+    fn image_prefetch_follows_upcoming_scene_and_show_instructions() {
+        let project = kairos_project::Project::from_sources(
+            "name = \"t\"",
+            [(
+                PathBuf::from("script/a.kai"),
+                r#"label start:
+    "First"
+    scene bg room
+    show e happy
+    "Second"
+"#
+                .into(),
+            )],
+        )
+        .unwrap();
+        let mut game = Game::new(project.program).unwrap();
+        game.start("start");
+        assert_eq!(game.prefetch_images(20), ["bg room", "e happy"]);
     }
 
     #[test]
