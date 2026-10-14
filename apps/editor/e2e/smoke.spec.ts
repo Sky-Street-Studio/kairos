@@ -1,4 +1,4 @@
-import { access, cp, mkdtemp, readFile } from "node:fs/promises";
+import { access, cp, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -119,6 +119,31 @@ test("copies an absolute path from the Files tree context menu", async () => {
     }
   }, dirname(project));
   expect(revealError).toContain("outside the project");
+  await app.close();
+});
+
+test("opens a scene from the button on its card", async () => {
+  const { app, page } = await launch();
+  await page.getByRole("tab", { name: /Story flow/ }).click();
+  const node = page.getByTestId("graph-node").filter({ hasText: /^about/ });
+  await node.hover();
+  await page.getByRole("button", { name: "Open about" }).click();
+  await expect(page.getByRole("tab", { name: /about/ })).toHaveAttribute("aria-selected", "true");
+  await app.close();
+});
+
+test("starts on the project picker even when there is a recent project", async () => {
+  const work = await mkdtemp(join(tmpdir(), "kairos-e2e-"));
+  const project = join(work, "hello-kairos");
+  await cp(example, project, { recursive: true });
+  const userData = join(work, "user-data");
+  await mkdir(userData, { recursive: true });
+  await writeFile(join(userData, "settings.json"), JSON.stringify({ recentProjects: [project] }));
+
+  const app = await electron.launch({ args: [editorDir], env: { ...process.env, KAIROS_USER_DATA: userData } });
+  const page = await app.firstWindow();
+  await expect(page.getByText("Write your visual novel")).toBeVisible();
+  await expect(page.getByRole("button", { name: /hello-kairos/ })).toBeVisible();
   await app.close();
 });
 

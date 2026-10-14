@@ -39,6 +39,7 @@ function sanitize(raw: unknown): Settings {
     dismissedChecklistProjects: Array.isArray(r.dismissedChecklistProjects)
       ? r.dismissedChecklistProjects.filter((p): p is string => typeof p === "string")
       : [],
+    reopenLastProject: r.reopenLastProject === true,
   };
 }
 

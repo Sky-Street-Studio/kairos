@@ -20,7 +20,7 @@ import {
   useNodesState,
   useReactFlow,
 } from "@xyflow/react";
-import { CircleAlert, Flag, Plus, Wand2 } from "lucide-react";
+import { CircleAlert, Flag, PencilLine, Plus, Wand2 } from "lucide-react";
 import { type KeyboardEvent, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -44,6 +44,7 @@ type LabelData = {
 type LabelNodeType = Node<LabelData, "label">;
 
 function LabelNode({ data, selected }: NodeProps<LabelNodeType>) {
+  const openScene = useApp((s) => s.openScene);
   return (
     <div
       style={{ width: NODE_WIDTH, height: NODE_HEIGHT }}
@@ -64,6 +65,19 @@ function LabelNode({ data, selected }: NodeProps<LabelNodeType>) {
             {data.problems}
           </span>
         )}
+        <button
+          type="button"
+          aria-label={`Open ${data.label}`}
+          title="Open scene"
+          onClick={() => openScene(data.label)}
+          className={cn(
+            "nodrag grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:bg-accent hover:text-foreground focus-visible:opacity-100",
+            data.problems === 0 && "ml-auto",
+            selected && "opacity-100",
+          )}
+        >
+          <PencilLine className="size-3.5" />
+        </button>
       </div>
       <span className="truncate text-2xs text-muted-foreground tabular">
         {data.path.replace(/^script\//, "")}:{data.line}
@@ -429,6 +443,9 @@ function Graph() {
               <Button variant="ghost" size="sm" onClick={() => selected && void actions.duplicate(selected.id)}>
                 Duplicate
               </Button>
+              <Button variant="ghost" size="sm" onClick={() => selected && void actions.setStart(selected.id)}>
+                Set as start
+              </Button>
               <Button variant="ghost" size="sm" onClick={() => void actions.remove(selectedLabels)}>
                 Delete
               </Button>
@@ -506,6 +523,15 @@ function Graph() {
               className="!rounded-md !border"
             />
             <div className="absolute top-3 left-3 z-10 flex items-center gap-3 rounded-md border bg-popover/90 px-2.5 py-1.5 text-2xs text-muted-foreground">
+              <Button variant="primary" size="sm" onClick={() => void actions.add()}>
+                <Plus />
+                Add scene
+              </Button>
+              <Button variant="secondary" size="sm" onClick={tidyUp}>
+                <Wand2 />
+                Tidy up
+              </Button>
+              <span className="h-4 border-l" />
               {LEGEND.map(({ kind, label }) => (
                 <span key={kind} className="flex items-center gap-1.5">
                   <svg width="18" height="6" aria-hidden>
@@ -522,21 +548,20 @@ function Graph() {
                   {label}
                 </span>
               ))}
-              <span className="border-l pl-3">Scroll or hold Space and drag to move around</span>
-              <span className="border-l pl-3">Drag from a node’s bottom handle to connect scenes</span>
-              <Button variant="secondary" size="sm" onClick={() => void actions.add()}>
-                <Plus />
-                Add scene
-              </Button>
-              <Button variant="secondary" size="sm" onClick={tidyUp}>
-                <Wand2 />
-                Tidy up
-              </Button>
+              <span className="border-l pl-3">Click a scene for actions, or drag the dot below it to connect</span>
             </div>
             {graph.nodes.length === 0 && (
-              <div className="pointer-events-none absolute inset-0 grid place-items-center text-xs text-muted-foreground">
-                No labels yet. Write <code className="mx-1 font-mono text-foreground">label start:</code> in a script to
-                begin.
+              <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center">
+                <div className="pointer-events-auto w-80 rounded-lg border bg-popover p-5 text-center">
+                  <h2 className="text-sm font-medium">Start your story</h2>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    A scene is one stretch of story. Add the first one, then open it to write lines and choices.
+                  </p>
+                  <Button variant="primary" className="mt-4" onClick={() => void actions.add()}>
+                    <Plus />
+                    Add your first scene
+                  </Button>
+                </div>
               </div>
             )}
           </ReactFlow>

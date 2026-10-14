@@ -62,4 +62,12 @@ describe("recent projects", () => {
 
     expect((await getSettings()).recentProjects).toEqual([kept]);
   });
+
+  it("does not reopen the last project unless the setting is on", async () => {
+    const kept = await project("kept");
+    await saveRecent([kept]);
+    const { getSettings } = await import("./settings");
+
+    expect((await getSettings()).reopenLastProject).toBe(false);
+  });
 });
