@@ -62,7 +62,17 @@ function useGlobalShortcuts() {
       }
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    const offMenu = window.kairos.menu.onCommand((command) => {
+      const s = appStore().getState();
+      if (command === "settings") s.toggleSettings();
+      else if (command === "toggle-sidebar") s.togglePanel("sidebar");
+      else if (command === "toggle-terminal") s.togglePanel("bottom");
+      else s.togglePanel("preview");
+    });
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      offMenu();
+    };
   }, []);
 }
 

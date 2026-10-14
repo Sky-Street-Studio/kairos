@@ -2,7 +2,7 @@ import { ArrowLeft, Code2, FolderClock, PanelsTopLeft, Palette, Search } from "l
 import { useEffect, useRef, useState, type ComponentType } from "react";
 
 import { Kbd } from "@/components/ui/input";
-import { cn, modKey } from "@/lib/utils";
+import { cn, isMac, modKey } from "@/lib/utils";
 import { useApp } from "@/store";
 
 import { AppearancePage } from "./appearance-page";
@@ -85,10 +85,11 @@ export function SettingsView() {
   return (
     <div className="flex min-h-0 flex-1 bg-background">
       <nav aria-label="Settings" className="flex w-[300px] shrink-0 flex-col border-r bg-sidebar">
+        {isMac() && <div className="drag-region h-9 shrink-0" />}
         <button
           type="button"
           onClick={() => toggleSettings(false)}
-          className="flex h-12 shrink-0 items-center gap-2 border-b px-4 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+          className="flex h-10 shrink-0 items-center gap-2 border-b px-4 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
         >
           <ArrowLeft className="size-3.5" />
           Back to app

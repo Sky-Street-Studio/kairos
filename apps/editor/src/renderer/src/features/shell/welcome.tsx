@@ -26,7 +26,8 @@ export function Welcome() {
   }, []);
 
   return (
-    <div className="flex flex-1 items-center justify-center p-8">
+    <div className="relative flex flex-1 items-center justify-center p-8">
+      <div className="drag-region absolute inset-x-0 top-0 h-9" />
       <div className="w-full max-w-md rounded-xl border bg-panel p-8 shadow-[0_24px_60px_-24px_rgb(0_0_0/0.5)]">
         <KairosMark className="mb-5 size-9" />
         <h1 className="text-xl font-semibold tracking-[-0.01em] text-balance">Write your visual novel</h1>

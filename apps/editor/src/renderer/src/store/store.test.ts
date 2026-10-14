@@ -107,6 +107,7 @@ function fakeApi() {
     },
     player: { status: vi.fn() },
     shell: { reveal: vi.fn(async () => undefined) },
+    menu: { onCommand: vi.fn(() => () => undefined) },
     terminal: {} as KairosApi["terminal"],
     settings: {
       get: vi.fn(

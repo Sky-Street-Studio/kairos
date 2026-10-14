@@ -212,6 +212,9 @@ export interface KairosApi {
   shell: {
     reveal(path: string): Promise<void>;
   };
+  menu: {
+    onCommand(listener: (command: MenuCommand) => void): () => void;
+  };
   settings: {
     get(): Promise<Settings>;
     update(patch: Partial<Settings>): Promise<Settings>;
@@ -219,6 +222,8 @@ export interface KairosApi {
     importTheme(): Promise<string | null>;
   };
 }
+
+export type MenuCommand = "toggle-sidebar" | "toggle-terminal" | "toggle-preview" | "settings";
 
 export const ASSET_SCHEME = "kairos-asset";
 export const PLAYER_SCHEME = "kairos-player";
