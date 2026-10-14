@@ -71,7 +71,10 @@ const requireOpenRoot = (): string =>
   })();
 
 function registerIpc(): void {
-  ipcMain.handle("project:initial", async () => initialProjectArg() ?? (await getSettings()).recentProjects[0] ?? null);
+  ipcMain.handle("project:initial", async () => {
+    const settings = await getSettings();
+    return initialProjectArg() ?? (settings.reopenLastProject ? settings.recentProjects[0] : undefined) ?? null;
+  });
   ipcMain.handle("shell:reveal", async (_e, path: string) => {
     const root = await realpath(requireOpenRoot());
     const target = await realpath(resolve(root, path));

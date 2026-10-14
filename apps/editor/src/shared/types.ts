@@ -164,12 +164,13 @@ export interface Settings {
   hiddenCodeProjects: string[];
   beginnerProjects: string[];
   dismissedChecklistProjects: string[];
+  reopenLastProject: boolean;
 }
 
 export interface KairosApi {
   platform: string;
   project: {
-    /** The project named by `--project=<dir>` or `KAIROS_PROJECT`, else the most recent one. */
+    /** The project named by `--project=<dir>` or `KAIROS_PROJECT`, else the most recent one when reopening is on. */
     initial(): Promise<string | null>;
     pick(): Promise<string | null>;
     open(root: string): Promise<ProjectSnapshot>;
