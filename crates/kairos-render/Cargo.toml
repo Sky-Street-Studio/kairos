@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+kairos-script.workspace = true
 wgpu = { version = "30", features = ["webgl"] }
 glyphon = "0.12"
 bytemuck = { version = "1", features = ["derive"] }

@@ -24,6 +24,7 @@ pub enum Request {
         dialogue: bool,
         path: String,
     },
+    FallbackFont(String),
 }
 
 impl Request {
@@ -34,6 +35,7 @@ impl Request {
             Request::Audio { asset, .. } | Request::TitleMusic(asset) => index.audio_candidates(asset),
             Request::AudioMetadata => vec!["audio/audio.toml".into()],
             Request::Font { path, .. } => vec![path.clone()],
+            Request::FallbackFont(path) => vec![path.clone()],
         }
     }
 }

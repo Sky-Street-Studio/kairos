@@ -745,6 +745,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn malformed_text_tags_report_the_source_file_and_line() {
+        let project = Project::from_sources(
+            "name = \"x\"",
+            [(PathBuf::from("script/main.kai"), "label start:\n    \"{b}Broken\"\n".into())],
+        )
+        .unwrap();
+        assert!(project.diagnostics_report().contains("script/main.kai:2: unclosed text tag `{b}`"));
+    }
+
+    #[test]
     fn window_defaults_to_720p_and_reads_overrides() {
         let p = Project::from_sources("name = \"x\"", []).unwrap();
         assert_eq!(p.manifest.window, Window { width: 1280, height: 720 });

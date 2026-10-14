@@ -232,7 +232,7 @@ fn collect_outline(stmts: &[Stmt], out: &mut Outline) {
                 out.labels.push(OutlineLabel { name: name.clone(), line: stmt.line as u32 });
                 collect_outline(body, out);
             }
-            StmtKind::Character { id, name, color } => out.characters.push(OutlineCharacter {
+            StmtKind::Character { id, name, color, .. } => out.characters.push(OutlineCharacter {
                 id: id.clone(),
                 name: name.clone(),
                 color: color.clone(),

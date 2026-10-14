@@ -4,9 +4,11 @@ pub mod ast;
 pub mod edit;
 mod lexer;
 mod parser;
+mod text;
 
 pub use ast::*;
 pub use parser::{parse, parse_expr};
+pub use text::{TextMarkup, TextSpan, TextStyle, normalize_text_for_id, parse_text_markup};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {

@@ -13,9 +13,41 @@ pub struct MenuChoice {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Instr {
-    Say { speaker: Option<Speaker>, text: String },
-    Menu { caption: Option<(Option<Speaker>, String)>, choices: Vec<MenuChoice> },
+    Say {
+        speaker: Option<Speaker>,
+        text: String,
+    },
+    Menu {
+        caption: Option<(Option<Speaker>, String)>,
+        choices: Vec<MenuChoice>,
+    },
     Pause(Option<f64>),
+    Nvl(kairos_script::NvlAction),
+    StageSprite {
+        tag: String,
+        x: Option<f64>,
+        y: Option<f64>,
+        scale: Option<f64>,
+        rotation: Option<f64>,
+        alpha: Option<f64>,
+        over: Option<f64>,
+        easing: kairos_script::Easing,
+    },
+    Camera {
+        x: Option<f64>,
+        y: Option<f64>,
+        zoom: Option<f64>,
+        over: Option<f64>,
+        easing: kairos_script::Easing,
+    },
+    ScreenShake {
+        duration: f64,
+        amount: f64,
+    },
+    ScreenFlash {
+        color: String,
+        duration: f64,
+    },
     Goto(usize),
     GotoUnless(Expr, usize),
     Jump(String),
@@ -24,22 +56,51 @@ pub enum Instr {
     OpenLoad,
     OpenSettings,
     Quit,
-    Assign { name: String, index: Vec<Expr>, op: AssignOp, value: Expr },
-    Mutate { name: String, method: String, args: Vec<Expr> },
-    Scene { image: Option<Vec<String>>, with: Option<String> },
-    Show { image: Vec<String>, at: Option<String>, with: Option<String> },
+    Assign {
+        name: String,
+        index: Vec<Expr>,
+        op: AssignOp,
+        value: Expr,
+    },
+    Mutate {
+        name: String,
+        method: String,
+        args: Vec<Expr>,
+    },
+    Scene {
+        image: Option<Vec<String>>,
+        with: Option<String>,
+    },
+    Show {
+        image: Vec<String>,
+        at: Option<String>,
+        with: Option<String>,
+    },
     ShowScreen(String),
     HideScreen(String),
-    Hide { tag: String, with: Option<String> },
+    Hide {
+        tag: String,
+        with: Option<String>,
+    },
     With(String),
-    Play { channel: String, asset: String, looped: bool, queue: bool, fadein: Option<f64> },
-    Stop { channel: String, fadeout: Option<f64> },
+    Play {
+        channel: String,
+        asset: String,
+        looped: bool,
+        queue: bool,
+        fadein: Option<f64>,
+    },
+    Stop {
+        channel: String,
+        fadeout: Option<f64>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Character {
     pub name: String,
     pub color: Option<String>,
+    pub nvl: bool,
 }
 
 /// A script compiled to a flat instruction list.
@@ -125,7 +186,7 @@ struct Compiler {
 
 impl Compiler {
     fn emit(&mut self, instr: Instr, line: usize, source: &str) -> usize {
-        let hash = fnv1a(source);
+        let hash = fnv1a(&kairos_script::normalize_text_for_id(source));
         let n = self.occurrences.entry((self.label.clone(), hash)).or_default();
         self.program.ids.push(format!("{}:{hash:016x}:{n}", self.label));
         *n += 1;
@@ -185,6 +246,11 @@ impl Compiler {
             }
             _ => {}
         }
+        for text in &texts {
+            if let Err(message) = kairos_script::parse_text_markup(text) {
+                problems.push(message);
+            }
+        }
         let parsed: Vec<Expr> = texts
             .iter()
             .flat_map(|t| match eval::interpolations(t) {
@@ -220,8 +286,8 @@ impl Compiler {
                 self.label = outer;
                 return;
             }
-            StmtKind::Character { id, name, color } => {
-                let def = Character { name: name.clone(), color: color.clone() };
+            StmtKind::Character { id, name, color, nvl } => {
+                let def = Character { name: name.clone(), color: color.clone(), nvl: *nvl };
                 self.program.characters.insert(id.clone(), def);
                 return;
             }
@@ -308,6 +374,24 @@ impl Compiler {
             },
             StmtKind::Stop { channel, fadeout } => Instr::Stop { channel: channel.clone(), fadeout: *fadeout },
             StmtKind::Pause(d) => Instr::Pause(*d),
+            StmtKind::Nvl(action) => Instr::Nvl(*action),
+            StmtKind::StageSprite { tag, x, y, scale, rotation, alpha, over, easing } => Instr::StageSprite {
+                tag: tag.clone(),
+                x: *x,
+                y: *y,
+                scale: *scale,
+                rotation: *rotation,
+                alpha: *alpha,
+                over: *over,
+                easing: *easing,
+            },
+            StmtKind::Camera { x, y, zoom, over, easing } => {
+                Instr::Camera { x: *x, y: *y, zoom: *zoom, over: *over, easing: *easing }
+            }
+            StmtKind::ScreenShake { duration, amount } => Instr::ScreenShake { duration: *duration, amount: *amount },
+            StmtKind::ScreenFlash { color, duration } => {
+                Instr::ScreenFlash { color: color.clone(), duration: *duration }
+            }
         };
         self.emit(simple, line, src);
     }
@@ -315,4 +399,28 @@ impl Compiler {
 
 fn fnv1a(s: &str) -> u64 {
     s.bytes().fold(0xcbf29ce484222325, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn id_for(source: &str) -> String {
+        let (statements, diagnostics) = kairos_script::parse(source);
+        assert!(diagnostics.is_empty());
+        let (program, diagnostics) = compile(&[statements]);
+        assert!(diagnostics.is_empty());
+        program.ids[0].clone()
+    }
+
+    #[test]
+    fn markup_free_statement_ids_keep_their_existing_value() {
+        assert_eq!(id_for("label start:\n    \"Hello\"\n"), "start:1662743877464d4b:0");
+    }
+
+    #[test]
+    fn markup_only_edits_keep_statement_ids() {
+        assert_eq!(id_for("label start:\n    \"Hello\"\n"), id_for("label start:\n    \"{b}Hello{/b}\"\n"));
+        assert_ne!(id_for("label start:\n    \"Hello\"\n"), id_for("label start:\n    \"Goodbye\"\n"));
+    }
 }

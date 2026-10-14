@@ -77,6 +77,7 @@ pub struct Fonts {
     /// Font files relative to `assets/`, used for dialogue and for everything else.
     pub dialogue: Option<String>,
     pub interface: Option<String>,
+    pub fallback: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -257,10 +258,11 @@ mod tests {
     #[test]
     fn fonts_and_text_colours_are_read() {
         let theme = Theme::parse(
-            "[fonts]\ndialogue = \"fonts/Serif.ttf\"\n[nameplate]\ntext_color = \"#abc\"\n[menu]\naccent = \"#112233\"\n",
+            "[fonts]\ndialogue = \"fonts/Serif.ttf\"\nfallback = [\"fonts/CJK.otf\"]\n[nameplate]\ntext_color = \"#abc\"\n[menu]\naccent = \"#112233\"\n",
         )
         .unwrap();
         assert_eq!(theme.fonts.dialogue.as_deref(), Some("fonts/Serif.ttf"));
+        assert_eq!(theme.fonts.fallback, ["fonts/CJK.otf"]);
         assert_eq!(theme.nameplate.text_color, Some(Hex(Color::rgb(0xaa, 0xbb, 0xcc))));
         assert_eq!(theme.menu.accent, Hex(Color::rgb(0x11, 0x22, 0x33)));
     }

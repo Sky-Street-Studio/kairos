@@ -14,12 +14,71 @@ pub struct Sprite {
     pub tag: String,
     pub attrs: Vec<String>,
     pub at: Option<String>,
+    #[serde(default)]
+    pub transform: SpriteTransform,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct SpriteTransform {
+    pub x: f32,
+    pub y: f32,
+    pub scale: f32,
+    pub rotation: f32,
+    pub alpha: f32,
+}
+
+impl Default for SpriteTransform {
+    fn default() -> Self {
+        SpriteTransform { x: 0.0, y: 0.0, scale: 1.0, rotation: 0.0, alpha: 1.0 }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Camera {
+    pub x: f32,
+    pub y: f32,
+    pub zoom: f32,
+}
+
+impl Default for Camera {
+    fn default() -> Self {
+        Camera { x: 0.0, y: 0.0, zoom: 1.0 }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StageTween {
+    pub tag: Option<String>,
+    pub from: SpriteTransform,
+    pub to: SpriteTransform,
+    pub elapsed: f32,
+    pub duration: f32,
+    pub easing: kairos_script::Easing,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Stage {
     pub background: Option<Vec<String>>,
     pub sprites: Vec<Sprite>,
+    #[serde(default)]
+    pub camera: Camera,
+    #[serde(default)]
+    pub tweens: Vec<StageTween>,
+    #[serde(default)]
+    pub shake: Option<(f32, f32, f32)>,
+    #[serde(default)]
+    pub flash: Option<(String, f32, f32)>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct StageTarget {
+    x: Option<f64>,
+    y: Option<f64>,
+    scale: Option<f64>,
+    rotation: Option<f64>,
+    alpha: Option<f64>,
+    over: Option<f64>,
+    easing: kairos_script::Easing,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -36,6 +95,8 @@ pub struct State {
     pub store: BTreeMap<String, Value>,
     pub stage: Stage,
     pub audio: BTreeMap<String, Track>,
+    pub nvl_mode: bool,
+    pub nvl_page: Vec<(Option<String>, String)>,
     /// Jump targets of the visible choices while a menu is waiting for input.
     pub menu: Option<Vec<usize>>,
     /// Random generator state. A `Cell` because expressions draw numbers while only reading
@@ -118,6 +179,27 @@ struct Env<'a> {
 
 static NONE: Value = Value::None;
 
+fn valid_transform(transform: SpriteTransform) -> bool {
+    transform.x.is_finite()
+        && transform.y.is_finite()
+        && transform.scale.is_finite()
+        && transform.scale > 0.0
+        && transform.rotation.is_finite()
+        && transform.alpha.is_finite()
+        && (0.0..=1.0).contains(&transform.alpha)
+}
+
+fn interpolate_transform(from: SpriteTransform, to: SpriteTransform, t: f32) -> SpriteTransform {
+    let lerp = |a: f32, b: f32| a + (b - a) * t;
+    SpriteTransform {
+        x: lerp(from.x, to.x),
+        y: lerp(from.y, to.y),
+        scale: lerp(from.scale, to.scale),
+        rotation: lerp(from.rotation, to.rotation),
+        alpha: lerp(from.alpha, to.alpha),
+    }
+}
+
 impl Scope for Env<'_> {
     fn lookup(&self, name: &str) -> Option<&Value> {
         if is_persistent(name) {
@@ -187,6 +269,123 @@ impl Vm {
 
     pub fn state(&self) -> &State {
         &self.state
+    }
+
+    fn stage_sprite(&mut self, tag: &str, target: StageTarget) -> Result<(), RuntimeError> {
+        let Some(sprite) = self.state.stage.sprites.iter().find(|sprite| sprite.tag == tag) else {
+            return Err(self.error(format!("cannot transform hidden sprite `{tag}`")));
+        };
+        let from = sprite.transform;
+        let mut to = from;
+        if let Some(value) = target.x {
+            to.x = value as f32;
+        }
+        if let Some(value) = target.y {
+            to.y = value as f32;
+        }
+        if let Some(value) = target.scale {
+            to.scale = value as f32;
+        }
+        if let Some(value) = target.rotation {
+            to.rotation = value as f32;
+        }
+        if let Some(value) = target.alpha {
+            to.alpha = value as f32;
+        }
+        if !valid_transform(to) {
+            return Err(self.error("staging scale must be positive and alpha must be between 0 and 1"));
+        }
+        let duration = target.over.unwrap_or_default() as f32;
+        self.state.stage.tweens.retain(|tween| tween.tag.as_deref() != Some(tag));
+        if duration <= 0.0 {
+            self.state.stage.sprites.iter_mut().find(|sprite| sprite.tag == tag).unwrap().transform = to;
+        } else {
+            self.state.stage.tweens.push(StageTween {
+                tag: Some(tag.into()),
+                from,
+                to,
+                elapsed: 0.0,
+                duration,
+                easing: target.easing,
+            });
+        }
+        Ok(())
+    }
+
+    fn stage_camera(
+        &mut self,
+        x: Option<f64>,
+        y: Option<f64>,
+        zoom: Option<f64>,
+        over: Option<f64>,
+        easing: kairos_script::Easing,
+    ) -> Result<(), RuntimeError> {
+        let camera = self.state.stage.camera;
+        let from = SpriteTransform { x: camera.x, y: camera.y, scale: camera.zoom, ..SpriteTransform::default() };
+        let mut to = from;
+        if let Some(value) = x {
+            to.x = value as f32;
+        }
+        if let Some(value) = y {
+            to.y = value as f32;
+        }
+        if let Some(value) = zoom {
+            to.scale = value as f32;
+        }
+        if !to.scale.is_finite() || to.scale <= 0.0 {
+            return Err(self.error("camera zoom must be positive"));
+        }
+        let duration = over.unwrap_or_default() as f32;
+        self.state.stage.tweens.retain(|tween| tween.tag.is_some());
+        if duration <= 0.0 {
+            self.state.stage.camera = Camera { x: to.x, y: to.y, zoom: to.scale };
+        } else {
+            self.state.stage.tweens.push(StageTween { tag: None, from, to, elapsed: 0.0, duration, easing });
+        }
+        Ok(())
+    }
+
+    pub fn tick_stage(&mut self, dt: f32, snap: bool) {
+        let dt = dt.max(0.0);
+        for tween in &mut self.state.stage.tweens {
+            tween.elapsed = if snap { tween.duration } else { (tween.elapsed + dt).min(tween.duration) };
+            let t = (tween.elapsed / tween.duration).clamp(0.0, 1.0);
+            let t = match tween.easing {
+                kairos_script::Easing::At => {
+                    if t >= 1.0 {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
+                kairos_script::Easing::Linear => t,
+                kairos_script::Easing::Ease => t * t * (3.0 - 2.0 * t),
+            };
+            let value = interpolate_transform(tween.from, tween.to, t);
+            if let Some(tag) = &tween.tag {
+                if let Some(sprite) = self.state.stage.sprites.iter_mut().find(|sprite| &sprite.tag == tag) {
+                    sprite.transform = value;
+                }
+            } else {
+                self.state.stage.camera = Camera { x: value.x, y: value.y, zoom: value.scale };
+            }
+        }
+        self.state.stage.tweens.retain(|tween| tween.elapsed < tween.duration);
+        if let Some((duration, elapsed, _)) = &mut self.state.stage.shake {
+            *elapsed = if snap { *duration } else { (*elapsed + dt).min(*duration) };
+            if *elapsed >= *duration {
+                self.state.stage.shake = None;
+            }
+        }
+        if let Some((_, duration, elapsed)) = &mut self.state.stage.flash {
+            *elapsed = if snap { *duration } else { (*elapsed + dt).min(*duration) };
+            if *elapsed >= *duration {
+                self.state.stage.flash = None;
+            }
+        }
+        if let Some(current) = self.history.last_mut() {
+            *current = self.state.clone();
+        }
     }
 
     pub fn program(&self) -> &Program {
@@ -383,6 +582,13 @@ impl Vm {
                     let id = &program.ids[pc];
                     let text = self.interpolate(text, id)?;
                     let (who, color) = self.speaker(speaker.as_ref(), id)?;
+                    if matches!(speaker, Some(Speaker::Character(character)) if program.characters.get(character).is_some_and(|definition| definition.nvl))
+                    {
+                        self.state.nvl_mode = true;
+                    }
+                    if self.state.nvl_mode {
+                        self.state.nvl_page.push((who.clone(), text.clone()));
+                    }
                     self.line_seen = self.persistent.seen.contains(id);
                     self.displayed = Some(pc);
                     self.state.pc += 1;
@@ -392,6 +598,41 @@ impl Vm {
                     self.checkpoint();
                     self.state.pc += 1;
                     return Ok(RouteStep::Event(Event::Pause(*d)));
+                }
+                Instr::Nvl(action) => {
+                    match action {
+                        kairos_script::NvlAction::On => self.state.nvl_mode = true,
+                        kairos_script::NvlAction::Off => self.state.nvl_mode = false,
+                        kairos_script::NvlAction::Clear => self.state.nvl_page.clear(),
+                    }
+                    self.state.pc += 1;
+                }
+                Instr::StageSprite { tag, x, y, scale, rotation, alpha, over, easing } => {
+                    self.stage_sprite(
+                        tag,
+                        StageTarget {
+                            x: *x,
+                            y: *y,
+                            scale: *scale,
+                            rotation: *rotation,
+                            alpha: *alpha,
+                            over: *over,
+                            easing: *easing,
+                        },
+                    )?;
+                    self.state.pc += 1;
+                }
+                Instr::Camera { x, y, zoom, over, easing } => {
+                    self.stage_camera(*x, *y, *zoom, *over, *easing)?;
+                    self.state.pc += 1;
+                }
+                Instr::ScreenShake { duration, amount } => {
+                    self.state.stage.shake = (*duration > 0.0).then_some((*duration as f32, 0.0, *amount as f32));
+                    self.state.pc += 1;
+                }
+                Instr::ScreenFlash { color, duration } => {
+                    self.state.stage.flash = (*duration > 0.0).then_some((color.clone(), *duration as f32, 0.0));
+                    self.state.pc += 1;
                 }
                 Instr::Menu { caption, choices } => {
                     self.checkpoint();
@@ -455,12 +696,17 @@ impl Vm {
                     self.state.pc += 1;
                 }
                 Instr::Scene { image, with } => {
-                    self.state.stage = Stage { background: image.clone(), sprites: Vec::new() };
+                    self.state.stage = Stage { background: image.clone(), ..Stage::default() };
                     self.effects.push(Effect::Scene { image: image.clone(), with: with.clone() });
                     self.state.pc += 1;
                 }
                 Instr::Show { image, at, with } => {
-                    let sprite = Sprite { tag: image[0].clone(), attrs: image[1..].to_vec(), at: at.clone() };
+                    let sprite = Sprite {
+                        tag: image[0].clone(),
+                        attrs: image[1..].to_vec(),
+                        at: at.clone(),
+                        transform: SpriteTransform::default(),
+                    };
                     let sprites = &mut self.state.stage.sprites;
                     match sprites.iter_mut().find(|s| s.tag == sprite.tag) {
                         Some(existing) => {

@@ -169,6 +169,9 @@ impl Player {
                 player.assets.request(Request::Font { dialogue, path: path.clone() });
             }
         }
+        for path in &player.theme.fonts.fallback {
+            player.assets.request(Request::FallbackFont(path.clone()));
+        }
         Ok(player)
     }
 
@@ -900,6 +903,12 @@ impl Player {
                 None => log(&format!("font `{path}` could not be read")),
             },
             (Request::Font { path, .. }, None) => log(&format!("font `{path}` not found under assets")),
+            (Request::FallbackFont(path), Some(bytes)) => {
+                if self.fonts.load(bytes).is_none() {
+                    log(&format!("fallback font `{path}` could not be read"));
+                }
+            }
+            (Request::FallbackFont(path), None) => log(&format!("fallback font `{path}` not found under assets")),
             _ => {}
         }
     }

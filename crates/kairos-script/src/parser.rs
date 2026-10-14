@@ -188,7 +188,12 @@ impl Parser {
                         let id = c.ident()?;
                         let name = c.string()?;
                         let mut color = None;
+                        let mut nvl = false;
                         while let Some(key) = c.opt_ident() {
+                            if key == "nvl" {
+                                nvl = true;
+                                continue;
+                            }
                             c.op("=")?;
                             let value = c.string()?;
                             match key.as_str() {
@@ -196,7 +201,7 @@ impl Parser {
                                 _ => return Err(c.err(format!("unknown character property `{key}`"))),
                             }
                         }
-                        StmtKind::Character { id, name, color }
+                        StmtKind::Character { id, name, color, nvl }
                     }
                     "define" | "default" => {
                         let name = c.ident()?;
@@ -260,6 +265,38 @@ impl Parser {
                         StmtKind::Stop { channel, fadeout }
                     }
                     "pause" => StmtKind::Pause(if c.at_end() { None } else { Some(c.number()?) }),
+                    "nvl" => StmtKind::Nvl(match c.ident()?.as_str() {
+                        "on" => NvlAction::On,
+                        "off" => NvlAction::Off,
+                        "clear" => NvlAction::Clear,
+                        action => return Err(c.err(format!("unknown NVL action `{action}`"))),
+                    }),
+                    "stage" => {
+                        let tag = c.ident()?;
+                        let props = stage_properties(&mut c)?;
+                        StmtKind::StageSprite {
+                            tag,
+                            x: props.x,
+                            y: props.y,
+                            scale: props.scale,
+                            rotation: props.rotation,
+                            alpha: props.alpha,
+                            over: props.over,
+                            easing: props.easing,
+                        }
+                    }
+                    "camera" => {
+                        let props = stage_properties(&mut c)?;
+                        StmtKind::Camera {
+                            x: props.x,
+                            y: props.y,
+                            zoom: props.scale,
+                            over: props.over,
+                            easing: props.easing,
+                        }
+                    }
+                    "shake" => StmtKind::ScreenShake { duration: c.number()?, amount: c.number()? },
+                    "flash" => StmtKind::ScreenFlash { color: c.string()?, duration: c.number()? },
                     "elif" | "else" => return Err(c.err(format!("`{kw}` without a matching `if`"))),
                     _ => return Err(c.err(format!("unknown statement `{kw}`"))),
                 }
@@ -349,6 +386,44 @@ impl Parser {
         }
         StmtKind::If(branches)
     }
+}
+
+struct StageProperties {
+    x: Option<f64>,
+    y: Option<f64>,
+    scale: Option<f64>,
+    rotation: Option<f64>,
+    alpha: Option<f64>,
+    over: Option<f64>,
+    easing: Easing,
+}
+
+fn stage_properties(c: &mut Cursor) -> Result<StageProperties, Diagnostic> {
+    let (mut x, mut y, mut scale, mut rotation, mut alpha, mut over) = (None, None, None, None, None, None);
+    let mut easing = Easing::Linear;
+    while let Some(key) = c.opt_ident() {
+        match key.as_str() {
+            "at" => easing = Easing::At,
+            "linear" => easing = Easing::Linear,
+            "ease" => easing = Easing::Ease,
+            "x" | "y" | "scale" | "rotation" | "alpha" | "zoom" | "over" => {
+                c.op("=")?;
+                let value = c.number()?;
+                match key.as_str() {
+                    "x" => x = Some(value),
+                    "y" => y = Some(value),
+                    "scale" | "zoom" => scale = Some(value),
+                    "rotation" => rotation = Some(value),
+                    "alpha" => alpha = Some(value),
+                    "over" if value >= 0.0 => over = Some(value),
+                    "over" => return Err(c.err("timeline duration cannot be negative")),
+                    _ => unreachable!(),
+                }
+            }
+            _ => return Err(c.err(format!("unknown staging property `{key}`"))),
+        }
+    }
+    Ok(StageProperties { x, y, scale, rotation, alpha, over, easing })
 }
 
 fn is_say(c: &Cursor) -> bool {

@@ -105,6 +105,63 @@ fn custom_screen_statements_emit_presentation_effects_and_continue() {
 }
 
 #[test]
+fn an_nvl_character_enters_nvl_mode() {
+    let p = program("character e \"Eileen\" nvl\nlabel start:\n    e \"First\"\n");
+    let mut vm = started(&p);
+    assert_eq!(say(vm.advance().unwrap()), "First");
+    assert!(vm.state().nvl_mode);
+    assert_eq!(vm.state().nvl_page, [(Some("Eileen".into()), "First".into())]);
+}
+
+#[test]
+fn nvl_page_accumulates_and_survives_rollback_and_save_load() {
+    let p =
+        program("label start:\n    nvl on\n    \"First\"\n    \"Second\"\n    nvl clear\n    nvl off\n    \"Third\"\n");
+    let mut vm = started(&p);
+    assert_eq!(say(vm.advance().unwrap()), "First");
+    assert!(vm.state().nvl_mode);
+    assert_eq!(vm.state().nvl_page, [(None, "First".into())]);
+    assert_eq!(say(vm.advance().unwrap()), "Second");
+    assert_eq!(vm.state().nvl_page, [(None, "First".into()), (None, "Second".into())]);
+    let bytes = vm.save().unwrap();
+    let mut loaded = Vm::load(p.clone(), &bytes).unwrap();
+    assert_eq!(say(loaded.advance().unwrap()), "Second");
+    assert_eq!(loaded.state().nvl_page.len(), 2);
+    assert!(vm.rollback());
+    assert_eq!(say(vm.advance().unwrap()), "First");
+    assert_eq!(vm.state().nvl_page.len(), 1);
+    assert_eq!(say(vm.advance().unwrap()), "Second");
+    assert_eq!(vm.advance().unwrap(), Event::Say { who: None, color: None, text: "Third".into() });
+    assert!(vm.state().nvl_page.is_empty());
+    assert!(!vm.state().nvl_mode);
+}
+
+#[test]
+fn stage_tweens_camera_and_effects_advance_and_survive_saves() {
+    let p = program(
+        "label start:\n    show e happy\n    stage e x=100 y=20 scale=2 rotation=30 alpha=0.5 over=2 ease\n    camera x=50 y=10 zoom=1.2 over=2 linear\n    shake 2 4\n    flash \"#ffffff\" 2\n    \"Line\"\n",
+    );
+    let mut vm = started(&p);
+    assert_eq!(say(vm.advance().unwrap()), "Line");
+    vm.tick_stage(1.0, false);
+    let sprite = &vm.state().stage.sprites[0];
+    assert_eq!(sprite.transform.x, 50.0);
+    assert_eq!(sprite.transform.scale, 1.5);
+    assert_eq!(sprite.transform.alpha, 0.75);
+    assert_eq!(vm.state().stage.camera.x, 25.0);
+    assert_eq!(vm.state().stage.camera.zoom, 1.1);
+    assert!(vm.state().stage.shake.is_some());
+    assert!(vm.state().stage.flash.is_some());
+    let bytes = vm.save().unwrap();
+    let mut loaded = Vm::load(p, &bytes).unwrap();
+    assert_eq!(loaded.state().stage.sprites[0].transform.x, 50.0);
+    loaded.tick_stage(1.0, false);
+    assert_eq!(loaded.state().stage.sprites[0].transform.x, 100.0);
+    assert_eq!(loaded.state().stage.camera.zoom, 1.2);
+    assert!(loaded.state().stage.tweens.is_empty());
+}
+
+#[test]
 fn rollback_stops_at_the_first_interaction() {
     let p = program(LOOP);
     let mut vm = started(&p);

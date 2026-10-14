@@ -403,16 +403,21 @@ impl Renderer {
     fn push_layer(&self, vertices: &mut Vec<Vertex>, layer: &[Draw], lb: Letterbox) -> Vec<Batch> {
         let mut batches: Vec<Batch> = Vec::new();
         for draw in layer {
-            let (source, rect, top, bottom, radius) = match draw {
-                Draw::Fill { rect, top, bottom, radius } => (Source::White, rect, *top, *bottom, *radius),
-                Draw::Image { name, rect, opacity } if self.images.contains_key(name) => {
+            let (source, rect, top, bottom, radius, rotation) = match draw {
+                Draw::Fill { rect, top, bottom, radius } => (Source::White, rect, *top, *bottom, *radius, 0.0),
+                Draw::Image { name, rect, opacity, rotation } if self.images.contains_key(name) => {
                     let c = Color::WHITE.with_alpha(*opacity);
-                    (Source::Image(name.clone()), rect, c, c, 0.0)
+                    (Source::Image(name.clone()), rect, c, c, 0.0, *rotation)
                 }
                 _ => continue,
             };
             let rect = rect.scaled(lb.scale, lb.x, lb.y);
-            push_batch(&mut batches, vertices, source, rect, top, bottom, radius * lb.scale);
+            push_batch(
+                &mut batches,
+                vertices,
+                source,
+                BatchStyle { rect, top, bottom, radius: radius * lb.scale, rotation },
+            );
         }
         batches
     }
@@ -423,7 +428,12 @@ impl Renderer {
         let mut batches = Vec::new();
         let mut push = |source, alpha: f32| {
             let c = if source == Source::White { Color::BLACK } else { Color::WHITE }.with_alpha(alpha);
-            push_batch(&mut batches, vertices, source, rect, c, c, 0.0);
+            push_batch(
+                &mut batches,
+                vertices,
+                source,
+                BatchStyle { rect, top: c, bottom: c, radius: 0.0, rotation: 0.0 },
+            );
         };
         match &self.transition {
             None => push(Source::Scene, 1.0),
@@ -449,19 +459,30 @@ impl Renderer {
     }
 }
 
-fn push_batch(
-    batches: &mut Vec<Batch>,
-    vertices: &mut Vec<Vertex>,
-    source: Source,
+struct BatchStyle {
     rect: Rect,
     top: Color,
     bottom: Color,
     radius: f32,
-) {
+    rotation: f32,
+}
+
+fn push_batch(batches: &mut Vec<Batch>, vertices: &mut Vec<Vertex>, source: Source, style: BatchStyle) {
+    let BatchStyle { rect, top, bottom, radius, rotation } = style;
     let start = vertices.len() as u32;
     let (top, bottom) = (top.linear(), bottom.linear());
     let r = [rect.x, rect.y, rect.w, rect.h];
-    let v = |x: f32, y: f32, u: f32, w: f32, color| Vertex { pos: [x, y], uv: [u, w], color, rect: r, radius };
+    let center = (rect.x + rect.w / 2.0, rect.y + rect.h / 2.0);
+    let (sin, cos) = rotation.to_radians().sin_cos();
+    let rotate = |x: f32, y: f32| {
+        let dx = x - center.0;
+        let dy = y - center.1;
+        (center.0 + dx * cos - dy * sin, center.1 + dx * sin + dy * cos)
+    };
+    let v = |x: f32, y: f32, u: f32, w: f32, color| {
+        let (x, y) = rotate(x, y);
+        Vertex { pos: [x, y], uv: [u, w], color, rect: r, radius }
+    };
     let (x0, y0, x1, y1) = (rect.x, rect.y, rect.x + rect.w, rect.y + rect.h);
     vertices.extend([
         v(x0, y0, 0.0, 0.0, top),

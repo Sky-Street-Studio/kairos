@@ -16,8 +16,16 @@ label start:
     scene bg room with fade
     play music "theme.ogg" loop
     show e happy at center with dissolve
-    e "Welcome to Kairos, [player_name]."
-    "The room hums quietly."
+    stage e x=16 scale=1.05 over=0.3 ease
+    camera zoom=1.02 over=0.3 linear
+    shake 0.2 2
+    flash "#ffffff" 0.1
+    e "{b}Welcome{/b} to Kairos, [player_name]."
+    nvl on
+    "The room hums quietly. {w=0.3}Outside, {rb}日本語{/rb}{rt}にほんご{/rt} waits on the sign."
+    "Tonight, the city feels close."
+    nvl clear
+    nvl off
     menu:
         e "What would you like to know?"
         "Tell me about the engine":

@@ -9,9 +9,24 @@ use kairos_vm::{Effect, Event, LoadError, Persistent, Program, RuntimeError, Sta
 #[derive(Debug, Clone, PartialEq)]
 pub enum Shown {
     Nothing,
-    Say { who: Option<String>, color: Option<String>, text: String, revealed: f32, len: usize, waited: f32 },
-    Menu { caption: Option<String>, choices: Vec<String> },
-    Pause { remaining: Option<f32> },
+    Say {
+        who: Option<String>,
+        color: Option<String>,
+        text: String,
+        revealed: f32,
+        len: usize,
+        waited: f32,
+        waits: Vec<(usize, f32)>,
+        wait_index: usize,
+        wait_timer: f32,
+    },
+    Menu {
+        caption: Option<String>,
+        choices: Vec<String>,
+    },
+    Pause {
+        remaining: Option<f32>,
+    },
     OpenLoad,
     OpenSettings,
     Quit,
@@ -224,6 +239,14 @@ impl Game {
         &self.backlog
     }
 
+    pub fn nvl_mode(&self) -> bool {
+        self.vm.state().nvl_mode
+    }
+
+    pub fn nvl_page(&self) -> &[(Option<String>, String)] {
+        &self.vm.state().nvl_page
+    }
+
     pub fn language(&self) -> &str {
         &self.language
     }
@@ -331,7 +354,10 @@ impl Game {
             self.mode = Mode::Normal;
         }
         match &mut self.shown {
-            Shown::Say { revealed, len, .. } if (*revealed as usize) < *len => *revealed = *len as f32,
+            Shown::Say { revealed, len, waits, wait_index, .. } if (*revealed as usize) < *len => {
+                *revealed = *len as f32;
+                *wait_index = waits.len();
+            }
             Shown::Say { .. } | Shown::Pause { .. } | Shown::OpenLoad | Shown::OpenSettings | Shown::Quit => {
                 self.step()
             }
@@ -414,6 +440,7 @@ impl Game {
             return;
         }
         if self.mode == Mode::Skip {
+            self.vm.tick_stage(dt, true);
             self.skip_timer += dt;
             if matches!(self.shown, Shown::Say { .. }) && !self.settings.skip_unseen && !self.vm.line_seen() {
                 self.mode = Mode::Normal;
@@ -429,19 +456,34 @@ impl Game {
             }
             return;
         }
+        self.vm.tick_stage(dt, false);
         let speed = self.settings.text_speed;
         let auto = self.mode == Mode::Auto;
         let delay = self.settings.auto_delay;
         let next = match &mut self.shown {
-            Shown::Say { revealed, len, waited, .. } => {
-                if speed >= Settings::INSTANT {
+            Shown::Say { revealed, len, waited, waits, wait_index, wait_timer, .. } => {
+                if let Some(&(position, duration)) = waits.get(*wait_index) {
+                    if *revealed as usize >= position {
+                        *wait_timer += dt;
+                        if *wait_timer >= duration {
+                            *wait_index += 1;
+                            *wait_timer = 0.0;
+                        }
+                    } else if speed >= Settings::INSTANT {
+                        *revealed = (*len).min(position) as f32;
+                    } else {
+                        *revealed = (*revealed + speed * dt).min(position as f32);
+                    }
+                } else if speed >= Settings::INSTANT {
                     *revealed = *len as f32;
                 } else if (*revealed as usize) < *len {
                     *revealed = (*revealed + speed * dt).min(*len as f32);
                 } else {
                     *waited += dt;
                 }
-                auto && (*revealed as usize) >= *len && *waited >= delay + *len as f32 * 0.02
+                auto && *wait_index >= waits.len()
+                    && (*revealed as usize) >= *len
+                    && *waited >= delay + *len as f32 * 0.02
             }
             Shown::Pause { remaining: Some(r) } => {
                 *r -= dt;
@@ -495,9 +537,12 @@ impl Game {
         self.shown = match event {
             Event::Say { who, color, text } => {
                 self.backlog.push(Line { who: who.clone(), text: text.clone() });
-                let len = text.chars().count();
-                let revealed = if self.settings.text_speed >= Settings::INSTANT { len as f32 } else { 0.0 };
-                Shown::Say { who, color, text, revealed, len, waited: 0.0 }
+                let markup = kairos_render::parse_text_markup(&text).ok();
+                let len = markup.as_ref().map_or_else(|| text.chars().count(), |markup| markup.visible_chars);
+                let waits = markup.map_or_else(Vec::new, |markup| markup.waits);
+                let revealed =
+                    if self.settings.text_speed >= Settings::INSTANT && waits.is_empty() { len as f32 } else { 0.0 };
+                Shown::Say { who, color, text, revealed, len, waited: 0.0, waits, wait_index: 0, wait_timer: 0.0 }
             }
             Event::Menu { caption, choices } => Shown::Menu { caption, choices },
             Event::Pause(d) => Shown::Pause { remaining: d.map(|d| d as f32) },
@@ -608,6 +653,25 @@ label start:
                 .any(|s| matches!(s, Signal::Audio(Effect::Play { asset, looped: true, .. }) if asset == "theme.ogg"))
         );
         assert_eq!(game.stage().background.as_deref(), Some(&["bg".to_string(), "room".to_string()][..]));
+    }
+
+    #[test]
+    fn inline_waits_pause_typewriter_reveal_at_their_position() {
+        let project = kairos_project::Project::from_sources(
+            "name = \"t\"",
+            [(PathBuf::from("script/a.kai"), "label start:\n    \"A{w=0.5}B\"\n".into())],
+        )
+        .unwrap();
+        let mut game = Game::new(project.program).unwrap();
+        game.settings.text_speed = 10.0;
+        game.start("start");
+        game.tick(0.1);
+        assert!(matches!(game.shown, Shown::Say { revealed, .. } if revealed == 1.0));
+        game.tick(0.25);
+        assert!(matches!(game.shown, Shown::Say { revealed, .. } if revealed == 1.0));
+        game.tick(0.25);
+        game.tick(0.1);
+        assert!(matches!(game.shown, Shown::Say { revealed, .. } if revealed == 2.0));
     }
 
     #[test]
