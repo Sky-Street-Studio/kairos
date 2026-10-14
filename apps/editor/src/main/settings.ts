@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { DEFAULT_THEME, parseThemeJson } from "@kairos/theme";
@@ -47,8 +47,23 @@ export async function getSettings(): Promise<Settings> {
   const raw = await readFile(file(), "utf8")
     .catch((err) => (process.env.KAIROS_USER_DATA ? Promise.reject(err) : readFile(legacyFile(), "utf8")))
     .then(JSON.parse, () => ({}));
-  cached = sanitize(raw);
+  const loaded = sanitize(raw);
+  const existing = await existingProjects(loaded.recentProjects);
+  cached = loaded;
+  if (existing.length !== loaded.recentProjects.length) await updateSettings({ recentProjects: existing });
   return cached;
+}
+
+async function existingProjects(roots: string[]): Promise<string[]> {
+  const found = await Promise.all(
+    roots.map((root) =>
+      access(join(root, "kairos.toml")).then(
+        () => true,
+        () => false,
+      ),
+    ),
+  );
+  return roots.filter((_, i) => found[i]);
 }
 
 export async function updateSettings(patch: Partial<Settings>): Promise<Settings> {
