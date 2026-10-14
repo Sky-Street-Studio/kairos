@@ -3,6 +3,7 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use kairos_cli::{Project, run_headless, update_translation_file};
+use kairos_project::routes::{RouteTestOptions, test_routes};
 
 #[derive(Parser)]
 #[command(name = "kairos", version, about = "Kairos visual novel engine")]
@@ -32,6 +33,18 @@ enum Command {
         player_pkg: Option<PathBuf>,
         #[arg(long)]
         player_binary: Option<PathBuf>,
+    },
+    /// Explore every reachable route and report problems.
+    TestRoutes {
+        project: PathBuf,
+        #[arg(long)]
+        json: bool,
+        #[arg(long, default_value_t = 1000)]
+        max_depth: usize,
+        #[arg(long, default_value_t = 3)]
+        max_loop_revisits: usize,
+        #[arg(long, default_value_t = 10000)]
+        max_routes: usize,
     },
     /// Play a project in a window, or as a transcript with `--headless`.
     Run {
@@ -103,7 +116,10 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         return Ok(ExitCode::SUCCESS);
     }
     let root = match &cli.command {
-        Command::Check { project } | Command::Run { project, .. } | Command::Translate { project, .. } => project,
+        Command::Check { project }
+        | Command::TestRoutes { project, .. }
+        | Command::Run { project, .. }
+        | Command::Translate { project, .. } => project,
         Command::Export { .. } => unreachable!(),
     };
     let project = Project::load(root)?;
@@ -127,6 +143,29 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
             println!("{}: no problems found", project.manifest.name);
         }
+        Command::TestRoutes { json, max_depth, max_loop_revisits, max_routes, .. } => {
+            let report = test_routes(&project, RouteTestOptions { max_depth, max_loop_revisits, max_routes })?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                for label in &report.unreachable_labels {
+                    println!("unreachable label: {label}");
+                }
+                for issue in report.dead_ends.iter().chain(&report.missing_assets).chain(&report.unresolved_choices) {
+                    println!("{}:{}: {}", issue.label, issue.line, issue.message);
+                }
+                for cap in &report.truncated {
+                    println!("truncated: {cap}");
+                }
+                if !report.has_problems() {
+                    println!(
+                        "{}: {} routes explored, no problems found",
+                        project.manifest.name, report.routes_explored
+                    );
+                }
+            }
+            has_errors = report.has_problems();
+        }
         Command::Translate { lang, .. } => {
             update_translation_file(&project, &lang)?;
             println!("updated tl/{lang}.toml");
@@ -138,5 +177,5 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
         Command::Export { .. } => unreachable!(),
     }
-    Ok(ExitCode::SUCCESS)
+    Ok(if has_errors { ExitCode::FAILURE } else { ExitCode::SUCCESS })
 }

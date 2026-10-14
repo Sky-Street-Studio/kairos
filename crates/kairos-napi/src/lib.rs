@@ -15,6 +15,25 @@ mod bindings {
         self, AnalyzeInput, CheckResult, Outline, ParseCache, ParseResult, ProjectAnalysis, SourceFile, StoryGraph,
     };
     use crate::export;
+    use kairos_project::routes::{RouteTestOptions, test_routes};
+
+    #[napi(object)]
+    pub struct RouteIssue {
+        pub label: String,
+        pub line: u32,
+        pub message: String,
+    }
+
+    #[napi(object)]
+    pub struct RouteTestReport {
+        pub reachable_labels: Vec<String>,
+        pub unreachable_labels: Vec<String>,
+        pub dead_ends: Vec<RouteIssue>,
+        pub missing_assets: Vec<RouteIssue>,
+        pub unresolved_choices: Vec<RouteIssue>,
+        pub truncated: Vec<String>,
+        pub routes_explored: u32,
+    }
 
     static CACHE: LazyLock<Mutex<ParseCache>> = LazyLock::new(Default::default);
 
@@ -42,6 +61,29 @@ mod bindings {
     #[napi]
     pub fn story_graph(files: Vec<SourceFile>) -> StoryGraph {
         analysis::story_graph(&files)
+    }
+
+    #[napi(js_name = "testRoutes")]
+    pub fn test_routes_project(project: String) -> napi::Result<RouteTestReport> {
+        let loaded = kairos_project::Project::load(std::path::Path::new(&project))
+            .map_err(|error| napi::Error::from_reason(error.to_string()))?;
+        let report = test_routes(&loaded, RouteTestOptions::default())
+            .map_err(|error| napi::Error::from_reason(error.to_string()))?;
+        let issues = |items: Vec<kairos_project::routes::RouteIssue>| {
+            items
+                .into_iter()
+                .map(|item| RouteIssue { label: item.label, line: item.line as u32, message: item.message })
+                .collect()
+        };
+        Ok(RouteTestReport {
+            reachable_labels: report.reachable_labels,
+            unreachable_labels: report.unreachable_labels,
+            dead_ends: issues(report.dead_ends),
+            missing_assets: issues(report.missing_assets),
+            unresolved_choices: issues(report.unresolved_choices),
+            truncated: report.truncated,
+            routes_explored: report.routes_explored as u32,
+        })
     }
 
     #[napi]

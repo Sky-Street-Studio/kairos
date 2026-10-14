@@ -46,13 +46,16 @@ Windows and Linux export, optional macOS signing and notarization, and optional 
 - CJK font fallback.
 - Then the deferred staging work: transform timeline, camera, screen effects (shake, flash) and shaders.
 
+## 5. Route testing (done)
+
+`kairos test-routes` explores reachable branches and reports unreachable labels, missing reachable assets, runtime dead ends and unresolved menu choices. Contract: `route-testing.md`.
+
 ## Next in line
 
 Ordered by how often they block a release:
 
 - **Video playback.** Opening movies and animated cutscenes.
 - **Asset streaming and packing.** Load and evict images on demand, and pack assets into archives (optionally encrypted) instead of shipping loose files.
-- **Route testing.** A tool that plays every branch and reports dead ends, unreachable labels and missing assets.
 - **Voice workflow.** Voice files resolved by line ID, per-character volume and voice replay from the history screen.
 - **Accessibility.** Controller input, text-to-speech, font scaling.
 - **Mobile and console ports.** The wgpu player can target iOS, Android and Switch, which Ren'Py struggles with.

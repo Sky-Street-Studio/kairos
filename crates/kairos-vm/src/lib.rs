@@ -10,4 +10,4 @@ pub use kairos_script::Value;
 pub use persistent::{Persistent, PersistentError};
 pub use program::{Character, Instr, MenuChoice, Program, compile};
 pub use save::LoadError;
-pub use vm::{Effect, Event, RuntimeError, Sprite, Stage, State, Track, Vm};
+pub use vm::{Effect, Event, RouteStep, RuntimeError, Sprite, Stage, State, Track, Vm};

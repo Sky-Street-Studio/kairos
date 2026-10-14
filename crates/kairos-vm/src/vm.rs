@@ -54,6 +54,12 @@ pub enum Event {
     End,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum RouteStep {
+    Conditional { pc: usize, line: usize },
+    Event(Event),
+}
+
 /// Presentation changes for a renderer or transcript. Rollback and load do not replay them;
 /// a renderer redraws from [`State::stage`] instead.
 #[derive(Debug, Clone, PartialEq)]
@@ -78,6 +84,7 @@ pub struct RuntimeError {
 const STEP_LIMIT: usize = 1_000_000;
 const HISTORY_LIMIT: usize = 1_000;
 
+#[derive(Clone)]
 pub struct Vm {
     pub(crate) program: Arc<Program>,
     pub(crate) state: State,
@@ -97,6 +104,8 @@ pub struct Vm {
     displayed: Option<usize>,
     line_seen: bool,
     pub(crate) relocated: bool,
+    route_labels: Vec<String>,
+    route_asset_pcs: Vec<usize>,
 }
 
 struct Env<'a> {
@@ -145,6 +154,8 @@ impl Vm {
             displayed: None,
             line_seen: false,
             relocated: false,
+            route_labels: Vec::new(),
+            route_asset_pcs: Vec::new(),
         };
         let program = vm.program.clone();
         for (name, expr) in &program.defines {
@@ -307,6 +318,36 @@ impl Vm {
 
     /// Runs until the next interaction (dialogue, menu or pause) and returns it.
     pub fn advance(&mut self) -> Result<Event, RuntimeError> {
+        match self.advance_route_step(false)? {
+            RouteStep::Event(event) => Ok(event),
+            RouteStep::Conditional { .. } => unreachable!(),
+        }
+    }
+
+    /// Runs until an interaction or conditional branch, allowing route tools to explore both sides.
+    pub fn advance_route(&mut self) -> Result<RouteStep, RuntimeError> {
+        self.advance_route_step(true)
+    }
+
+    pub fn take_route_labels(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.route_labels)
+    }
+
+    pub fn take_route_asset_pcs(&mut self) -> Vec<usize> {
+        std::mem::take(&mut self.route_asset_pcs)
+    }
+
+    pub fn take_route_branch(&mut self, pc: usize, take: bool) -> Result<(), RuntimeError> {
+        let (condition, target) = match self.program.instrs.get(pc) {
+            Some(Instr::GotoUnless(condition, target)) if self.state.pc == pc => (condition.clone(), *target),
+            _ => return Err(self.error("route branch is no longer current")),
+        };
+        self.eval(&condition, pc)?;
+        self.state.pc = if take { pc + 1 } else { target };
+        Ok(())
+    }
+
+    fn advance_route_step(&mut self, stop_at_conditional: bool) -> Result<RouteStep, RuntimeError> {
         if self.state.menu.is_some() {
             return Err(self.error("waiting for a menu choice"));
         }
@@ -317,6 +358,24 @@ impl Vm {
         for _ in 0..STEP_LIMIT {
             let pc = self.state.pc;
             self.last_pc = pc;
+            if stop_at_conditional
+                && matches!(
+                    program.instrs[pc],
+                    Instr::Scene { image: Some(_), .. } | Instr::Show { .. } | Instr::Play { .. }
+                )
+                && self.route_asset_pcs.last() != Some(&pc)
+            {
+                self.route_asset_pcs.push(pc);
+            }
+            if stop_at_conditional
+                && let Some(label) = program.label_at(pc)
+                && self.route_labels.last().map(String::as_str) != Some(label)
+            {
+                self.route_labels.push(label.to_string());
+            }
+            if stop_at_conditional && matches!(program.instrs[pc], Instr::GotoUnless(..)) {
+                return Ok(RouteStep::Conditional { pc, line: program.lines[pc] });
+            }
             match &program.instrs[pc] {
                 Instr::Say { speaker, text } => {
                     // Before interpolating, so rollback replays the same random draws.
@@ -327,12 +386,12 @@ impl Vm {
                     self.line_seen = self.persistent.seen.contains(id);
                     self.displayed = Some(pc);
                     self.state.pc += 1;
-                    return Ok(Event::Say { who, color, text });
+                    return Ok(RouteStep::Event(Event::Say { who, color, text }));
                 }
                 Instr::Pause(d) => {
                     self.checkpoint();
                     self.state.pc += 1;
-                    return Ok(Event::Pause(*d));
+                    return Ok(RouteStep::Event(Event::Pause(*d)));
                 }
                 Instr::Menu { caption, choices } => {
                     self.checkpoint();
@@ -355,7 +414,7 @@ impl Vm {
                         return Err(self.error("no menu choice is available"));
                     }
                     self.state.menu = Some(targets);
-                    return Ok(Event::Menu { caption, choices: labels });
+                    return Ok(RouteStep::Event(Event::Menu { caption, choices: labels }));
                 }
                 Instr::Goto(t) => self.state.pc = *t,
                 Instr::GotoUnless(cond, t) => {
@@ -370,17 +429,17 @@ impl Vm {
                 }
                 Instr::Return => match self.state.stack.pop() {
                     Some(call) => self.state.pc = call + 1,
-                    None => return Ok(Event::End),
+                    None => return Ok(RouteStep::Event(Event::End)),
                 },
                 Instr::OpenLoad | Instr::OpenSettings | Instr::Quit => {
                     self.checkpoint();
                     self.state.pc += 1;
-                    return Ok(match &program.instrs[pc] {
+                    return Ok(RouteStep::Event(match &program.instrs[pc] {
                         Instr::OpenLoad => Event::OpenLoad,
                         Instr::OpenSettings => Event::OpenSettings,
                         Instr::Quit => Event::Quit,
                         _ => unreachable!(),
-                    });
+                    }));
                 }
                 Instr::Assign { name, index, op, value } => {
                     let rhs = self.eval(value, pc)?;

@@ -91,6 +91,22 @@ export declare function references(filesJson: string, label: string): string
 
 export declare function sceneBlocks(source: string, label: string): string
 
+export interface RouteIssue {
+  label: string
+  line: number
+  message: string
+}
+
+export interface RouteTestReport {
+  reachableLabels: Array<string>
+  unreachableLabels: Array<string>
+  deadEnds: Array<RouteIssue>
+  missingAssets: Array<RouteIssue>
+  unresolvedChoices: Array<RouteIssue>
+  truncated: Array<string>
+  routesExplored: number
+}
+
 export interface SourceFile {
   path: string
   source: string
@@ -102,6 +118,8 @@ export interface SpriteLayers {
 }
 
 export declare function storyGraph(files: Array<SourceFile>): StoryGraph
+
+export declare function testRoutes(project: string): RouteTestReport
 
 export interface StoryGraph {
   nodes: Array<GraphNode>
