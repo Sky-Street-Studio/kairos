@@ -159,6 +159,25 @@ describe("app store", () => {
     });
   });
 
+  it("removes deleted scripts but keeps dirty buffers for deleted scripts", async () => {
+    store.getState().setSource("script/b.kai", "dirty orphan");
+    env.disk.delete("script/a.kai");
+    env.disk.delete("script/b.kai");
+
+    await store.getState().refreshTree();
+
+    expect(Object.keys(store.getState().buffers)).toEqual(["script/b.kai"]);
+    expect(store.getState().buffers["script/b.kai"]?.source).toBe("dirty orphan");
+    expect(env.analyzed.at(-1)?.files.map((file) => file.path)).toEqual(["script/b.kai"]);
+  });
+
+  it("evicts history when its source snapshots exceed 32 MiB", () => {
+    store.getState().setSource("script/a.kai", "x".repeat(17 * 1024 * 1024));
+
+    expect(store.getState().canUndo).toBe(false);
+    expect(store.getState().past).toHaveLength(0);
+  });
+
   it("saves to disk, clears dirty and bumps the preview", async () => {
     store.getState().setSource("script/a.kai", SCRIPT + "# more\n");
     await store.getState().save("script/a.kai");

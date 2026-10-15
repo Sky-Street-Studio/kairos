@@ -1,8 +1,26 @@
 import type { HistoryEntry, HistorySlice, SliceCreator } from "./types";
 
 const LIMIT = 200;
+const BYTE_LIMIT = 32 * 1024 * 1024;
 const TYPING_PAUSE_MS = 1000;
 const OUTSIDE_CHANGE = "The script changed outside the editor, so undo history was cleared.";
+
+const entryBytes = (entry: HistoryEntry) =>
+  Object.values(entry.files).reduce((total, change) => total + 2 * (change.before.length + change.after.length), 0);
+
+function trimHistory(past: HistoryEntry[], future: HistoryEntry[]) {
+  let bytes = [...past, ...future].reduce((total, entry) => total + entryBytes(entry), 0);
+  while (bytes > BYTE_LIMIT && (past.length > 0 || future.length > 0)) {
+    if (future.length === 0 || (past.length > 0 && past[0]!.at <= future[0]!.at)) {
+      bytes -= entryBytes(past[0]!);
+      past = past.slice(1);
+    } else {
+      bytes -= entryBytes(future[0]!);
+      future = future.slice(1);
+    }
+  }
+  return { past, future };
+}
 
 export const createHistorySlice: SliceCreator<HistorySlice> = (set, get) => {
   const flags = (past: HistoryEntry[], future: HistoryEntry[]) => ({
@@ -52,9 +70,11 @@ export const createHistorySlice: SliceCreator<HistorySlice> = (set, get) => {
             at: entry.at,
             files: { [path]: { before: last.files[path]!.before, after: entry.files[path]!.after } },
           };
-          return flags([...s.past.slice(0, -1), merged], []);
+          const history = trimHistory([...s.past.slice(0, -1), merged], []);
+          return flags(history.past, history.future);
         }
-        return flags([...s.past, entry].slice(-LIMIT), []);
+        const history = trimHistory([...s.past, entry].slice(-LIMIT), []);
+        return flags(history.past, history.future);
       });
     },
     undo() {
