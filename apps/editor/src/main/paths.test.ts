@@ -1,3 +1,7 @@
+import { mkdtemp, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { electronApp } = vi.hoisted(() => ({
@@ -6,7 +10,14 @@ const { electronApp } = vi.hoisted(() => ({
 
 vi.mock("electron", () => ({ app: electronApp }));
 
-import { playerPkgDir, templateDir } from "./paths";
+import { playerPkgDir, templateDir, within } from "./paths";
+
+let temp: string | undefined;
+
+afterEach(async () => {
+  if (temp) await import("node:fs/promises").then(({ rm }) => rm(temp!, { recursive: true, force: true }));
+  temp = undefined;
+});
 
 describe("playerPkgDir", () => {
   beforeEach(() => {
@@ -34,6 +45,29 @@ describe("playerPkgDir", () => {
     process.env.KAIROS_PLAYER_PKG = "/tmp/player";
 
     expect(playerPkgDir()).toBe("/tmp/player");
+  });
+});
+
+describe("within", () => {
+  it("keeps paths under a symlinked root and rejects symlinks that escape it", async () => {
+    temp = await mkdtemp(join(tmpdir(), "kairos-paths-"));
+    const realRoot = join(temp, "project");
+    const linkedRoot = join(temp, "linked-project");
+    const outside = join(temp, "outside");
+    await mkdir(realRoot);
+    await mkdir(outside);
+    await mkdir(join(realRoot, "actual"));
+    await writeFile(join(outside, "secret"), "secret");
+    await writeFile(join(realRoot, "actual/file"), "inside");
+    await symlink(realRoot, linkedRoot);
+    await symlink(join(realRoot, "actual"), join(realRoot, "alias"));
+    await symlink(outside, join(realRoot, "assets"));
+    await symlink(join(outside, "future"), join(realRoot, "dangling"));
+
+    expect(within(linkedRoot, "kairos.toml")).toBe(join(await realpath(realRoot), "kairos.toml"));
+    expect(within(realRoot, "alias/file")).toBe(await realpath(join(realRoot, "actual/file")));
+    expect(() => within(realRoot, "assets/secret")).toThrow("outside the project");
+    expect(() => within(realRoot, "dangling")).toThrow("outside the project");
   });
 });
 

@@ -1,4 +1,4 @@
-import { copyFile, cp, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { copyFile, cp, lstat, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve } from "node:path";
 
 import sharp from "sharp";
@@ -24,14 +24,14 @@ function requireRoot(): string {
 }
 
 async function exists(path: string): Promise<boolean> {
-  return stat(path).then(
+  return lstat(path).then(
     () => true,
     () => false,
   );
 }
 
 export async function readManifest(root: string): Promise<Manifest> {
-  const path = join(root, "kairos.toml");
+  const path = within(root, "kairos.toml");
   if (!(await exists(path))) throw new Error(`${root} has no kairos.toml, so it is not a Kairos project`);
   const raw = parseToml(await readFile(path, "utf8")) as Partial<Manifest>;
   const window = raw.window;
@@ -43,7 +43,7 @@ export async function readManifest(root: string): Promise<Manifest> {
 }
 
 async function walk(root: string, rel: string): Promise<TreeNode[]> {
-  const entries = await readdir(join(root, rel), { withFileTypes: true }).catch(() => []);
+  const entries = await readdir(within(root, rel), { withFileTypes: true }).catch(() => []);
   const nodes = await Promise.all(
     entries
       .filter((e) => !e.name.startsWith("."))
@@ -62,7 +62,7 @@ function flatten(nodes: TreeNode[]): string[] {
 }
 
 async function readAudioMetadata(root: string): Promise<ProjectSnapshot["audioMetadata"]> {
-  const parsed = parseToml(await readFile(join(root, "assets/audio/audio.toml"), "utf8").catch(() => "")) as Record<
+  const parsed = parseToml(await readFile(within(root, "assets/audio/audio.toml"), "utf8").catch(() => "")) as Record<
     string,
     unknown
   >;
@@ -84,7 +84,7 @@ async function readSpriteLayers(root: string, tree: TreeNode[]): Promise<Project
     sprites
       .filter((node) => node.kind === "dir")
       .map(async (sprite) => {
-        const path = join(root, sprite.path, "layers.toml");
+        const path = within(root, `${sprite.path}/layers.toml`);
         if (!(await exists(path))) return null;
         const parsed = parseToml(await readFile(path, "utf8")) as {
           order?: string[];
@@ -112,7 +112,7 @@ export async function loadProject(root: string): Promise<ProjectSnapshot> {
   const manifest = await readManifest(root);
   const tree: TreeNode[] = [];
   for (const name of TOP_LEVEL) {
-    const abs = join(root, name);
+    const abs = within(root, name);
     if (!(await exists(abs))) continue;
     const isDir = (await stat(abs)).isDirectory();
     tree.push(
@@ -124,28 +124,28 @@ export async function loadProject(root: string): Promise<ProjectSnapshot> {
     .filter((path) => path.endsWith(".kai"))
     .toSorted();
   const scripts: SourceFile[] = await Promise.all(
-    scriptPaths.map(async (path) => ({ path, source: await readFile(join(root, path), "utf8") })),
+    scriptPaths.map(async (path) => ({ path, source: await readFile(within(root, path), "utf8") })),
   );
   const assetDir = tree.find((n) => n.path === "assets");
   const assets: AssetEntry[] = flatten(assetDir?.children ?? []).map((path) => classifyAsset(path));
   const translations: TranslationFile[] = await Promise.all(
-    (await readdir(join(root, "tl"), { withFileTypes: true }).catch(() => []))
+    (await readdir(within(root, "tl"), { withFileTypes: true }).catch(() => []))
       .filter((entry) => entry.isFile() && entry.name.endsWith(".toml"))
-      .map(async ({ name }) => ({ lang: name.slice(0, -5), source: await readFile(join(root, "tl", name), "utf8") })),
+      .map(async ({ name }) => ({ lang: name.slice(0, -5), source: await readFile(within(root, `tl/${name}`), "utf8") })),
   );
-  const manifestSource = await readFile(join(root, "kairos.toml"), "utf8");
-  const uiTheme = await readFile(join(root, "ui/theme.toml"), "utf8").catch(() => null);
+  const manifestSource = await readFile(within(root, "kairos.toml"), "utf8");
+  const uiTheme = await readFile(within(root, "ui/theme.toml"), "utf8").catch(() => null);
   const audioMetadata = await readAudioMetadata(root);
   const spriteLayers = await readSpriteLayers(root, tree);
-  const uiTitle = await readFile(join(root, "ui/title.toml"), "utf8").catch(() => null);
+  const uiTitle = await readFile(within(root, "ui/title.toml"), "utf8").catch(() => null);
   const uiScreens: SourceFile[] = await Promise.all(
-    (await readdir(join(root, "ui/screens"), { withFileTypes: true }).catch(() => []))
+    (await readdir(within(root, "ui/screens"), { withFileTypes: true }).catch(() => []))
       .filter((entry) => entry.isFile() && entry.name.endsWith(".toml"))
       .map((entry) => entry.name)
       .toSorted()
       .map(async (name) => ({
         path: `ui/screens/${name}`,
-        source: await readFile(join(root, "ui/screens", name), "utf8"),
+        source: await readFile(within(root, `ui/screens/${name}`), "utf8"),
       })),
   );
   currentRoot = root;
@@ -257,7 +257,7 @@ export async function renameProjectAsset(rel: string, newName: string): Promise<
   const nextName = basename(targetRel, extension);
   const scriptPaths = flatten(await walk(root, "script")).filter((path) => path.endsWith(".kai"));
   for (const scriptPathRel of scriptPaths) {
-    const scriptPath = join(root, scriptPathRel);
+    const scriptPath = within(root, scriptPathRel);
     const sourceText = await readFile(scriptPath, "utf8");
     const nextText = sourceText
       .split("\n")
@@ -292,7 +292,7 @@ export async function renameProjectAsset(rel: string, newName: string): Promise<
   if (asset.kind === "image" && rel.startsWith("assets/images/sprites/")) {
     const parts = rel.split("/");
     const group = parts[4];
-    const metadataPath = join(root, "assets/images/sprites", parts[3]!, "layers.toml");
+    const metadataPath = within(root, `assets/images/sprites/${parts[3]}/layers.toml`);
     if (group && (await exists(metadataPath))) {
       const metadata = parseToml(await readFile(metadataPath, "utf8")) as { default?: Record<string, string> };
       if (metadata.default?.[group] === oldName) {
@@ -302,7 +302,7 @@ export async function renameProjectAsset(rel: string, newName: string): Promise<
     }
   }
   if (asset.kind === "image") {
-    const titlePath = join(root, "ui/title.toml");
+    const titlePath = within(root, "ui/title.toml");
     const title = parseToml(await readFile(titlePath, "utf8").catch(() => "")) as Record<string, unknown>;
     const fields = (["background", "logo"] as const).filter((field) => title[field] === oldName);
     if (fields.length) {
@@ -311,7 +311,7 @@ export async function renameProjectAsset(rel: string, newName: string): Promise<
     }
   }
   if (asset.kind === "audio") {
-    const metadataPath = join(root, "assets/audio/audio.toml");
+    const metadataPath = within(root, "assets/audio/audio.toml");
     const metadata = parseToml(await readFile(metadataPath, "utf8").catch(() => "")) as Record<string, unknown>;
     const oldKey = rel.slice("assets/audio/".length);
     const newKey = targetRel.slice("assets/audio/".length);

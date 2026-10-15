@@ -63,6 +63,19 @@ describe("recent projects", () => {
     expect((await getSettings()).recentProjects).toEqual([kept]);
   });
 
+  it("persists recent removals but ignores paths the renderer adds", async () => {
+    const kept = await project("kept");
+    const removed = await project("removed");
+    await saveRecent([removed, kept]);
+    const { updateSettingsFromRenderer } = await import("./settings");
+
+    await updateSettingsFromRenderer({ recentProjects: [kept, join(work, "injected")] });
+    expect((await import("./settings").then(({ getSettings }) => getSettings())).recentProjects).toEqual([kept]);
+
+    vi.resetModules();
+    expect((await import("./settings").then(({ getSettings }) => getSettings())).recentProjects).toEqual([kept]);
+  });
+
   it("does not reopen the last project unless the setting is on", async () => {
     const kept = await project("kept");
     await saveRecent([kept]);

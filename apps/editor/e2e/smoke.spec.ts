@@ -1,3 +1,4 @@
+import { createServer } from "node:http";
 import { access, cp, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -91,6 +92,90 @@ test("opens a project, shows the graph, reports diagnostics, stages assets and r
   await app.close();
 });
 
+test("prevents dropped HTML files from navigating the application window", async () => {
+  const { app, page } = await launch();
+  await expect(page.getByText("Hello Kairos", { exact: true })).toBeVisible();
+  const result = await page.evaluate(() => {
+    type Browser = {
+      DataTransfer: new () => { items: { add(file: unknown): void } };
+      File: new (parts: string[], name: string, options: { type: string }) => unknown;
+      DragEvent: new (
+        type: string,
+        options: { bubbles: boolean; cancelable: boolean; dataTransfer: unknown },
+      ) => { defaultPrevented: boolean };
+      document: { dispatchEvent(event: unknown): void };
+    };
+    const browser = globalThis as unknown as Browser;
+    const data = new browser.DataTransfer();
+    data.items.add(new browser.File(["<script>window.kairos = undefined</script>"], "dropped.html", { type: "text/html" }));
+    const event = new browser.DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: data });
+    browser.document.dispatchEvent(event);
+    return { prevented: event.defaultPrevented };
+  });
+  expect(result.prevented).toBe(true);
+  await expect(page.getByText("Hello Kairos", { exact: true })).toBeVisible();
+  await app.close();
+});
+
+test("blocks redirects away from the trusted renderer", async () => {
+  const { app, page } = await launch();
+  await expect(page.getByText("Hello Kairos", { exact: true })).toBeVisible();
+  let redirectRequested = false;
+  const server = createServer((_request, response) => {
+    redirectRequested = true;
+    response.writeHead(302, { Location: "https://example.com/" }).end();
+  });
+  await new Promise<void>((finish, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", finish);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Redirect test server did not bind a port");
+
+  try {
+    await app.evaluate(async ({ BrowserWindow }, url) => {
+      await BrowserWindow.getAllWindows()[0]!.webContents.loadURL(url).catch(() => undefined);
+    }, `http://127.0.0.1:${address.port}/redirect`);
+    const finalUrl = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.getURL());
+    expect(redirectRequested).toBe(true);
+    expect(finalUrl).not.toBe("https://example.com/");
+  } finally {
+    await app.close();
+    await new Promise<void>((finish) => server.close(() => finish()));
+  }
+});
+
+test("rejects renderer-supplied project, asset and export paths", async () => {
+  const { app, page, project } = await launch();
+  const results = await page.evaluate(async (outsidePath) => {
+    type Api = {
+      kairos: {
+        project: {
+          open(path: string): Promise<unknown>;
+          importAsset(path: string, folder: string, convertWebp?: boolean): Promise<unknown>;
+          export(target: "web", output: string, packAssets: boolean): Promise<unknown>;
+        };
+      };
+    };
+    const api = (globalThis as unknown as Api).kairos;
+    const rejected = async (operation: () => Promise<unknown>) => {
+      try {
+        await operation();
+        return false;
+      } catch (error) {
+        return error instanceof Error && error.message.includes("Choose this path");
+      }
+    };
+    return Promise.all([
+      rejected(() => api.project.open(outsidePath)),
+      rejected(() => api.project.importAsset(outsidePath, "assets")),
+      rejected(() => api.project.export("web", outsidePath, false)),
+    ]);
+  }, dirname(project));
+  expect(results).toEqual([true, true, true]);
+  await app.close();
+});
+
 test("copies an absolute path from the Files tree context menu", async () => {
   const { app, page, project } = await launch();
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
@@ -129,6 +214,27 @@ test("opens a scene from the button on its card", async () => {
   await node.hover();
   await page.getByRole("button", { name: "Open about" }).click();
   await expect(page.getByRole("tab", { name: /about/ })).toHaveAttribute("aria-selected", "true");
+  await app.close();
+});
+
+test("ignores renderer attempts to add recent project paths", async () => {
+  const { app, page, project } = await launch();
+  await expect(page.getByText("Hello Kairos", { exact: true })).toBeVisible();
+  const result = await page.evaluate(async (unapprovedPath) => {
+    const api = (globalThis as unknown as {
+      kairos: {
+        settings: {
+          get(): Promise<{ recentProjects: string[] }>;
+          update(patch: { recentProjects: string[] }): Promise<unknown>;
+        };
+      };
+    }).kairos;
+    const before = await api.settings.get();
+    await api.settings.update({ recentProjects: [...before.recentProjects, unapprovedPath] });
+    return { before: before.recentProjects, after: (await api.settings.get()).recentProjects };
+  }, dirname(project));
+  expect(result.before).toContain(project);
+  expect(result.after).toEqual(result.before);
   await app.close();
 });
 

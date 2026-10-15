@@ -22,17 +22,20 @@ export function exportProject(target: ExportTarget, output: string, packAssets: 
   const root = projectRoot();
   if (!root) throw new Error("No project is open");
   const hostPlayerBinary =
-    process.env.KAIROS_PLAYER_BINARY ??
+    (!app.isPackaged ? process.env.KAIROS_PLAYER_BINARY : undefined) ??
     (app.isPackaged
       ? join(process.resourcesPath, "kairos")
       : ["release", "debug"].map((profile) => join(repoRoot(), "target", profile, "kairos")).find(existsSync));
   const platformBinary =
     target === "windows-x64"
-      ? (process.env.KAIROS_PLAYER_BINARY_WINDOWS_X64 ?? (process.platform === "win32" ? hostPlayerBinary : undefined))
+      ? (!app.isPackaged ? process.env.KAIROS_PLAYER_BINARY_WINDOWS_X64 : undefined) ??
+        (process.platform === "win32" ? hostPlayerBinary : undefined)
       : target === "linux-x64"
-        ? (process.env.KAIROS_PLAYER_BINARY_LINUX_X64 ?? (process.platform === "linux" ? hostPlayerBinary : undefined))
+        ? (!app.isPackaged ? process.env.KAIROS_PLAYER_BINARY_LINUX_X64 : undefined) ??
+          (process.platform === "linux" ? hostPlayerBinary : undefined)
         : target === "macos"
-          ? (process.env.KAIROS_PLAYER_BINARY_MACOS ?? (process.platform === "darwin" ? hostPlayerBinary : undefined))
+          ? (!app.isPackaged ? process.env.KAIROS_PLAYER_BINARY_MACOS : undefined) ??
+            (process.platform === "darwin" ? hostPlayerBinary : undefined)
           : undefined;
   const playerBinary = target === "desktop" ? hostPlayerBinary : platformBinary;
   if (target !== "web" && !playerBinary) {

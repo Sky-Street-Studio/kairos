@@ -1,8 +1,8 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { realpath } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
 
-import { BrowserWindow, Menu, app, dialog, ipcMain, shell, type MenuItemConstructorOptions } from "electron";
+import { BrowserWindow, Menu, app, dialog, ipcMain, session, shell, type MenuItemConstructorOptions } from "electron";
 
 import type { EditOp, EditorLayout } from "@shared/edit-types";
 import type { AnalyzeInput, ExportTarget, MenuCommand, Settings, SourceFile, TerminalSpawn } from "@shared/types";
@@ -20,11 +20,49 @@ import {
   writeProjectFile,
 } from "./project";
 import { handleProtocols, playerStatus, registerSchemes } from "./protocols";
-import { getSettings, rememberProject, updateSettings } from "./settings";
+import { getSettings, rememberProject, updateSettings, updateSettingsFromRenderer } from "./settings";
 import { agents, killAllTerminals, killTerminal, resizeTerminal, spawnTerminal, writeTerminal } from "./terminal";
 
 registerSchemes();
 app.setName("Kairos");
+
+const approvedPaths = new Set<string>();
+
+async function approvePath(path: string): Promise<string> {
+  approvedPaths.add(await realpath(path));
+  return resolve(path);
+}
+
+async function requireApprovedPath(path: string): Promise<string> {
+  const approved = await realpath(path);
+  if (!approvedPaths.has(approved)) throw new Error("Choose this path from a Kairos dialog first");
+  return resolve(path);
+}
+
+function trustedRendererUrl(url: string): boolean {
+  try {
+    const actual = new URL(url);
+    if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
+      return actual.origin === new URL(process.env.ELECTRON_RENDERER_URL).origin;
+    }
+    if (actual.protocol === "file:") {
+      return actual.pathname === pathToFileURL(join(import.meta.dirname, "../renderer/index.html")).pathname;
+    }
+    return actual.protocol === "app:" && actual.host === "kairos";
+  } catch {
+    return false;
+  }
+}
+
+function handle<Args extends unknown[]>(
+  channel: string,
+  listener: (event: Electron.IpcMainInvokeEvent, ...args: Args) => unknown,
+): void {
+  ipcMain.handle(channel, (event, ...args: Args) => {
+    if (!trustedRendererUrl(event.senderFrame?.url ?? "")) throw new Error("Untrusted renderer");
+    return listener(event, ...args);
+  });
+}
 app.setPath("userData", process.env.KAIROS_USER_DATA ?? join(app.getPath("appData"), "Kairos"));
 
 function initialProjectArg(): string | null {
@@ -56,7 +94,16 @@ function createWindow(): BrowserWindow {
     if (url.startsWith("https:")) void shell.openExternal(url);
     return { action: "deny" };
   });
-  if (process.env.ELECTRON_RENDERER_URL) {
+  win.webContents.on("will-navigate", (event, url) => {
+    if (!trustedRendererUrl(url)) event.preventDefault();
+  });
+  win.webContents.on("will-redirect", (details) => {
+    if (!details.isMainFrame || !trustedRendererUrl(details.url)) details.preventDefault();
+  });
+  win.webContents.on("will-frame-navigate", (details) => {
+    if (!details.isMainFrame || !trustedRendererUrl(details.url)) details.preventDefault();
+  });
+  if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
     void win.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
     void win.loadFile(join(import.meta.dirname, "../renderer/index.html"));
@@ -71,11 +118,13 @@ const requireOpenRoot = (): string =>
   })();
 
 function registerIpc(): void {
-  ipcMain.handle("project:initial", async () => {
+  handle("project:initial", async () => {
     const settings = await getSettings();
-    return initialProjectArg() ?? (settings.reopenLastProject ? settings.recentProjects[0] : undefined) ?? null;
+    for (const root of settings.recentProjects) await approvePath(root).catch(() => undefined);
+    const root = initialProjectArg() ?? (settings.reopenLastProject ? settings.recentProjects[0] : undefined) ?? null;
+    return root ? approvePath(root).catch(() => root) : null;
   });
-  ipcMain.handle("shell:reveal", async (_e, path: string) => {
+  handle("shell:reveal", async (_e, path: string) => {
     const root = await realpath(requireOpenRoot());
     const target = await realpath(resolve(root, path));
     const relativePath = relative(root, target);
@@ -84,27 +133,28 @@ function registerIpc(): void {
     }
     shell.showItemInFolder(target);
   });
-  ipcMain.handle("project:pick", async (e) => {
+  handle("project:pick", async (e) => {
     const win = BrowserWindow.fromWebContents(e.sender)!;
     const r = await dialog.showOpenDialog(win, {
       title: "Open Kairos project",
       buttonLabel: "Open project",
       properties: ["openDirectory"],
     });
-    return r.canceled ? null : (r.filePaths[0] ?? null);
+    return r.canceled || !r.filePaths[0] ? null : approvePath(r.filePaths[0]);
   });
-  ipcMain.handle("project:open", async (_e, root: string) => {
-    const snapshot = await loadProject(root);
-    await rememberProject(root);
+  handle("project:open", async (_e, root: string) => {
+    const approvedRoot = await requireApprovedPath(root);
+    const snapshot = await loadProject(approvedRoot);
+    await rememberProject(snapshot.root);
     return snapshot;
   });
-  ipcMain.handle("project:reload", async () => {
+  handle("project:reload", async () => {
     const root = projectRoot();
     return root ? loadProject(root) : null;
   });
-  ipcMain.handle("project:read-text", (_e, path: string) => readProjectText(path));
-  ipcMain.handle("project:write", (_e, path: string, content: string) => writeProjectFile(path, content));
-  ipcMain.handle("project:asset-import", async (e, sourcePath: string | null, folder: string, convertWebp: boolean) => {
+  handle("project:read-text", (_e, path: string) => readProjectText(path));
+  handle("project:write", (_e, path: string, content: string) => writeProjectFile(path, content));
+  handle("project:asset-import", async (e, sourcePath: string | null, folder: string, convertWebp: boolean) => {
     let source = sourcePath;
     if (!source) {
       const audio = folder.startsWith("assets/audio/");
@@ -124,50 +174,57 @@ function registerIpc(): void {
       if (result.canceled || result.filePaths.length === 0) return null;
       const imported: string[] = [];
       for (const filePath of result.filePaths) {
-        const attempt = await importProjectAsset(filePath, folder, convertWebp, false);
+        const approvedSource = await approvePath(filePath);
+        const attempt = await importProjectAsset(approvedSource, folder, convertWebp, false);
         if (attempt.warning) {
           const answer = await dialog.showMessageBox(BrowserWindow.fromWebContents(e.sender)!, {
             type: "warning",
             buttons: ["Import", "Cancel"],
             defaultId: 0,
             cancelId: 1,
-            message: `${basename(filePath)} is ${attempt.warning.width} × ${attempt.warning.height}px.`,
+            message: `${basename(approvedSource)} is ${attempt.warning.width} × ${attempt.warning.height}px.`,
             detail: `This exceeds twice the manifest window size (${attempt.warning.maxWidth} × ${attempt.warning.maxHeight}px). Import anyway?`,
           });
           if (answer.response !== 0) continue;
-          const approved = await importProjectAsset(filePath, folder, convertWebp, true);
+          const approved = await importProjectAsset(approvedSource, folder, convertWebp, true);
           if (approved.path) imported.push(approved.path);
         } else if (attempt.path) imported.push(attempt.path);
       }
       return imported.length ? imported[0] : null;
     }
-    const attempt = await importProjectAsset(source, folder, convertWebp, false);
+    const approvedSource = await requireApprovedPath(source);
+    const attempt = await importProjectAsset(approvedSource, folder, convertWebp, false);
     if (attempt.warning) {
       const answer = await dialog.showMessageBox(BrowserWindow.fromWebContents(e.sender)!, {
         type: "warning",
         buttons: ["Import", "Cancel"],
         defaultId: 0,
         cancelId: 1,
-        message: `${basename(source)} is ${attempt.warning.width} × ${attempt.warning.height}px.`,
+        message: `${basename(approvedSource)} is ${attempt.warning.width} × ${attempt.warning.height}px.`,
         detail: `This exceeds twice the manifest window size (${attempt.warning.maxWidth} × ${attempt.warning.maxHeight}px). Import anyway?`,
       });
       if (answer.response !== 0) return null;
-      const approved = await importProjectAsset(source, folder, convertWebp, true);
+      const approved = await importProjectAsset(approvedSource, folder, convertWebp, true);
       return approved.path ?? null;
     }
     return attempt.path ?? null;
   });
-  ipcMain.handle("project:asset-rename", (_e, path: string, name: string) => renameProjectAsset(path, name));
-  ipcMain.handle("project:pick-location", async (e) => {
+  handle("project:asset-rename", (_e, path: string, name: string) => renameProjectAsset(path, name));
+  handle("project:pick-location", async (e) => {
     const r = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender)!, {
       title: "Choose project location",
       buttonLabel: "Use this folder",
       properties: ["openDirectory", "createDirectory"],
     });
-    return r.canceled ? null : (r.filePaths[0] ?? null);
+    return r.canceled || !r.filePaths[0] ? null : approvePath(r.filePaths[0]);
   });
-  ipcMain.handle("project:create", async (_e, template: string, name: string, parent: string) => {
-    const root = await createFromTemplate(parent, name, template as Parameters<typeof createFromTemplate>[2]);
+  handle("project:create", async (_e, template: string, name: string, parent: string) => {
+    const approvedParent = await realpath(parent);
+    if (!approvedPaths.has(approvedParent) && !(await stat(approvedParent)).isDirectory()) {
+      throw new Error("Choose an existing project location");
+    }
+    const root = await createFromTemplate(approvedParent, name, template as Parameters<typeof createFromTemplate>[2]);
+    await approvePath(root);
     const { hiddenCodeProjects, beginnerProjects } = await getSettings();
     await updateSettings({
       hiddenCodeProjects: [...new Set([...hiddenCodeProjects, root])],
@@ -176,29 +233,38 @@ function registerIpc(): void {
     return root;
   });
 
-  ipcMain.handle("analysis:analyze", (_e, input: AnalyzeInput) => analyze(input));
-  ipcMain.handle("edit:blocks", (_e, source: string, label: string) => sceneBlocks(source, label));
-  ipcMain.handle("edit:apply", (_e, files: SourceFile[], ops: EditOp[]) => applyEdits(files, ops));
-  ipcMain.handle("edit:references", (_e, files: SourceFile[], label: string) => references(files, label));
-  ipcMain.handle("edit:label-from-name", (_e, name: string, taken: string[]) => labelFromName(name, taken));
-  ipcMain.handle("edit:read-layout", () => readLayout(requireOpenRoot()));
-  ipcMain.handle("edit:write-layout", (_e, layout: EditorLayout) => writeLayout(requireOpenRoot(), layout));
-  ipcMain.handle("edit:set-start", (_e, label: string) => setStartLabel(requireOpenRoot(), label));
-  ipcMain.handle("player:status", () => playerStatus());
-  ipcMain.handle("export:pick-folder", (e) => chooseExportFolder(e.sender));
-  ipcMain.handle("project:export", (_e, target: ExportTarget, output: string, packAssets: boolean) =>
-    exportProject(target, output, packAssets),
+  handle("analysis:analyze", (_e, input: AnalyzeInput) => analyze(input));
+  handle("edit:blocks", (_e, source: string, label: string) => sceneBlocks(source, label));
+  handle("edit:apply", (_e, files: SourceFile[], ops: EditOp[]) => applyEdits(files, ops));
+  handle("edit:references", (_e, files: SourceFile[], label: string) => references(files, label));
+  handle("edit:label-from-name", (_e, name: string, taken: string[]) => labelFromName(name, taken));
+  handle("edit:read-layout", () => readLayout(requireOpenRoot()));
+  handle("edit:write-layout", (_e, layout: EditorLayout) => writeLayout(requireOpenRoot(), layout));
+  handle("edit:set-start", (_e, label: string) => setStartLabel(requireOpenRoot(), label));
+  handle("player:status", () => playerStatus());
+  handle("export:pick-folder", async (e) => {
+    const path = await chooseExportFolder(e.sender);
+    return path ? approvePath(path) : null;
+  });
+  handle("project:export", async (_e, target: ExportTarget, output: string, packAssets: boolean) =>
+    exportProject(target, await requireApprovedPath(output), packAssets),
   );
 
-  ipcMain.handle("terminal:agents", () => agents());
-  ipcMain.handle("terminal:spawn", (e, opts: TerminalSpawn) => spawnTerminal(e.sender, opts));
-  ipcMain.on("terminal:write", (_e, id: number, data: string) => writeTerminal(id, data));
-  ipcMain.on("terminal:resize", (_e, id: number, cols: number, rows: number) => resizeTerminal(id, cols, rows));
-  ipcMain.on("terminal:kill", (_e, id: number) => killTerminal(id));
+  handle("terminal:agents", () => agents());
+  handle("terminal:spawn", (e, opts: TerminalSpawn) => spawnTerminal(e.sender, opts));
+  ipcMain.on("terminal:write", (e, id: number, data: string) => {
+    if (trustedRendererUrl(e.senderFrame?.url ?? "")) writeTerminal(e.sender, id, data);
+  });
+  ipcMain.on("terminal:resize", (e, id: number, cols: number, rows: number) => {
+    if (trustedRendererUrl(e.senderFrame?.url ?? "")) resizeTerminal(e.sender, id, cols, rows);
+  });
+  ipcMain.on("terminal:kill", (e, id: number) => {
+    if (trustedRendererUrl(e.senderFrame?.url ?? "")) killTerminal(e.sender, id);
+  });
 
-  ipcMain.handle("settings:get", () => getSettings());
-  ipcMain.handle("settings:update", (_e, patch: Partial<Settings>) => updateSettings(patch));
-  ipcMain.handle("settings:exportTheme", async (e, json: string) => {
+  handle("settings:get", () => getSettings());
+  handle("settings:update", (_e, patch: Partial<Settings>) => updateSettingsFromRenderer(patch));
+  handle("settings:exportTheme", async (e, json: string) => {
     const win = BrowserWindow.fromWebContents(e.sender)!;
     const r = await dialog.showSaveDialog(win, {
       title: "Export theme",
@@ -209,7 +275,7 @@ function registerIpc(): void {
     await writeFile(r.filePath, json, "utf8");
     return true;
   });
-  ipcMain.handle("settings:importTheme", async (e) => {
+  handle("settings:importTheme", async (e) => {
     const win = BrowserWindow.fromWebContents(e.sender)!;
     const r = await dialog.showOpenDialog(win, {
       title: "Import theme",
@@ -270,7 +336,7 @@ function buildMenu(): void {
         menuCommand("Toggle Preview", "toggle-preview", "CmdOrCtrl+\\"),
         { type: "separator" },
         { role: "reload" },
-        { role: "toggleDevTools" },
+        ...(!app.isPackaged ? [{ role: "toggleDevTools" } satisfies MenuItemConstructorOptions] : []),
         { type: "separator" },
         { role: "resetZoom" },
         { role: "zoomIn" },
@@ -285,6 +351,8 @@ function buildMenu(): void {
 }
 
 app.whenReady().then(() => {
+  session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+  session.defaultSession.setPermissionCheckHandler(() => false);
   if (!app.isPackaged) app.dock?.setIcon(join(app.getAppPath(), "build/icon.png"));
   handleProtocols();
   registerIpc();
