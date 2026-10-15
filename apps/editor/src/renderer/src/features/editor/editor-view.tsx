@@ -17,8 +17,13 @@ registerLanguages();
 /** Model edits made to mirror the store must not echo back into it. */
 let mirroring = false;
 
-function syncModelsFromStore() {
+function syncModelsFromStore(projectChanged = false) {
   const { buffers } = appStore().getState();
+  const paths = new Set(Object.keys(buffers));
+  for (const model of monaco.editor.getModels()) {
+    if (model.uri.scheme !== "kairos") continue;
+    if (projectChanged || !paths.has(pathOfUri(model.uri))) model.dispose();
+  }
   for (const buffer of Object.values(buffers)) {
     const model = ensureModel(buffer.path, buffer.source);
     if (model.getValue() === buffer.source) continue;
@@ -204,7 +209,14 @@ export default function EditorView({ path }: { path: string | null }) {
     ];
 
     const unsubscribe = appStore().subscribe((s, prev) => {
-      if (s.buffers !== prev.buffers) syncModelsFromStore();
+      if (s.buffers !== prev.buffers) {
+        const projectChanged = s.project?.root !== prev.project?.root || (s.loading && s.project !== prev.project);
+        syncModelsFromStore(projectChanged);
+        const currentPath = pathRef.current;
+        const buffer = currentPath ? s.buffers[currentPath] : undefined;
+        if (projectChanged || (currentPath && !buffer))
+          editor.setModel(buffer && currentPath ? ensureModel(currentPath, buffer.source) : null);
+      }
       if (s.analysis !== prev.analysis) syncMarkers();
       if (s.reveal && s.reveal !== prev.reveal && s.reveal.path === pathRef.current) {
         const { line } = s.reveal;

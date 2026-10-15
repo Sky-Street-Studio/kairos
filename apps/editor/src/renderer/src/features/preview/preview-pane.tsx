@@ -148,21 +148,24 @@ export function PreviewPane() {
     let disposed = false;
     const canvas = canvasRef.current;
     void (async () => {
+      let player: WebPlayer | null = null;
       try {
         const mod = await loadPlayerModule(status.moduleUrl);
         if (disposed) return;
-        const player = new mod.WebPlayer(canvas);
-        await player.ready();
-        if (disposed) return player.destroy();
-        playerRef.current = player;
+        const nextPlayer = new mod.WebPlayer(canvas);
+        player = nextPlayer;
+        await nextPlayer.ready();
+        if (disposed) return nextPlayer.destroy();
+        playerRef.current = nextPlayer;
         setDebugControl({
-          setVariable: (name, json) => player.setVariable(name, json),
-          rollbackTo: (position) => player.rollbackTo(position),
+          setVariable: (name, json) => nextPlayer.setVariable(name, json),
+          rollbackTo: (position) => nextPlayer.rollbackTo(position),
         });
         const rect = canvas.getBoundingClientRect();
         player.resize(Math.round(rect.width), Math.round(rect.height));
         run(lastPlay.current);
       } catch (e) {
+        player?.destroy();
         setError(parsePlayerError(e));
       }
     })();
