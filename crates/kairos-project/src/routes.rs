@@ -110,6 +110,7 @@ pub fn test_routes(
             let label = current_label(&item.vm);
             reachable.insert(label.clone());
             let step = item.vm.advance_route();
+            item.vm.clear_history();
             let line = item.vm.program().lines.get(item.vm.last_pc()).copied().unwrap_or_default();
             let trace = item.vm.take_route_labels();
             reachable.extend(trace.iter().cloned());
@@ -327,9 +328,8 @@ mod tests {
     #[test]
     fn max_routes_caps_menu_enqueues_and_reports_truncation() {
         let menu = project(
-            "label start:\n    menu:\n        \"first\":\n            return\n        \"second\":\n            return\n        \"third\":\n            return\n",
+            "label start:\n    \"First\"\n    menu:\n        \"first\":\n            return\n        \"second\":\n            return\n        \"third\":\n            return\n",
         );
-
         let report = test_routes(&menu, RouteTestOptions { max_routes: 2, ..Default::default() }).unwrap();
 
         assert_eq!(report.routes_explored, 2);

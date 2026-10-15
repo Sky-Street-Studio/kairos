@@ -180,7 +180,7 @@ impl Game {
                 vm.seed_random(crate::saves::timestamp() as u64);
                 vm.set_translations(self.translations.get(&self.language).cloned().unwrap_or_default());
                 for (name, value) in overrides {
-                    vm.seed_variable(name, value.clone());
+                    vm.seed_variable(name, value.clone())?;
                 }
                 self.vm = vm;
             }

@@ -2,6 +2,9 @@ use std::collections::BTreeMap;
 
 use kairos_script::{AssignOp, BinOp, Expr, UnOp, Value};
 
+const MAX_VALUE_NODES: usize = 1_000_000;
+const MAX_VALUE_STRING_BYTES: usize = 64 * 1024 * 1024;
+
 pub trait Scope {
     fn lookup(&self, name: &str) -> Option<&Value>;
     /// The next 64 random bits.
@@ -51,7 +54,10 @@ fn quote(s: &str) -> String {
 
 pub fn eval(expr: &Expr, scope: &impl Scope) -> Result<Value, String> {
     match expr {
-        Expr::Lit(v) => Ok(v.clone()),
+        Expr::Lit(v) => {
+            check_value_size(v)?;
+            Ok(v.clone())
+        }
         Expr::Var(name) => scope.lookup(name).cloned().ok_or_else(|| format!("`{name}` is not defined")),
         Expr::Unary(UnOp::Not, e) => Ok(Value::Bool(!truthy(&eval(e, scope)?))),
         Expr::Unary(UnOp::Neg, e) => match eval(e, scope)? {
@@ -68,23 +74,33 @@ pub fn eval(expr: &Expr, scope: &impl Scope) -> Result<Value, String> {
             if truthy(&a) { Ok(a) } else { eval(b, scope) }
         }
         Expr::Binary(op, a, b) => binary(*op, &eval(a, scope)?, &eval(b, scope)?),
-        Expr::List(items) => Ok(Value::List(items.iter().map(|e| eval(e, scope)).collect::<Result<_, _>>()?)),
+        Expr::List(items) => {
+            let value = Value::List(items.iter().map(|e| eval(e, scope)).collect::<Result<_, _>>()?);
+            check_value_size(&value)?;
+            Ok(value)
+        }
         Expr::Dict(entries) => {
             let mut map = BTreeMap::new();
             for (k, v) in entries {
                 map.insert(key(eval(k, scope)?)?, eval(v, scope)?);
             }
-            Ok(Value::Dict(map))
+            let value = Value::Dict(map);
+            check_value_size(&value)?;
+            Ok(value)
         }
         Expr::Index(target, index) => index_of(&eval(target, scope)?, &eval(index, scope)?).cloned(),
         Expr::Call(name, args) => {
             let args = args.iter().map(|e| eval(e, scope)).collect::<Result<Vec<_>, _>>()?;
-            builtin(name, &args, scope)
+            let value = builtin(name, &args, scope)?;
+            check_value_size(&value)?;
+            Ok(value)
         }
         Expr::Method(receiver, name, args) => {
             let receiver = eval(receiver, scope)?;
             let args = args.iter().map(|e| eval(e, scope)).collect::<Result<Vec<_>, _>>()?;
-            method(&receiver, name, &args)
+            let value = method(&receiver, name, &args)?;
+            check_value_size(&value)?;
+            Ok(value)
         }
     }
 }
@@ -241,10 +257,12 @@ fn builtin(name: &str, args: &[Value], scope: &impl Scope) -> Result<Value, Stri
 pub fn assign_at(target: &mut Value, keys: &[Value], op: AssignOp, rhs: Value) -> Result<(), String> {
     let Some((last, path)) = keys.split_last() else {
         let v = assign(op, Some(&*target), rhs)?;
+        check_value_size(&v)?;
         *target = v;
+        check_value_size(target)?;
         return Ok(());
     };
-    let mut container = target;
+    let mut container = &mut *target;
     for k in path {
         container = index_mut(container, k)?;
     }
@@ -254,12 +272,38 @@ pub fn assign_at(target: &mut Value, keys: &[Value], op: AssignOp, rhs: Value) -
             return Err(format!("the dictionary has no key {}", quote(&k)));
         }
         let v = assign(op, map.get(&k), rhs)?;
-        map.insert(k, v);
+        check_value_size(&v)?;
+        let previous = map.insert(k.clone(), v);
+        if let Err(error) = check_value_size(target) {
+            let mut container = target;
+            for key in path {
+                container = index_mut(container, key)?;
+            }
+            if let Value::Dict(map) = container {
+                if let Some(previous) = previous {
+                    map.insert(k, previous);
+                } else {
+                    map.remove(&k);
+                }
+            }
+            return Err(error);
+        }
         return Ok(());
     }
-    let slot = index_mut(container, last)?;
-    let v = assign(op, Some(&*slot), rhs)?;
-    *slot = v;
+    let previous = {
+        let slot = index_mut(container, last)?;
+        let v = assign(op, Some(&*slot), rhs)?;
+        check_value_size(&v)?;
+        std::mem::replace(slot, v)
+    };
+    if let Err(error) = check_value_size(target) {
+        let mut container = target;
+        for key in path {
+            container = index_mut(container, key)?;
+        }
+        *index_mut(container, last)? = previous;
+        return Err(error);
+    }
     Ok(())
 }
 
@@ -280,18 +324,23 @@ fn index_mut<'a>(target: &'a mut Value, index: &Value) -> Result<&'a mut Value, 
 /// Runs a method that changes a list or dictionary in place, such as `xs.append(1)`.
 pub fn mutate(target: &mut Value, method: &str, mut args: Vec<Value>) -> Result<(), String> {
     let kind = type_name(target);
-    match (target, method) {
+    match (&mut *target, method) {
         (Value::List(items), "append") => {
             arity(method, &args, 1..=1)?;
+            check_combined_list_size(items, std::iter::once(&args[0]))?;
             items.push(args.remove(0));
         }
         (Value::List(items), "extend") => match args.as_slice() {
-            [Value::List(more)] => items.extend(more.iter().cloned()),
+            [Value::List(more)] => {
+                check_combined_list_size(items, more)?;
+                items.extend(more.iter().cloned());
+            }
             _ => return Err("`extend` takes one list".into()),
         },
         (Value::List(items), "insert") => match args.as_slice() {
             [Value::Int(i), value] => {
                 let len = items.len() as i64;
+                check_combined_list_size(items, std::iter::once(value))?;
                 let at = if *i < 0 { (len + i).max(0) } else { (*i).min(len) };
                 items.insert(at as usize, value.clone());
             }
@@ -331,7 +380,7 @@ pub fn mutate(target: &mut Value, method: &str, mut args: Vec<Value>) -> Result<
         }
         _ => return Err(format!("{kind} has no method `{method}` that changes it")),
     }
-    Ok(())
+    check_value_size(target)
 }
 
 pub const FUNCTIONS: [&str; 12] =
@@ -475,8 +524,14 @@ fn binary(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
         BinOp::In => contains(b, a),
         BinOp::NotIn => contains(b, a).map(|v| Bool(!truthy(&v))),
         BinOp::Add => match (a, b) {
-            (Str(x), Str(y)) => Ok(Str(format!("{x}{y}"))),
-            (Value::List(x), Value::List(y)) => Ok(Value::List(x.iter().chain(y).cloned().collect())),
+            (Str(x), Str(y)) => {
+                check_string_bytes(x.len().saturating_add(y.len()))?;
+                Ok(Str(format!("{x}{y}")))
+            }
+            (Value::List(x), Value::List(y)) => {
+                check_combined_list_size(x, y)?;
+                Ok(Value::List(x.iter().chain(y).cloned().collect()))
+            }
             _ => arith(a, b, i64::checked_add, |x, y| x + y),
         },
         BinOp::Sub => arith(a, b, i64::checked_sub, |x, y| x - y),
@@ -491,6 +546,62 @@ fn binary(op: BinOp, a: &Value, b: &Value) -> Result<Value, String> {
         }
         BinOp::And | BinOp::Or => unreachable!("short-circuit ops are handled in eval"),
     }
+}
+
+pub(crate) fn check_value_size(value: &Value) -> Result<(), String> {
+    check_values_size(std::iter::once(value), 0)
+}
+
+fn check_combined_list_size<'a>(
+    items: &'a [Value],
+    additional: impl IntoIterator<Item = &'a Value>,
+) -> Result<(), String> {
+    check_values_size(items.iter().chain(additional), 1)
+}
+
+fn check_values_size<'a>(values: impl IntoIterator<Item = &'a Value>, mut nodes: usize) -> Result<(), String> {
+    let mut string_bytes = 0usize;
+    let mut pending = Vec::new();
+    for value in values {
+        if pending.len() >= MAX_VALUE_NODES - nodes {
+            return Err("value size limit exceeded".into());
+        }
+        pending.push(value);
+    }
+    while let Some(value) = pending.pop() {
+        nodes += 1;
+        if nodes + pending.len() > MAX_VALUE_NODES {
+            return Err("value size limit exceeded".into());
+        }
+        match value {
+            Value::Str(value) => {
+                string_bytes = string_bytes.saturating_add(value.len());
+                check_string_bytes(string_bytes)?;
+            }
+            Value::List(items) => {
+                if items.len() > MAX_VALUE_NODES - nodes - pending.len() {
+                    return Err("value size limit exceeded".into());
+                }
+                pending.extend(items);
+            }
+            Value::Dict(entries) => {
+                if entries.len() > MAX_VALUE_NODES - nodes - pending.len() {
+                    return Err("value size limit exceeded".into());
+                }
+                for (key, value) in entries {
+                    string_bytes = string_bytes.saturating_add(key.len());
+                    check_string_bytes(string_bytes)?;
+                    pending.push(value);
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn check_string_bytes(bytes: usize) -> Result<(), String> {
+    if bytes > MAX_VALUE_STRING_BYTES { Err("value size limit exceeded".into()) } else { Ok(()) }
 }
 
 fn arith(

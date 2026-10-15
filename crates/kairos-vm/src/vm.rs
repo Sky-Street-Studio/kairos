@@ -410,7 +410,12 @@ impl Vm {
         self.history.len()
     }
 
+    pub fn clear_history(&mut self) {
+        self.history.clear();
+    }
+
     pub fn set_variable_path(&mut self, name: &str, indices: &[Value], value: Value) -> Result<(), RuntimeError> {
+        eval::check_value_size(&value).map_err(|message| self.error(message))?;
         let target = self.variable_mut(name, false)?;
         eval::assign_at(target, indices, AssignOp::Set, value).map_err(|message| self.error(message))
     }
@@ -430,6 +435,7 @@ impl Vm {
     }
 
     pub fn set_variable(&mut self, name: &str, value: Value) -> Result<(), RuntimeError> {
+        eval::check_value_size(&value).map_err(|message| self.error(message))?;
         if is_persistent(name) {
             self.set_persistent_value(name, value);
             return Ok(());
@@ -447,7 +453,8 @@ impl Vm {
 
     /// Like [`Vm::set_variable`], but also creates store entries, because play-from-here starts a
     /// fresh VM where variables first assigned with `$` do not exist yet.
-    pub fn seed_variable(&mut self, name: &str, value: Value) {
+    pub fn seed_variable(&mut self, name: &str, value: Value) -> Result<(), RuntimeError> {
+        eval::check_value_size(&value).map_err(|message| self.error(message))?;
         if is_persistent(name) {
             self.set_persistent_value(name, value);
         } else if self.constants.contains_key(name) && !self.state.store.contains_key(name) {
@@ -455,11 +462,14 @@ impl Vm {
         } else {
             self.state.store.insert(name.to_string(), value);
         }
+        Ok(())
     }
 
     /// Replaces the `default persistent.*` values with what an earlier session stored.
     pub fn set_persistent(&mut self, persistent: Persistent) {
-        self.persistent.values.extend(persistent.values);
+        self.persistent
+            .values
+            .extend(persistent.values.into_iter().filter(|(_, value)| eval::check_value_size(value).is_ok()));
         self.persistent.seen = persistent.seen;
     }
 
@@ -922,8 +932,8 @@ label start:
         let (program, _) = crate::compile(&[statements]);
         let mut vm = Vm::new(Arc::new(program)).unwrap();
         assert!(vm.set_variable("visited", Value::Bool(true)).is_err());
-        vm.seed_variable("visited", Value::Bool(true));
-        vm.seed_variable("fixed", Value::Int(2));
+        vm.seed_variable("visited", Value::Bool(true)).unwrap();
+        vm.seed_variable("fixed", Value::Int(2)).unwrap();
         assert_eq!(vm.variables()["visited"], Value::Bool(true));
         assert_eq!(vm.variables()["fixed"], Value::Int(2));
     }

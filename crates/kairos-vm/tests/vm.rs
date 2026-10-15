@@ -439,6 +439,141 @@ fn mutating_a_constant_or_using_a_mutating_method_as_a_value_fails() {
 }
 
 #[test]
+fn nested_list_growth_stops_at_the_runtime_size_limit() {
+    let p = program("default l = [1]\nlabel start:\n    $ l = [l, l]\n    jump start\n");
+    let mut vm = started(&p);
+    let error = loop {
+        match vm.advance() {
+            Ok(Event::End) => panic!("the loop should not end"),
+            Ok(_) => {}
+            Err(error) => break error,
+        }
+    };
+    assert!(error.message.contains("value size limit"), "{}", error.message);
+}
+
+#[test]
+fn indexed_list_growth_stops_at_the_runtime_size_limit_without_changing_state() {
+    let p = program("default l = [1]\nlabel start:\n    $ l[0] = l\n    \"next\"\n    jump start\n");
+    let mut vm = started(&p);
+    vm.set_variable("l", Value::List(vec![Value::Int(1); 600_000])).unwrap();
+    loop {
+        let before = vm.variables()["l"].clone();
+        match vm.advance() {
+            Ok(Event::End) => panic!("the loop should not end"),
+            Ok(_) => {}
+            Err(error) => {
+                assert!(error.message.contains("value size limit exceeded"), "{}", error.message);
+                assert_eq!(vm.variables()["l"], before);
+                break;
+            }
+        }
+    }
+}
+
+#[test]
+fn rejected_indexed_mutation_does_not_change_state() {
+    let p = program("default l = [1]\nlabel start:\n    $ l.append(l)\n    \"next\"\n    jump start\n");
+    let mut vm = started(&p);
+    loop {
+        let before = vm.variables()["l"].clone();
+        match vm.advance() {
+            Ok(Event::End) => panic!("the loop should not end"),
+            Ok(_) => {}
+            Err(error) => {
+                assert!(error.message.contains("value size limit exceeded"), "{}", error.message);
+                assert_eq!(vm.variables()["l"], before);
+                break;
+            }
+        }
+    }
+}
+
+#[test]
+fn seed_variable_returns_the_value_size_error() {
+    let p = program("default n = 0\nlabel start:\n    return\n");
+    let mut vm = started(&p);
+    let oversized = Value::List(vec![Value::Int(1); 1_000_001]);
+
+    let result = vm.seed_variable("n", oversized);
+
+    assert!(result.is_err());
+    assert_eq!(vm.variables()["n"], Value::Int(0));
+}
+
+#[test]
+fn indexed_dictionary_growth_stops_at_the_runtime_size_limit() {
+    let p = program("default d = {\"a\": 1}\nlabel start:\n    $ d[\"a\"] = d\n    $ d[\"b\"] = d\n    jump start\n");
+    let mut vm = started(&p);
+    let error = loop {
+        match vm.advance() {
+            Ok(Event::End) => panic!("the loop should not end"),
+            Ok(_) => {}
+            Err(error) => break error,
+        }
+    };
+    assert!(error.message.contains("value size limit exceeded"), "{}", error.message);
+}
+
+#[test]
+fn nested_dictionary_growth_stops_at_the_runtime_size_limit() {
+    let p = program("default d = {\"a\": 1}\nlabel start:\n    $ d = {\"left\": d, \"right\": d}\n    jump start\n");
+    let mut vm = started(&p);
+    let error = loop {
+        match vm.advance() {
+            Ok(Event::End) => panic!("the loop should not end"),
+            Ok(_) => {}
+            Err(error) => break error,
+        }
+    };
+    assert!(error.message.contains("value size limit"), "{}", error.message);
+}
+
+#[test]
+fn string_concatenation_stops_at_the_runtime_size_limit() {
+    let p = program("default s = \"x\"\nlabel start:\n    $ s = s + s\n    \"next\"\n    jump start\n");
+    let mut vm = started(&p);
+    let error = loop {
+        match vm.advance() {
+            Ok(Event::End) => panic!("the loop should not end"),
+            Ok(_) => {}
+            Err(error) => break error,
+        }
+    };
+    assert!(error.message.contains("value size limit"), "{}", error.message);
+}
+
+#[test]
+fn list_growth_stops_at_the_runtime_size_limit() {
+    let doubled = "default xs = range(100000)\nlabel start:\n    $ xs = xs + xs\n    \"next\"\n    jump start\n";
+    let p = program(doubled);
+    let mut vm = started(&p);
+    for _ in 0..3 {
+        assert!(matches!(vm.advance().unwrap(), Event::Say { .. }));
+    }
+    let error = vm.advance().unwrap_err();
+    assert!(error.message.contains("value size limit"), "{}", error.message);
+
+    let extended = "default xs = range(100000)\nlabel start:\n    $ xs.extend(xs)\n    \"next\"\n    jump start\n";
+    let p = program(extended);
+    let mut vm = started(&p);
+    for _ in 0..3 {
+        assert!(matches!(vm.advance().unwrap(), Event::Say { .. }));
+    }
+    let error = vm.advance().unwrap_err();
+    assert!(error.message.contains("value size limit"), "{}", error.message);
+
+    let appended = "default xs = range(100000)\nlabel start:\n    $ xs = xs + xs\n    \"next\"\n    if len(xs) < 800000:\n        jump start\n    $ xs.extend(range(100000))\n    $ xs.extend(range(100000))\n    $ xs.append(1)\n    \"done\"\n";
+    let p = program(appended);
+    let mut vm = started(&p);
+    for _ in 0..3 {
+        assert!(matches!(vm.advance().unwrap(), Event::Say { .. }));
+    }
+    let error = vm.advance().unwrap_err();
+    assert!(error.message.contains("value size limit"), "{}", error.message);
+}
+
+#[test]
 fn random_draws_replay_after_rollback_and_load() {
     let p = program(
         "default roll = 0\nlabel start:\n    $ roll = randint(1, 1000000)\n    \"[roll] [randint(1, 1000000)]\"\n    \"[choice(['a', 'b', 'c'])] [random() < 1.0] [randint(3, 3)]\"\n",
