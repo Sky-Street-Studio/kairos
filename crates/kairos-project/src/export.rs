@@ -75,7 +75,7 @@ fn export_web(
     let scripts = project
         .files
         .iter()
-        .map(|path| Ok(PlayerScriptJson { path: relative_path(root, path)?, source: std::fs::read_to_string(path)? }))
+        .map(|path| Ok(PlayerScriptJson { path: relative_path(root, path)?, source: read_regular_file(path)? }))
         .collect::<Result<Vec<_>, std::io::Error>>()?;
     let screens = std::fs::read_dir(root.join("ui/screens"))
         .ok()
@@ -86,7 +86,7 @@ fn export_web(
         .map(|entry| {
             Ok(PlayerScreenJson {
                 path: relative_path(root, &entry.path())?,
-                source: std::fs::read_to_string(entry.path())?,
+                source: read_regular_file(&entry.path())?,
             })
         })
         .collect::<Result<Vec<_>, std::io::Error>>()?;
@@ -99,14 +99,14 @@ fn export_web(
         .map(|entry| {
             Ok(PlayerTranslationJson {
                 lang: entry.path().file_stem().and_then(|name| name.to_str()).unwrap_or_default().to_string(),
-                source: std::fs::read_to_string(entry.path())?,
+                source: read_regular_file(&entry.path())?,
             })
         })
         .collect::<Result<Vec<_>, std::io::Error>>()?;
     let assets =
         crate::assets::collect_paths(&root.join("assets"))?.into_iter().map(|path| format!("assets/{path}")).collect();
     let game = PlayerProjectJson {
-        manifest: std::fs::read_to_string(root.join("kairos.toml"))?,
+        manifest: read_regular_file(&root.join("kairos.toml"))?,
         scripts,
         screens,
         translations,
@@ -320,6 +320,14 @@ fn copy_project_files(
             continue;
         }
         let source = root.join(name);
+        if matches!(name, "ui" | "tl")
+            && std::fs::symlink_metadata(&source).is_ok_and(|metadata| metadata.file_type().is_symlink())
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("{} must not be a symlink", source.display()),
+            ));
+        }
         if !source.exists() {
             continue;
         }
@@ -352,11 +360,29 @@ fn copy_directory(source: &Path, destination: &Path) -> Result<(), std::io::Erro
 }
 
 fn read_optional(root: &Path, rel: &str) -> Result<Option<String>, std::io::Error> {
-    match std::fs::read_to_string(root.join(rel)) {
-        Ok(contents) => Ok(Some(contents)),
+    let path = root.join(rel);
+    match std::fs::symlink_metadata(&path) {
+        Ok(_) => {
+            let contents = read_regular_file(&path)?;
+            toml::from_str::<toml::Value>(&contents).map_err(|error| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{}: {error}", path.display()))
+            })?;
+            Ok(Some(contents))
+        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
     }
+}
+
+fn read_regular_file(path: &Path) -> Result<String, std::io::Error> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    if !metadata.file_type().is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("{} must be a regular file", path.display()),
+        ));
+    }
+    std::fs::read_to_string(path)
 }
 
 fn relative_path(root: &Path, path: &Path) -> Result<String, std::io::Error> {
@@ -447,6 +473,59 @@ mod tests {
         let _ = std::fs::remove_dir_all(output);
         let _ = std::fs::remove_dir_all(packed_output);
         let _ = std::fs::remove_file(binary);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn web_export_rejects_symlinked_ui_inputs_and_invalid_toml() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!("kairos-export-limits-{}", std::process::id()));
+        let output = root.with_extension("out");
+        let pkg = root.with_extension("pkg");
+        let outside = root.with_extension("secret");
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&output);
+        let _ = std::fs::remove_dir_all(&pkg);
+        std::fs::create_dir_all(root.join("script")).unwrap();
+        std::fs::create_dir_all(root.join("ui")).unwrap();
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(root.join("kairos.toml"), "name = 'test'").unwrap();
+        std::fs::write(root.join("script/start.kai"), "label start:\n    return\n").unwrap();
+        std::fs::write(&outside, "private key").unwrap();
+        std::fs::write(pkg.join("kairos_player.js"), "export class WebPlayer {}").unwrap();
+        std::fs::write(pkg.join("kairos_player_bg.wasm"), []).unwrap();
+        symlink(&outside, root.join("ui/theme.toml")).unwrap();
+
+        assert!(export(&root, &output, ExportTarget::Web, None, Some(&pkg), false).is_err());
+        assert!(!output.join("game.json").exists());
+        std::fs::remove_file(root.join("ui/theme.toml")).unwrap();
+        std::fs::remove_dir(root.join("ui")).unwrap();
+        symlink(&outside, root.join("ui")).unwrap();
+
+        assert!(export(&root, &output, ExportTarget::Web, None, Some(&pkg), false).is_err());
+        std::fs::remove_file(root.join("ui")).unwrap();
+        symlink(&outside, root.join("tl")).unwrap();
+        assert!(export(&root, &output, ExportTarget::Web, None, Some(&pkg), false).is_err());
+        std::fs::remove_file(root.join("tl")).unwrap();
+        std::fs::create_dir(root.join("ui")).unwrap();
+        std::fs::create_dir(root.join("ui/screens")).unwrap();
+        symlink(&outside, root.join("ui/screens/phone.toml")).unwrap();
+        assert!(export(&root, &output, ExportTarget::Web, None, Some(&pkg), false).is_err());
+        std::fs::remove_file(root.join("ui/screens/phone.toml")).unwrap();
+        std::fs::create_dir(root.join("tl")).unwrap();
+        symlink(&outside, root.join("tl/fr.toml")).unwrap();
+        assert!(export(&root, &output, ExportTarget::Web, None, Some(&pkg), false).is_err());
+        std::fs::remove_file(root.join("tl/fr.toml")).unwrap();
+        std::fs::remove_dir(root.join("tl")).unwrap();
+        std::fs::write(root.join("ui/title.toml"), "title = [").unwrap();
+
+        assert!(export(&root, &output, ExportTarget::Web, None, Some(&pkg), false).is_err());
+        assert!(!output.join("game.json").exists());
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(output);
+        let _ = std::fs::remove_dir_all(pkg);
+        let _ = std::fs::remove_file(outside);
     }
 
     #[test]

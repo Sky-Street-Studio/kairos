@@ -145,7 +145,13 @@ impl Assets {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn decode_image(bytes: &[u8], max: u32) -> Result<image::RgbaImage, image::ImageError> {
-    let image = image::load_from_memory(bytes)?;
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(max.saturating_mul(2));
+    limits.max_image_height = Some(max.saturating_mul(2));
+    limits.max_alloc = Some(256 * 1024 * 1024);
+    reader.limits(limits);
+    let image = reader.decode()?;
     let image = if image.width() > max || image.height() > max {
         image.resize(max, max, image::imageops::FilterType::Triangle)
     } else {
@@ -364,6 +370,24 @@ mod tests {
         let r = Request::Image("bg room".into());
         let index = AssetIndex::new(["images/bg room.png", "images/backgrounds/bg room.webp"]);
         assert_eq!(r.candidates(&index), ["images/bg room.png", "images/backgrounds/bg room.webp"]);
+    }
+
+    #[test]
+    fn image_decoder_rejects_dimensions_above_the_texture_limit() {
+        let mut png = vec![0; 33];
+        png[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+        png[8..12].copy_from_slice(&13_u32.to_be_bytes());
+        png[12..16].copy_from_slice(b"IHDR");
+        png[16..20].copy_from_slice(&u32::MAX.to_be_bytes());
+        png[20..24].copy_from_slice(&1_u32.to_be_bytes());
+        png[24] = 8;
+        png[25] = 6;
+        png[29..33].copy_from_slice(&0x005c16ca_u32.to_be_bytes());
+        let error = decode_image(&png, 1024).unwrap_err();
+        assert!(
+            matches!(error, image::ImageError::Limits(ref limit) if limit.kind() == image::error::LimitErrorKind::DimensionError),
+            "{error:?}"
+        );
     }
 
     #[test]

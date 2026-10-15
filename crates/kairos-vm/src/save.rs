@@ -238,6 +238,10 @@ impl Vm {
             relocated |= moved;
         }
         let mut vm = Vm::new(program.clone())?;
+        for value in data.store.values() {
+            crate::eval::check_value_size(value)
+                .map_err(|message| LoadError::Runtime(RuntimeError { line: 0, message }))?;
+        }
         vm.state.store.extend(data.store);
         vm.state = State {
             pc,
@@ -331,6 +335,18 @@ mod tests {
         let mut vm = Vm::load(p, &bytes).unwrap();
         assert_eq!(vm.variables()["n"], Value::Int(3));
         assert!(matches!(vm.advance().unwrap(), crate::Event::Say { text, .. } if text == "Two"));
+    }
+
+    #[test]
+    fn load_rejects_oversized_saved_values() {
+        let p = program("label start:\n    return\n");
+        let mut vm = Vm::new(p.clone()).unwrap();
+        let oversized = Value::List(vec![Value::Int(1); 1_000_001]);
+        vm.state.store.insert("crafted".into(), oversized);
+        vm.history.push(vm.state.clone());
+        let bytes = vm.save().unwrap();
+
+        assert!(Vm::load(p, &bytes).is_err());
     }
 
     #[test]

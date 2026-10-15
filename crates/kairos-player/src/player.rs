@@ -1017,7 +1017,13 @@ fn audio_loop(metadata: &AudioMetadata, resolved_path: Option<&str>) -> Option<A
 
 #[cfg(target_arch = "wasm32")]
 fn decode_image(bytes: &[u8], max: u32) -> Result<image::RgbaImage, image::ImageError> {
-    let image = image::load_from_memory(bytes)?;
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(max.saturating_mul(2));
+    limits.max_image_height = Some(max.saturating_mul(2));
+    limits.max_alloc = Some(256 * 1024 * 1024);
+    reader.limits(limits);
+    let image = reader.decode()?;
     let image = if image.width() > max || image.height() > max {
         image.resize(max, max, image::imageops::FilterType::Triangle)
     } else {
