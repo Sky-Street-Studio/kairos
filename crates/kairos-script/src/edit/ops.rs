@@ -156,8 +156,13 @@ fn reindent(text: &[String], from: usize, to: usize) -> Vec<String> {
             if l.trim().is_empty() {
                 String::new()
             } else {
-                let cut = l.len() - l.trim_start().len();
-                format!("{}{}", " ".repeat(to), &l[cut.min(from)..])
+                let cut = (l.len() - l.trim_start().len()).min(from);
+                let cut = if l.is_char_boundary(cut) {
+                    cut
+                } else {
+                    l.char_indices().map(|(index, _)| index).take_while(|index| *index < cut).last().unwrap_or(0)
+                };
+                format!("{}{}", " ".repeat(to), &l[cut..])
             }
         })
         .collect()

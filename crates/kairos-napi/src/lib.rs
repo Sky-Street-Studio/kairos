@@ -37,33 +37,33 @@ mod bindings {
 
     static CACHE: LazyLock<Mutex<ParseCache>> = LazyLock::new(Default::default);
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn analyze(input: AnalyzeInput) -> ProjectAnalysis {
         let mut cache = CACHE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         analysis::analyze(&input, &mut cache)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn parse(source: String) -> ParseResult {
         analysis::parse(&source)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn check_project(files: Vec<SourceFile>) -> CheckResult {
         analysis::check_project(&files)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn outline(source: String) -> Outline {
         analysis::outline(&source)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn story_graph(files: Vec<SourceFile>) -> StoryGraph {
         analysis::story_graph(&files)
     }
 
-    #[napi(js_name = "testRoutes")]
+    #[napi(js_name = "testRoutes", catch_unwind)]
     pub fn test_routes_project(project: String) -> napi::Result<RouteTestReport> {
         let loaded = kairos_project::Project::load(std::path::Path::new(&project))
             .map_err(|error| napi::Error::from_reason(error.to_string()))?;
@@ -86,7 +86,7 @@ mod bindings {
         })
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn export_game(
         project: String,
         #[napi(ts_arg_type = "'web' | 'desktop' | 'windows-x64' | 'linux-x64' | 'macos'")] target: String,
@@ -99,22 +99,22 @@ mod bindings {
             .map_err(napi::Error::from_reason)
     }
 
-    #[napi(js_name = "sceneBlocks")]
-    pub fn scene_blocks(source: String, label: String) -> String {
-        crate::edit::scene_blocks_json(&source, &label)
+    #[napi(js_name = "sceneBlocks", catch_unwind)]
+    pub fn scene_blocks(source: String, label: String) -> napi::Result<String> {
+        crate::edit::scene_blocks_json(&source, &label).map_err(napi::Error::from_reason)
     }
 
-    #[napi(js_name = "applyEdits")]
-    pub fn apply_edits(files_json: String, ops_json: String) -> String {
-        crate::edit::apply_edits_json(&files_json, &ops_json)
+    #[napi(js_name = "applyEdits", catch_unwind)]
+    pub fn apply_edits(files_json: String, ops_json: String) -> napi::Result<String> {
+        crate::edit::apply_edits_json(&files_json, &ops_json).map_err(napi::Error::from_reason)
     }
 
-    #[napi(js_name = "references")]
-    pub fn references(files_json: String, label: String) -> String {
-        crate::edit::references_json(&files_json, &label)
+    #[napi(js_name = "references", catch_unwind)]
+    pub fn references(files_json: String, label: String) -> napi::Result<String> {
+        crate::edit::references_json(&files_json, &label).map_err(napi::Error::from_reason)
     }
 
-    #[napi(js_name = "labelFromName")]
+    #[napi(js_name = "labelFromName", catch_unwind)]
     pub fn label_from_name(name: String, taken_json: String) -> String {
         crate::edit::label_from_name_json(&name, &taken_json)
     }

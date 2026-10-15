@@ -128,6 +128,13 @@ fn move_to_a_later_position() {
 }
 
 #[test]
+fn moving_unicode_indented_text_does_not_slice_a_character() {
+    let src = "label start:\n    if x:\n  　\"Hi\"\n    \"After\"\n";
+    let out = run(src, vec![Op::Move { path: P.into(), line: 2, place: Place::After { line: 4 } }]);
+    assert_eq!(out, "label start:\n    \"After\"\n    if x:\n    　\"Hi\"\n");
+}
+
+#[test]
 fn header_ops_need_the_right_owner() {
     let src = "label start:\n    if a:\n        pass\n    else:\n        pass\n    menu:\n        \"Go\":\n            pass\n";
     let err = |op: Op| apply(&file(src), &[op]).unwrap_err();
@@ -387,8 +394,12 @@ fn duplicate_and_set_character() {
 
 proptest::proptest! {
     #[test]
-    fn random_inserts_moves_and_deletes_always_parse(ops in proptest::collection::vec((0u8..3, 0usize..40, 0usize..40), 1..20)) {
-        let mut source = include_str!("../../../examples/hello-kairos/script/script.kai").to_string();
+    fn random_inserts_moves_and_deletes_always_parse(
+        ops in proptest::collection::vec((0u8..3, 0usize..40, 0usize..40), 1..20),
+        whitespace in proptest::sample::select(vec![" ", "\u{3000}"]),
+    ) {
+        let mut source = include_str!("../../../examples/hello-kairos/script/script.kai")
+            .replace("    ", &format!("   {whitespace}"));
         let (_, before) = kairos_script::parse(&source);
         for (kind, a, b) in ops {
             let scene = scene_blocks(&source, "start").unwrap();

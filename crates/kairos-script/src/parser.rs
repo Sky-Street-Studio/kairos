@@ -27,13 +27,22 @@ pub fn parse(src: &str) -> (Vec<Stmt>, Vec<Diagnostic>) {
             if text.is_empty() {
                 return None;
             }
-            if code[..code.len() - text.len()].contains('\t') {
-                diags.push(Diagnostic::new(i + 1, "tabs are not allowed in indentation"));
+            let indentation = &code[..code.len() - text.len()];
+            if let Some(character) =
+                indentation.chars().find(|character| *character != ' ' && character.is_whitespace())
+            {
+                diags.push(Diagnostic::new(
+                    i + 1,
+                    format!(
+                        "character {character:?} (U+{:04X}) is not allowed in indentation; use spaces",
+                        character as u32
+                    ),
+                ));
             }
-            Some(Line { no: i + 1, indent: code.len() - text.len(), text: text.to_string() })
+            Some(Line { no: i + 1, indent: indentation.len(), text: text.to_string() })
         })
         .collect();
-    let mut p = Parser { lines, pos: 0, diags };
+    let mut p = Parser { lines, pos: 0, diags, block_depth: 0 };
     let stmts = p.block(0);
     (stmts, p.diags)
 }
@@ -42,7 +51,10 @@ struct Parser {
     lines: Vec<Line>,
     pos: usize,
     diags: Vec<Diagnostic>,
+    block_depth: usize,
 }
+
+const MAX_BLOCK_DEPTH: usize = 100;
 
 impl Parser {
     fn block(&mut self, indent: usize) -> Vec<Stmt> {
@@ -67,8 +79,17 @@ impl Parser {
     fn child_block(&mut self, header_indent: usize, header_line: usize) -> Vec<Stmt> {
         match self.lines.get(self.pos) {
             Some(next) if next.indent > header_indent => {
+                if self.block_depth >= MAX_BLOCK_DEPTH {
+                    self.diags
+                        .push(Diagnostic::new(header_line, format!("block nesting exceeds {MAX_BLOCK_DEPTH} levels")));
+                    self.skip_children(header_indent);
+                    return Vec::new();
+                }
                 let indent = next.indent;
-                self.block(indent)
+                self.block_depth += 1;
+                let body = self.block(indent);
+                self.block_depth -= 1;
+                body
             }
             _ => {
                 self.diags.push(Diagnostic::new(header_line, "expected an indented block"));
@@ -448,13 +469,16 @@ struct Cursor {
     toks: Vec<Tok>,
     pos: usize,
     line: usize,
+    depth: usize,
 }
+
+const MAX_EXPR_DEPTH: usize = 256;
 
 const CLAUSE_KEYWORDS: [&str; 5] = ["at", "with", "as", "behind", "onlayer"];
 
 impl Cursor {
     fn new(toks: Vec<Tok>, line: usize) -> Self {
-        Cursor { toks, pos: 0, line }
+        Cursor { toks, pos: 0, line, depth: 0 }
     }
 
     fn err(&self, msg: impl Into<String>) -> Diagnostic {
@@ -563,10 +587,15 @@ impl Cursor {
 
     fn binary(&mut self, min_prec: u8) -> Result<Expr, Diagnostic> {
         let mut lhs = self.unary()?;
+        let mut operators = 0;
         while let Some((op, prec)) = self.peek_binop() {
             if prec < min_prec {
                 break;
             }
+            if self.depth + operators >= MAX_EXPR_DEPTH {
+                return Err(self.err(format!("expression nesting exceeds {MAX_EXPR_DEPTH} levels")));
+            }
+            operators += 1;
             self.pos += if op == BinOp::NotIn { 2 } else { 1 };
             let rhs = self.binary(prec + 1)?;
             lhs = Expr::Binary(op, Box::new(lhs), Box::new(rhs));
@@ -580,27 +609,45 @@ impl Cursor {
         if not_in { Some((BinOp::NotIn, 4)) } else { self.peek().and_then(binop) }
     }
 
+    fn nested<T>(&mut self, parse: impl FnOnce(&mut Self) -> Result<T, Diagnostic>) -> Result<T, Diagnostic> {
+        if self.depth >= MAX_EXPR_DEPTH {
+            return Err(self.err(format!("expression nesting exceeds {MAX_EXPR_DEPTH} levels")));
+        }
+        self.depth += 1;
+        let result = parse(self);
+        self.depth -= 1;
+        result
+    }
+
     fn unary(&mut self) -> Result<Expr, Diagnostic> {
         match self.peek() {
-            Some(Tok::Op("-")) => {
-                self.pos += 1;
-                Ok(Expr::Unary(UnOp::Neg, Box::new(self.unary()?)))
-            }
-            Some(Tok::Ident(s)) if s == "not" => {
-                self.pos += 1;
+            Some(Tok::Op("-")) => self.nested(|c| {
+                c.pos += 1;
+                Ok(Expr::Unary(UnOp::Neg, Box::new(c.unary()?)))
+            }),
+            Some(Tok::Ident(s)) if s == "not" => self.nested(|c| {
+                c.pos += 1;
                 // `not` binds looser than comparisons, as in Python.
-                Ok(Expr::Unary(UnOp::Not, Box::new(self.binary(3)?)))
-            }
+                Ok(Expr::Unary(UnOp::Not, Box::new(c.binary(3)?)))
+            }),
             _ => self.primary(),
         }
     }
 
     fn primary(&mut self) -> Result<Expr, Diagnostic> {
         let mut e = self.atom()?;
+        let mut indexes = 0;
         while self.peek() == Some(&Tok::Op("[")) {
-            self.pos += 1;
-            let index = self.expr()?;
-            self.op("]")?;
+            if self.depth + indexes >= MAX_EXPR_DEPTH {
+                return Err(self.err(format!("expression nesting exceeds {MAX_EXPR_DEPTH} levels")));
+            }
+            indexes += 1;
+            let index = self.nested(|c| {
+                c.pos += 1;
+                let index = c.expr()?;
+                c.op("]")?;
+                Ok(index)
+            })?;
             e = Expr::Index(Box::new(e), Box::new(index));
         }
         Ok(e)
@@ -625,11 +672,11 @@ impl Cursor {
                 "None" | "none" => Expr::Lit(Value::None),
                 _ => Expr::Var(s),
             }),
-            Some(Tok::Op("(")) => {
-                let e = self.expr()?;
-                self.op(")")?;
+            Some(Tok::Op("(")) => self.nested(|c| {
+                let e = c.expr()?;
+                c.op(")")?;
                 Ok(e)
-            }
+            }),
             Some(Tok::Op("[")) => Ok(Expr::List(self.list_of("]", Self::expr)?)),
             Some(Tok::Op("{")) => Ok(Expr::Dict(self.list_of("}", |c| {
                 let key = c.expr()?;
@@ -647,19 +694,21 @@ impl Cursor {
         close: &'static str,
         mut item: impl FnMut(&mut Self) -> Result<T, Diagnostic>,
     ) -> Result<Vec<T>, Diagnostic> {
-        let mut items = Vec::new();
-        loop {
-            if self.peek() == Some(&Tok::Op(close)) {
-                self.pos += 1;
-                return Ok(items);
+        self.nested(|c| {
+            let mut items = Vec::new();
+            loop {
+                if c.peek() == Some(&Tok::Op(close)) {
+                    c.pos += 1;
+                    return Ok(items);
+                }
+                items.push(item(c)?);
+                match c.next() {
+                    Some(Tok::Op(",")) => {}
+                    Some(Tok::Op(op)) if op == close => return Ok(items),
+                    _ => return Err(c.err(format!("expected `,` or `{close}`"))),
+                }
             }
-            items.push(item(self)?);
-            match self.next() {
-                Some(Tok::Op(",")) => {}
-                Some(Tok::Op(op)) if op == close => return Ok(items),
-                _ => return Err(self.err(format!("expected `,` or `{close}`"))),
-            }
-        }
+        })
     }
 }
 
