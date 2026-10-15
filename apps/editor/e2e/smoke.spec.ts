@@ -20,6 +20,10 @@ async function launch() {
   });
   const page = await app.firstWindow();
   await page.setViewportSize({ width: 1480, height: 920 });
+  const csp = await page.locator('meta[http-equiv="Content-Security-Policy"]').getAttribute("content");
+  expect(csp).not.toMatch(/(?:^|;)\s*script-src[^;]*'unsafe-inline'/);
+  expect(csp).not.toMatch(/(?:^|;)\s*connect-src[^;]*\bws:/);
+  expect(await page.locator("script:not([src])").count()).toBe(0);
   return { app, page, project };
 }
 
