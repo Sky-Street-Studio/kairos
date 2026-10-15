@@ -5,6 +5,7 @@ import type { Applied, EditOp, EditorLayout, Reference, Scene } from "@shared/ed
 import type { SourceFile } from "@shared/types";
 
 import { napi } from "./analysis";
+import { within } from "./paths";
 
 export function sceneBlocks(source: string, label: string): Scene | null {
   return JSON.parse(napi().sceneBlocks(source, label)) as Scene | null;
@@ -27,7 +28,7 @@ export function labelFromName(name: string, taken: string[]): string {
 }
 
 export async function readLayout(root: string): Promise<EditorLayout> {
-  const raw = await readFile(join(root, ".kairos/editor.json"), "utf8").catch(() => null);
+  const raw = await readFile(within(root, ".kairos/editor.json"), "utf8").catch(() => null);
   if (!raw) return { graph: {} };
   try {
     const parsed: unknown = JSON.parse(raw);
@@ -42,13 +43,14 @@ export async function readLayout(root: string): Promise<EditorLayout> {
 }
 
 export async function writeLayout(root: string, layout: EditorLayout): Promise<void> {
+  const path = within(root, ".kairos/editor.json");
   await mkdir(join(root, ".kairos"), { recursive: true });
-  await writeFile(join(root, ".kairos/editor.json"), `${JSON.stringify(layout, null, 2)}\n`, "utf8");
+  await writeFile(path, `${JSON.stringify(layout, null, 2)}\n`, "utf8");
 }
 
 /** Edits the `start` line in place so the rest of `kairos.toml` keeps its formatting. */
 export async function setStartLabel(root: string, label: string): Promise<void> {
-  const path = join(root, "kairos.toml");
+  const path = within(root, "kairos.toml");
   const text = await readFile(path, "utf8");
   const line = `start = ${JSON.stringify(label)}`;
   const lineEnding = text.includes("\r\n") ? "\r\n" : "\n";

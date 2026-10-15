@@ -139,6 +139,16 @@ export function App() {
   useGlobalShortcuts();
 
   useEffect(() => {
+    const preventFileNavigation = (event: DragEvent) => event.preventDefault();
+    document.addEventListener("dragover", preventFileNavigation);
+    document.addEventListener("drop", preventFileNavigation);
+    return () => {
+      document.removeEventListener("dragover", preventFileNavigation);
+      document.removeEventListener("drop", preventFileNavigation);
+    };
+  }, []);
+
+  useEffect(() => {
     void bootstrap().finally(() => setReady(true));
   }, []);
 

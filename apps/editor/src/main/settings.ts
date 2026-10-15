@@ -74,6 +74,17 @@ export async function updateSettings(patch: Partial<Settings>): Promise<Settings
   return cached;
 }
 
+export async function updateSettingsFromRenderer(patch: Partial<Settings>): Promise<Settings> {
+  const safePatch = { ...patch };
+  if (Array.isArray(patch.recentProjects)) {
+    const current = new Set((await getSettings()).recentProjects);
+    safePatch.recentProjects = [...new Set(patch.recentProjects.filter((root) => current.has(root)))];
+  } else {
+    delete safePatch.recentProjects;
+  }
+  return updateSettings(safePatch);
+}
+
 export async function rememberProject(root: string): Promise<void> {
   const { recentProjects } = await getSettings();
   await updateSettings({ recentProjects: [root, ...recentProjects.filter((p) => p !== root)] });

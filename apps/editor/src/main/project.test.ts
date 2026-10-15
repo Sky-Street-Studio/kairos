@@ -1,11 +1,11 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import sharp from "sharp";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createFromTemplate, importProjectAsset, loadProject, readProjectText, renameProjectAsset } from "./project";
+import { createFromTemplate, importProjectAsset, loadProject, readProjectText, renameProjectAsset, writeProjectFile } from "./project";
 
 let root: string | undefined;
 let source: string | undefined;
@@ -29,6 +29,17 @@ async function project() {
 }
 
 describe("starter templates", () => {
+  it("refuses a dangling symlink at the new project destination", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "kairos-template-link-"));
+    const outside = join(parent, "outside");
+    const dest = join(parent, "First Story");
+    root = parent;
+    await symlink(outside, dest);
+
+    await expect(createFromTemplate(parent, "First Story", "branching-romance")).rejects.toThrow("already exists");
+    await expect(readFile(join(outside, "kairos.toml"), "utf8")).rejects.toThrow();
+  });
+
   it("creates a named branching romance project from its template", async () => {
     const parent = await mkdtemp(join(tmpdir(), "kairos-template-"));
     root = parent;
@@ -125,6 +136,23 @@ describe("asset rename", () => {
   });
 });
 
+describe("project roots", () => {
+  it("opens projects through a symlinked folder", async () => {
+    const base = await mkdtemp(join(tmpdir(), "kairos-project-link-"));
+    const realRoot = join(base, "project");
+    const linkedRoot = join(base, "linked-project");
+    await mkdir(realRoot);
+    await writeFile(join(realRoot, "kairos.toml"), 'name = "Linked"');
+    await symlink(realRoot, linkedRoot);
+
+    try {
+      expect((await loadProject(linkedRoot)).root).toBe(linkedRoot);
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("loadProject translations", () => {
   it("includes only top-level TOML translations in the player snapshot", async () => {
     const dir = await mkdtemp(join(tmpdir(), "kairos-project-"));
@@ -149,6 +177,17 @@ describe("project text", () => {
     await project();
     expect(await readProjectText("kairos.toml")).toContain('name = "Test"');
     await expect(readProjectText("../outside.toml")).rejects.toThrow("outside the project");
+  });
+
+  it("refuses symlinked project files that point outside the project", async () => {
+    await project();
+    source = await mkdtemp(join(tmpdir(), "kairos-project-outside-"));
+    await writeFile(join(source, "secret"), "secret");
+    await symlink(source, join(root!, "assets/external"));
+
+    await expect(readProjectText("assets/external/secret")).rejects.toThrow("outside the project");
+    await expect(writeProjectFile("assets/external/secret", "overwritten")).rejects.toThrow("outside the project");
+    expect(await readFile(join(source, "secret"), "utf8")).toBe("secret");
   });
 
   it("refuses files too large to preview", async () => {

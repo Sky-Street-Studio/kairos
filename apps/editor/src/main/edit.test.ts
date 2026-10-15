@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,6 +12,24 @@ describe("editor files", () => {
     expect(await readLayout(root)).toEqual({ graph: {} });
     await writeLayout(root, { graph: { start: { x: 10, y: 20 } } });
     expect(await readLayout(root)).toEqual({ graph: { start: { x: 10, y: 20 } } });
+  });
+
+  it("refuses to write layout through a symlink outside the project", async () => {
+    const base = await mkdtemp(join(tmpdir(), "kairos-layout-symlink-"));
+    const root = join(base, "project");
+    const outside = join(base, "outside");
+    await mkdir(root);
+    await mkdir(outside);
+    await writeFile(join(outside, "editor.json"), "safe");
+    await symlink(outside, join(root, ".kairos"));
+
+    try {
+      await expect(readLayout(root)).rejects.toThrow("outside the project");
+      await expect(writeLayout(root, { graph: { start: { x: 10, y: 20 } } })).rejects.toThrow("outside the project");
+      expect(await readFile(join(outside, "editor.json"), "utf8")).toBe("safe");
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
   });
 
   it("falls back to an empty layout for malformed or invalid JSON", async () => {
