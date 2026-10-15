@@ -102,7 +102,15 @@
     "asarUnpack": [
       "**/node_modules/node-pty/**",
       "**/node_modules/sharp/**"
-    ]
+    ],
+    "electronFuses": {
+      "runAsNode": false,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true,
+      "resetAdHocDarwinSignature": true
+    }
   },
   "productName": "Kairos"
 }
