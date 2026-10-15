@@ -8,11 +8,11 @@ enum Outcome {
     Error(String),
 }
 
-pub fn scene_blocks_json(source: &str, label: &str) -> String {
-    serde_json::to_string(&edit::scene_blocks(source, label)).expect("blocks serialize")
+pub fn scene_blocks_json(source: &str, label: &str) -> Result<String, String> {
+    serde_json::to_string(&edit::scene_blocks(source, label)).map_err(|error| error.to_string())
 }
 
-pub fn apply_edits_json(files: &str, ops: &str) -> String {
+pub fn apply_edits_json(files: &str, ops: &str) -> Result<String, String> {
     let parsed = serde_json::from_str::<Vec<SourceFile>>(files)
         .map_err(|e| format!("bad files: {e}"))
         .and_then(|f| serde_json::from_str::<Vec<Op>>(ops).map(|o| (f, o)).map_err(|e| format!("bad edit: {e}")));
@@ -21,12 +21,12 @@ pub fn apply_edits_json(files: &str, ops: &str) -> String {
         Ok(applied) => Outcome::Ok(applied),
         Err(message) => Outcome::Error(message),
     };
-    serde_json::to_string(&outcome).expect("outcome serializes")
+    serde_json::to_string(&outcome).map_err(|error| error.to_string())
 }
 
-pub fn references_json(files: &str, label: &str) -> String {
+pub fn references_json(files: &str, label: &str) -> Result<String, String> {
     let files: Vec<SourceFile> = serde_json::from_str(files).unwrap_or_default();
-    serde_json::to_string(&edit::references(&files, label)).expect("references serialize")
+    serde_json::to_string(&edit::references(&files, label)).map_err(|error| error.to_string())
 }
 
 pub fn label_from_name_json(name: &str, taken: &str) -> String {
@@ -40,7 +40,7 @@ mod tests {
 
     #[test]
     fn json_shapes_match_the_editor_types() {
-        let blocks = scene_blocks_json("label start:\n    e \"Hi\"\n", "start");
+        let blocks = scene_blocks_json("label start:\n    e \"Hi\"\n", "start").unwrap();
         assert_eq!(
             blocks,
             r#"{"label":"start","line":1,"blocks":[{"line":2,"endLine":2,"kind":"dialogue","character":"e","text":"Hi"}]}"#
@@ -48,12 +48,16 @@ mod tests {
         let files = r#"[{"path":"a.kai","source":"label start:\n    \"A\"\n"}]"#;
         let ops = r#"[{"op":"insert","path":"a.kai","place":{"at":"after","line":2},"block":{"kind":"end"}}]"#;
         assert_eq!(
-            apply_edits_json(files, ops),
+            apply_edits_json(files, ops).unwrap(),
             r#"{"ok":{"files":[{"path":"a.kai","source":"label start:\n    \"A\"\n    return\n"}],"focus":{"path":"a.kai","line":3}}}"#
         );
-        assert!(apply_edits_json(files, r#"[{"op":"delete","path":"a.kai","line":9}]"#).starts_with(r#"{"error":"#));
+        assert!(
+            apply_edits_json(files, r#"[{"op":"delete","path":"a.kai","line":9}]"#)
+                .unwrap()
+                .starts_with(r#"{"error":"#)
+        );
         let jump = r#"[{"path":"a.kai","source":"label start:\n    jump end\nlabel end:\n    return\n"}]"#;
-        assert_eq!(references_json(jump, "end"), r#"[{"path":"a.kai","line":2,"kind":"jump","choice":null}]"#);
+        assert_eq!(references_json(jump, "end").unwrap(), r#"[{"path":"a.kai","line":2,"kind":"jump","choice":null}]"#);
         assert_eq!(label_from_name_json("Beach Day", "[]"), "beach_day");
     }
 }

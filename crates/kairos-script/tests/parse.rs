@@ -67,6 +67,49 @@ fn parses_custom_screen_statements_without_confusing_sprite_tags() {
 }
 
 #[test]
+fn deeply_nested_expression_reports_a_diagnostic() {
+    let expression = format!("default x = {}1{}", "(".repeat(20_000), ")".repeat(20_000));
+    let (_, diagnostics) = parse(&expression);
+    assert!(diagnostics.iter().any(|diagnostic| diagnostic.message.contains("nesting")), "{diagnostics:?}");
+}
+
+#[test]
+fn long_index_chain_reports_a_diagnostic() {
+    let expression = format!("default x = x{}", "[0]".repeat(100_000));
+    let (_, diagnostics) = parse(&expression);
+    assert!(diagnostics.iter().any(|diagnostic| diagnostic.message.contains("expression")), "{diagnostics:?}");
+}
+
+#[test]
+fn long_binary_expression_reports_a_diagnostic() {
+    let expression = format!("$ x = {}", vec!["1"; 300].join("+"));
+    let (_, diagnostics) = parse(&expression);
+    assert!(diagnostics.iter().any(|diagnostic| diagnostic.message.contains("expression")), "{diagnostics:?}");
+}
+
+#[test]
+fn deeply_nested_blocks_report_a_diagnostic() {
+    let mut source = String::from("label start:\n");
+    for depth in 0..110 {
+        source.push_str(&format!("{}if True:\n", "    ".repeat(depth + 1)));
+    }
+    source.push_str(&format!("{}pass\n", "    ".repeat(111)));
+    let (_, diagnostics) = parse(&source);
+    assert!(diagnostics.iter().any(|diagnostic| diagnostic.message.contains("block nesting")), "{diagnostics:?}");
+}
+
+#[test]
+fn rejects_non_ascii_indentation_whitespace() {
+    let (_, diagnostics) = parse("label start:\n    \"A\"\n  　\"Hi\"\n");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("U+3000") && diagnostic.message.contains("spaces")),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
 fn not_binds_looser_than_comparison() {
     let (stmts, _) = parse("default x = not 1 == 2");
     let kairos_script::StmtKind::Default { value, .. } = &stmts[0].kind else { panic!() };

@@ -35,7 +35,7 @@ impl Lines {
 
     pub fn indent(&self, n: usize) -> usize {
         let t = self.text(n);
-        t.len() - t.trim_start().len()
+        t.char_indices().find(|(_, character)| !character.is_whitespace()).map_or(t.len(), |(index, _)| index)
     }
 
     pub fn is_code(&self, n: usize) -> bool {
